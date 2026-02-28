@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+
+# Data (自動生成されるイベントログ)
+data/usage.jsonl
+
+# Backup
+*.bak
+
+# macOS
+.DS_Store
