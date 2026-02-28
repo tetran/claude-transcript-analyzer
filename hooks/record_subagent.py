@@ -1,6 +1,6 @@
 """hooks/record_subagent.py
 
-PostToolUse(Task) イベントを受け取り、usage.jsonl にイベントを追記する。
+PostToolUse(Task/Agent) イベントを受け取り、usage.jsonl にイベントを追記する。
 
 Claude Code Hook として stdin から JSON を受け取る。
 """
@@ -28,10 +28,13 @@ def _append_event(event: dict) -> None:
         f.write(json.dumps(event, ensure_ascii=False) + "\n")
 
 
+_SUBAGENT_TOOL_NAMES = {"Task", "Agent"}
+
+
 def _handle_post_tool_use(data: dict) -> None:
-    if data.get("tool_name") != "Task":
+    if data.get("tool_name") not in _SUBAGENT_TOOL_NAMES:
         return
-    tool_input = data.get("tool_input", {})
+    tool_input = data.get("tool_input") or {}
     event = {
         "event_type": "subagent_start",
         "subagent_type": tool_input.get("subagent_type", ""),

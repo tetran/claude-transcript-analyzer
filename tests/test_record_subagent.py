@@ -98,7 +98,69 @@ class TestPostToolUseTask:
         assert len(events) == 0
 
 
+class TestPostToolUseAgent:
+    def test_agent_tool_subagent_start_event_is_appended(self, tmp_path):
+        usage_file = str(tmp_path / "usage.jsonl")
+        stdin = {
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Agent",
+            "tool_input": {
+                "subagent_type": "Explore",
+                "description": "Search for something",
+            },
+            "session_id": "abc123",
+            "cwd": "/Users/kkoichi/Developer/personal/chirper",
+        }
+        result = run_script(stdin, usage_file)
+        assert result.returncode == 0
+        events = read_events(usage_file)
+        assert len(events) == 1
+        ev = events[0]
+        assert ev["event_type"] == "subagent_start"
+        assert ev["subagent_type"] == "Explore"
+        assert ev["project"] == "chirper"
+        assert ev["session_id"] == "abc123"
+        assert "timestamp" in ev
+
+    def test_task_and_agent_tools_both_recorded(self, tmp_path):
+        """後方互換性: Task と Agent どちらも記録される"""
+        usage_file = str(tmp_path / "usage.jsonl")
+        for tool_name in ("Task", "Agent"):
+            stdin = {
+                "hook_event_name": "PostToolUse",
+                "tool_name": tool_name,
+                "tool_input": {"subagent_type": "Plan", "description": "..."},
+                "session_id": "s1",
+                "cwd": "/p",
+            }
+            run_script(stdin, usage_file)
+        events = read_events(usage_file)
+        assert len(events) == 2
+        for ev in events:
+            assert ev["event_type"] == "subagent_start"
+            assert ev["subagent_type"] == "Plan"
+            assert ev["project"] == "p"
+            assert ev["session_id"] == "s1"
+            assert "timestamp" in ev
+
+
 class TestEdgeCases:
+    def test_tool_input_null_exits_cleanly(self, tmp_path):
+        """tool_input が null でもクラッシュしない"""
+        usage_file = str(tmp_path / "usage.jsonl")
+        stdin = {
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Agent",
+            "tool_input": None,
+            "session_id": "s1",
+            "cwd": "/p",
+        }
+        result = run_script(stdin, usage_file)
+        assert result.returncode == 0
+        events = read_events(usage_file)
+        assert len(events) == 1
+        assert events[0]["subagent_type"] == ""
+
     def test_invalid_json_exits_cleanly(self, tmp_path):
         env = os.environ.copy()
         env["USAGE_JSONL"] = str(tmp_path / "usage.jsonl")
