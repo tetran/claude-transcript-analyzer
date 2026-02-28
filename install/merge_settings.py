@@ -50,7 +50,11 @@ def _build_new_entries(repo_dir: str) -> dict:
 
 
 def _merge_hook_list(existing: list, new_entries: list) -> list:
-    """新しいエントリを既存リストにべき等にマージする（matcher で重複排除）。"""
+    """新しいエントリを既存リストにべき等にマージする（matcher で重複排除）。
+
+    同一 matcher の既存エントリは置換される。matcher ベースの置換は意図した仕様であり、
+    claude-transcript-analyzer の Skill/Task フックを更新する用途を想定している。
+    """
     existing_matchers = {entry.get("matcher"): i for i, entry in enumerate(existing)}
     result = list(existing)
     for entry in new_entries:

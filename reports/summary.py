@@ -16,7 +16,10 @@ def load_events() -> list[dict]:
         line = line.strip()
         if not line:
             continue
-        events.append(json.loads(line))
+        try:
+            events.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
     return events
 
 

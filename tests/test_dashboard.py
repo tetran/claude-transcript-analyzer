@@ -105,6 +105,12 @@ class TestBuildDashboardData:
         assert len(data["daily_trend"]) == 1
         assert data["daily_trend"][0]["count"] == 1
 
+    def test_html_template_has_xss_escape_for_bar_labels(self, tmp_path):
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        template = mod._HTML_TEMPLATE
+        assert "function esc(s)" in template
+        assert "esc(item[nameKey])" in template
+
     def test_project_breakdown_sorted_by_count(self, tmp_path):
         mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
         events = [
@@ -152,6 +158,27 @@ class TestHTTPEndpoints:
                 assert resp.status == 200
                 data = json.loads(resp.read())
                 assert data["total_events"] == 0
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_api_data_skips_invalid_json_lines(self, tmp_path):
+        usage_file = tmp_path / "usage.jsonl"
+        usage_file.write_text(
+            '{"event_type": "skill_tool", "skill": "a", "project": "p", "session_id": "s", "timestamp": "2026-01-01T00:00:00+00:00"}\n'
+            "not valid json\n"
+            '{"event_type": "skill_tool", "skill": "b", "project": "p", "session_id": "s", "timestamp": "2026-01-01T00:01:00+00:00"}\n'
+        )
+        mod = load_dashboard_module(usage_file)
+        server, port = self._start_server(mod)
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/data") as resp:
+                assert resp.status == 200
+                data = json.loads(resp.read())
+                assert data["total_events"] == 2
+                names = [r["name"] for r in data["skill_ranking"]]
+                assert "a" in names
+                assert "b" in names
         finally:
             server.shutdown()
             server.server_close()

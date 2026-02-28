@@ -26,7 +26,10 @@ def load_events() -> list[dict]:
         line = line.strip()
         if not line:
             continue
-        events.append(json.loads(line))
+        try:
+            events.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
     return events
 
 
@@ -162,6 +165,10 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
   </main>
 
   <script>
+    function esc(s) {
+      const t = String(s);
+      return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+    }
     function renderBarChart(containerId, items, nameKey, countKey, fillClass) {
       const container = document.getElementById(containerId);
       if (!items || items.length === 0) {
@@ -171,9 +178,10 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
       const max = Math.max(...items.map(i => i[countKey]));
       container.innerHTML = items.map(item => {
         const pct = max > 0 ? (item[countKey] / max * 100) : 0;
+        const label = esc(item[nameKey]);
         return [
           '<div class="bar-row">',
-          '  <div class="bar-label" title="' + item[nameKey] + '">' + item[nameKey] + '</div>',
+          '  <div class="bar-label" title="' + label + '">' + label + '</div>',
           '  <div class="bar-track">',
           '    <div class="bar-fill ' + fillClass + '" style="width:' + pct + '%"></div>',
           '  </div>',

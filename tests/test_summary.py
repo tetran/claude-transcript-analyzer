@@ -61,6 +61,19 @@ class TestLoadEvents:
         events = mod.load_events()
         assert len(events) == 2
 
+    def test_skips_invalid_json_lines(self, tmp_path):
+        usage_file = tmp_path / "usage.jsonl"
+        usage_file.write_text(
+            '{"event_type": "skill_tool", "skill": "a", "project": "p", "session_id": "s", "timestamp": "2026-01-01T00:00:00+00:00"}\n'
+            "not valid json\n"
+            '{"event_type": "skill_tool", "skill": "b", "project": "p", "session_id": "s", "timestamp": "2026-01-01T00:01:00+00:00"}\n'
+        )
+        mod = load_summary_module(usage_file)
+        events = mod.load_events()
+        assert len(events) == 2
+        assert events[0]["skill"] == "a"
+        assert events[1]["skill"] == "b"
+
 
 class TestAggregateSkills:
     def test_counts_skill_tool_events(self, tmp_path):

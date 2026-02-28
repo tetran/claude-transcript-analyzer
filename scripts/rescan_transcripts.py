@@ -104,19 +104,20 @@ def _extract_events_from_row(row: dict) -> list[dict]:
 def _scan_transcript_file(path: Path) -> list[dict]:
     events = []
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
+        with path.open(encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError as e:
+                    print(f"WARN: JSON parse error in {path}: {e}", file=sys.stderr)
+                    continue
+                events.extend(_extract_events_from_row(row))
     except OSError as e:
         print(f"WARN: cannot read {path}: {e}", file=sys.stderr)
         return []
-    for line in lines:
-        if not line.strip():
-            continue
-        try:
-            row = json.loads(line)
-        except json.JSONDecodeError as e:
-            print(f"WARN: JSON parse error in {path}: {e}", file=sys.stderr)
-            continue
-        events.extend(_extract_events_from_row(row))
     return events
 
 
