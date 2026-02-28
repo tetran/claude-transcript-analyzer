@@ -166,6 +166,93 @@ class TestUserPromptSubmit:
         events = read_events(usage_file)
         assert len(events) == 0
 
+    def test_plain_slash_command_is_recorded(self, tmp_path):
+        """<command-name> タグなしのプレーンな slash コマンドも記録される"""
+        usage_file = str(tmp_path / "usage.jsonl")
+        stdin = {
+            "hook_event_name": "UserPromptSubmit",
+            "prompt": "/codex-review ",
+            "session_id": "abc123",
+            "cwd": "/Users/kkoichi/Developer/personal/chirper",
+        }
+        result = run_script(stdin, usage_file)
+        assert result.returncode == 0
+        events = read_events(usage_file)
+        assert len(events) == 1
+        ev = events[0]
+        assert ev["event_type"] == "user_slash_command"
+        assert ev["skill"] == "/codex-review"
+        assert ev["project"] == "chirper"
+        assert ev["session_id"] == "abc123"
+
+    def test_plain_slash_command_with_args_is_recorded(self, tmp_path):
+        """プレーンな slash コマンドにスペース区切りで引数があっても記録される"""
+        usage_file = str(tmp_path / "usage.jsonl")
+        stdin = {
+            "hook_event_name": "UserPromptSubmit",
+            "prompt": "/user-story-creation 42",
+            "session_id": "s1",
+            "cwd": "/p/proj",
+        }
+        run_script(stdin, usage_file)
+        events = read_events(usage_file)
+        assert len(events) == 1
+        assert events[0]["skill"] == "/user-story-creation"
+
+    def test_plain_builtin_slash_command_is_ignored(self, tmp_path):
+        """プレーンな組み込みコマンドは記録しない"""
+        usage_file = str(tmp_path / "usage.jsonl")
+        for cmd in ["/clear", "/help", "/exit", "/compact"]:
+            stdin = {
+                "hook_event_name": "UserPromptSubmit",
+                "prompt": cmd,
+                "session_id": "s1",
+                "cwd": "/p",
+            }
+            run_script(stdin, usage_file)
+        events = read_events(usage_file)
+        assert len(events) == 0
+
+    def test_bare_slash_is_ignored(self, tmp_path):
+        """裸の '/' はコマンドとして記録しない"""
+        usage_file = str(tmp_path / "usage.jsonl")
+        stdin = {
+            "hook_event_name": "UserPromptSubmit",
+            "prompt": "/",
+            "session_id": "s1",
+            "cwd": "/p",
+        }
+        run_script(stdin, usage_file)
+        events = read_events(usage_file)
+        assert len(events) == 0
+
+    def test_slash_followed_by_spaces_is_ignored(self, tmp_path):
+        """'/ ' のようにスラッシュ後がスペースだけのものは記録しない"""
+        usage_file = str(tmp_path / "usage.jsonl")
+        stdin = {
+            "hook_event_name": "UserPromptSubmit",
+            "prompt": "/   ",
+            "session_id": "s1",
+            "cwd": "/p",
+        }
+        run_script(stdin, usage_file)
+        events = read_events(usage_file)
+        assert len(events) == 0
+
+    def test_leading_whitespace_slash_command_is_recorded(self, tmp_path):
+        """先頭に空白があっても slash コマンドとして記録される"""
+        usage_file = str(tmp_path / "usage.jsonl")
+        stdin = {
+            "hook_event_name": "UserPromptSubmit",
+            "prompt": "  /codex-review",
+            "session_id": "s1",
+            "cwd": "/p/proj",
+        }
+        run_script(stdin, usage_file)
+        events = read_events(usage_file)
+        assert len(events) == 1
+        assert events[0]["skill"] == "/codex-review"
+
 
 class TestEdgeCases:
     def test_invalid_json_exits_cleanly(self, tmp_path):

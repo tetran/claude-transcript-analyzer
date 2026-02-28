@@ -52,12 +52,20 @@ def _handle_post_tool_use(data: dict) -> None:
     _append_event(event)
 
 
+_SLASH_COMMAND_RE = re.compile(r"^/[A-Za-z0-9][\w\-]*")
+
+
 def _handle_user_prompt_submit(data: dict) -> None:
     prompt = data.get("prompt", "")
     m = _COMMAND_NAME_RE.search(prompt)
-    if not m:
-        return
-    command = m.group(1)
+    if m:
+        command = m.group(1)
+    else:
+        stripped = prompt.lstrip()
+        token = stripped.split()[0] if stripped.split() else ""
+        if not _SLASH_COMMAND_RE.match(token):
+            return
+        command = token
     if command in BUILTIN_COMMANDS:
         return
     event = {
