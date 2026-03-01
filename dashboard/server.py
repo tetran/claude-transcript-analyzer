@@ -9,6 +9,9 @@ from pathlib import Path
 _DEFAULT_PATH = Path(__file__).parent.parent / "data" / "usage.jsonl"
 DATA_FILE = Path(os.environ.get("USAGE_JSONL", str(_DEFAULT_PATH)))
 
+_DEFAULT_ALERTS_PATH = Path(__file__).parent.parent / "data" / "health_alerts.jsonl"
+ALERTS_FILE = Path(os.environ.get("HEALTH_ALERTS_JSONL", str(_DEFAULT_ALERTS_PATH)))
+
 PORT = int(os.environ.get("DASHBOARD_PORT", "8080"))
 
 TOP_N = 10
@@ -72,6 +75,24 @@ def aggregate_projects(events: list[dict], top_n: int = TOP_N) -> list[dict]:
     return [{"project": project, "count": count} for project, count in counter.most_common(top_n)]
 
 
+_MAX_ALERTS = 50
+
+
+def load_health_alerts() -> list[dict]:
+    if not ALERTS_FILE.exists():
+        return []
+    alerts = []
+    for line in ALERTS_FILE.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            alerts.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return alerts[-_MAX_ALERTS:]
+
+
 def build_dashboard_data(events: list[dict]) -> dict:
     return {
         "last_updated": _now_iso(),
@@ -80,6 +101,7 @@ def build_dashboard_data(events: list[dict]) -> dict:
         "subagent_ranking": aggregate_subagents(events),
         "daily_trend": aggregate_daily(events),
         "project_breakdown": aggregate_projects(events),
+        "health_alerts": load_health_alerts(),
     }
 
 

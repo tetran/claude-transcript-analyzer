@@ -49,6 +49,29 @@ def _build_new_entries(repo_dir: str) -> dict:
     }
 
 
+def _stop_hook_command(repo_dir: str) -> str:
+    return f"python3 {repo_dir}/hooks/verify_session.py"
+
+
+def _merge_stop_hook_list(existing: list, command: str) -> list:
+    """Stop hook をコマンド文字列でべき等にマージする。
+
+    既存エントリのいずれかに同一コマンドが含まれていれば追加しない。
+    既存の Stop フックは保持される。形式が不正なエントリはスキップする。
+    """
+    for entry in existing:
+        if not isinstance(entry, dict):
+            continue
+        hooks = entry.get("hooks", [])
+        if not isinstance(hooks, list):
+            continue
+        for hook in hooks:
+            if isinstance(hook, dict) and hook.get("command") == command:
+                return existing
+    new_entry = {"hooks": [{"type": "command", "command": command}]}
+    return list(existing) + [new_entry]
+
+
 def _merge_hook_list(existing: list, new_entries: list) -> list:
     """新しいエントリを既存リストにべき等にマージする（matcher で重複排除）。
 
@@ -83,6 +106,10 @@ def merge(repo_dir: str) -> None:
     for event_name, entries in new_entries.items():
         existing = hooks.get(event_name, [])
         hooks[event_name] = _merge_hook_list(existing, entries)
+
+    # Stop hook の追加
+    stop_cmd = _stop_hook_command(repo_dir)
+    hooks["Stop"] = _merge_stop_hook_list(hooks.get("Stop", []), stop_cmd)
 
     settings["hooks"] = hooks
     settings_path.write_text(

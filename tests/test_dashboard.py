@@ -12,15 +12,19 @@ import pytest
 _DASHBOARD_PATH = Path(__file__).parent.parent / "dashboard" / "server.py"
 
 
-def load_dashboard_module(usage_jsonl: Path):
+def load_dashboard_module(usage_jsonl: Path, alerts_jsonl: Path | None = None):
     """USAGE_JSONL をパッチした状態で dashboard モジュールを読み込む。"""
     os.environ["USAGE_JSONL"] = str(usage_jsonl)
+    if alerts_jsonl is not None:
+        os.environ["HEALTH_ALERTS_JSONL"] = str(alerts_jsonl)
     try:
         spec = importlib.util.spec_from_file_location("dashboard_server", _DASHBOARD_PATH)
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
     finally:
         del os.environ["USAGE_JSONL"]
+        if alerts_jsonl is not None:
+            del os.environ["HEALTH_ALERTS_JSONL"]
     return mod
 
 
@@ -104,6 +108,50 @@ class TestBuildDashboardData:
         data = mod.build_dashboard_data(events)
         assert len(data["daily_trend"]) == 1
         assert data["daily_trend"][0]["count"] == 1
+
+    def test_health_alerts_empty_when_no_file(self, tmp_path):
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl",
+                                    alerts_jsonl=tmp_path / "nonexistent_alerts.jsonl")
+        data = mod.build_dashboard_data([])
+        assert "health_alerts" in data
+        assert data["health_alerts"] == []
+
+    def test_health_alerts_returned_in_data(self, tmp_path):
+        alerts_file = tmp_path / "health_alerts.jsonl"
+        alert = {
+            "timestamp": "2026-03-01T10:00:00+00:00",
+            "session_id": "sess-abc",
+            "missing_count": 3,
+            "missing_types": ["subagent_start"],
+        }
+        alerts_file.write_text(json.dumps(alert) + "\n")
+
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl",
+                                    alerts_jsonl=alerts_file)
+        data = mod.build_dashboard_data([])
+        assert len(data["health_alerts"]) == 1
+        assert data["health_alerts"][0]["session_id"] == "sess-abc"
+        assert data["health_alerts"][0]["missing_count"] == 3
+
+    def test_health_alerts_capped_at_max(self, tmp_path):
+        """アラートが MAX_ALERTS(50) 件を超えたとき最新50件のみ返す"""
+        alerts_file = tmp_path / "health_alerts.jsonl"
+        alerts = [
+            {"timestamp": f"2026-03-{i:02d}T10:00:00+00:00",
+             "session_id": f"sess-{i:03d}",
+             "missing_count": 1,
+             "missing_types": ["subagent_start"]}
+            for i in range(1, 61)  # 60件書く
+        ]
+        alerts_file.write_text("\n".join(json.dumps(a) for a in alerts) + "\n")
+
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl",
+                                    alerts_jsonl=alerts_file)
+        data = mod.build_dashboard_data([])
+        # 最新50件のみ（末尾50件 = sess-011 〜 sess-060）
+        assert len(data["health_alerts"]) == 50
+        assert data["health_alerts"][0]["session_id"] == "sess-011"
+        assert data["health_alerts"][-1]["session_id"] == "sess-060"
 
     def test_html_template_has_xss_escape_for_bar_labels(self, tmp_path):
         mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")

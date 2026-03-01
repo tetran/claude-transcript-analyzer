@@ -134,3 +134,93 @@ class TestMergeSettings:
         assert result.returncode == 0
         settings_file = tmp_path / ".claude" / "settings.json"
         assert settings_file.exists()
+
+    def test_stop_hook_added(self, tmp_path):
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        (claude_dir / "settings.json").write_text("{}")
+
+        run_merge_with_home(tmp_path, REPO_DIR)
+        settings = read_settings(tmp_path)
+
+        assert "Stop" in settings["hooks"]
+        stop_hooks = settings["hooks"]["Stop"]
+        commands = [
+            hook["command"]
+            for entry in stop_hooks
+            for hook in entry.get("hooks", [])
+        ]
+        assert any("verify_session.py" in cmd for cmd in commands)
+
+    def test_stop_hook_idempotent(self, tmp_path):
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        (claude_dir / "settings.json").write_text("{}")
+
+        run_merge_with_home(tmp_path, REPO_DIR)
+        run_merge_with_home(tmp_path, REPO_DIR)
+        settings = read_settings(tmp_path)
+
+        # verify_session.py のエントリが重複していない
+        stop_hooks = settings["hooks"]["Stop"]
+        commands = [
+            hook["command"]
+            for entry in stop_hooks
+            for hook in entry.get("hooks", [])
+            if "verify_session.py" in hook.get("command", "")
+        ]
+        assert len(commands) == 1
+
+    def test_existing_stop_hook_from_other_command_is_preserved(self, tmp_path):
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        existing = {
+            "hooks": {
+                "Stop": [
+                    {"hooks": [{"type": "command", "command": "echo done"}]}
+                ]
+            }
+        }
+        (claude_dir / "settings.json").write_text(json.dumps(existing))
+
+        run_merge_with_home(tmp_path, REPO_DIR)
+        settings = read_settings(tmp_path)
+
+        stop_hooks = settings["hooks"]["Stop"]
+        all_commands = [
+            hook["command"]
+            for entry in stop_hooks
+            for hook in entry.get("hooks", [])
+        ]
+        # 既存の "echo done" が保持されている
+        assert "echo done" in all_commands
+        # verify_session.py も追加されている
+        assert any("verify_session.py" in cmd for cmd in all_commands)
+
+    def test_malformed_stop_hook_entry_does_not_crash(self, tmp_path):
+        """形式が不正な Stop hook エントリ（dict 以外）があってもクラッシュしない"""
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        existing = {
+            "hooks": {
+                "Stop": [
+                    "malformed-string-entry",
+                    {"hooks": "not-a-list"},
+                    {"hooks": [{"type": "command", "command": "echo ok"}]},
+                ]
+            }
+        }
+        (claude_dir / "settings.json").write_text(json.dumps(existing))
+
+        result = run_merge_with_home(tmp_path, REPO_DIR)
+        assert result.returncode == 0
+
+        settings = read_settings(tmp_path)
+        all_commands = [
+            hook["command"]
+            for entry in settings["hooks"]["Stop"]
+            if isinstance(entry, dict)
+            for hook in entry.get("hooks", [])
+            if isinstance(hook, dict)
+        ]
+        assert any("verify_session.py" in cmd for cmd in all_commands)
