@@ -28,19 +28,30 @@ claude-transcript-analyzer/
 
 **前提条件:** macOS / Linux、Python 3.8 以上、Claude Code インストール済み
 
-### 方法 1: プラグインとしてインストール（推奨）
+### 方法 1: `/plugin` コマンドでインストール（推奨）
+
+Claude Code のチャット内で以下を実行する：
+
+```
+/plugin marketplace add https://github.com/tetran/claude-transcript-analyzer
+/plugin install claude-transcript-analyzer@kkoichi-cc-plugin
+```
+
+その後、Claude Code を再起動する。
+
+### 方法 2: プラグインとして手動インストール
 
 ```bash
-git clone <repo-url> ~/.claude/plugins/claude-transcript-analyzer
+git clone https://github.com/tetran/claude-transcript-analyzer ~/.claude/plugins/claude-transcript-analyzer
 # → Claude Code を再起動する
 ```
 
 Claude Code が `~/.claude/plugins/` 以下のプラグインを自動認識して hooks を登録する。
 
-### 方法 2: 従来の install.sh を使う
+### 方法 3: 従来の install.sh を使う
 
 ```bash
-git clone <repo-url> ~/claude-transcript-analyzer
+git clone https://github.com/tetran/claude-transcript-analyzer ~/claude-transcript-analyzer
 cd ~/claude-transcript-analyzer
 chmod +x install.sh
 ./install.sh
