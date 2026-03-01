@@ -6,7 +6,10 @@
   "plugins": [
     {
       "name": "claude-transcript-analyzer",
-      "source": "https://github.com/tetran/claude-transcript-analyzer",
+      "source": {
+        "source": "github",
+        "repo": "tetran/claude-transcript-analyzer"
+      },
       "description": "Automatically collect and visualize Claude Code Skills and Subagents usage"
     }
   ]
