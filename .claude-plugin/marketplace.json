@@ -1,0 +1,14 @@
+{
+  "name": "kkoichi-cc-plugin",
+  "owner": {
+    "name": "kkoichi"
+  },
+  "plugins": [
+    {
+      "name": "claude-transcript-analyzer",
+      "source": ".",
+      "description": "Automatically collect and visualize Claude Code Skills and Subagents usage"
+    }
+  ]
+}
+

@@ -4,7 +4,7 @@ import os
 from collections import Counter
 from pathlib import Path
 
-_DEFAULT_PATH = Path(__file__).parent.parent / "data" / "usage.jsonl"
+_DEFAULT_PATH = Path.home() / ".claude" / "transcript-analyzer" / "usage.jsonl"
 DATA_FILE = Path(os.environ.get("USAGE_JSONL", str(_DEFAULT_PATH)))
 
 
@@ -67,3 +67,4 @@ def print_report(events: list[dict]) -> None:
 if __name__ == "__main__":
     events = load_events()
     print_report(events)
+

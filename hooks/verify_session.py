@@ -1,7 +1,7 @@
 """hooks/verify_session.py
 
 Stop hook: セッション終了時にトランスクリプトと usage.jsonl を照合し、
-差分があれば data/health_alerts.jsonl に記録する。
+差分があれば ~/.claude/transcript-analyzer/health_alerts.jsonl に記録する。
 
 差分はイベント種別ごとの件数で比較する（timestamp は除外）。
 同一セッションで同一の差分が既にアラートとして記録済みの場合は重複記録しない。
@@ -19,8 +19,8 @@ sys.path.insert(0, str(_SCRIPTS_DIR))
 
 from rescan_transcripts import _scan_transcript_file  # noqa: E402
 
-_DEFAULT_DATA_FILE = Path(__file__).parent.parent / "data" / "usage.jsonl"
-_DEFAULT_ALERTS_FILE = Path(__file__).parent.parent / "data" / "health_alerts.jsonl"
+_DEFAULT_DATA_FILE = Path.home() / ".claude" / "transcript-analyzer" / "usage.jsonl"
+_DEFAULT_ALERTS_FILE = Path.home() / ".claude" / "transcript-analyzer" / "health_alerts.jsonl"
 _DEFAULT_CLAUDE_HOME = Path.home() / ".claude"
 
 DATA_FILE = Path(os.environ.get("USAGE_JSONL", str(_DEFAULT_DATA_FILE)))
@@ -148,3 +148,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

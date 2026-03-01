@@ -6,10 +6,10 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
-_DEFAULT_PATH = Path(__file__).parent.parent / "data" / "usage.jsonl"
+_DEFAULT_PATH = Path.home() / ".claude" / "transcript-analyzer" / "usage.jsonl"
 DATA_FILE = Path(os.environ.get("USAGE_JSONL", str(_DEFAULT_PATH)))
 
-_DEFAULT_ALERTS_PATH = Path(__file__).parent.parent / "data" / "health_alerts.jsonl"
+_DEFAULT_ALERTS_PATH = Path.home() / ".claude" / "transcript-analyzer" / "health_alerts.jsonl"
 ALERTS_FILE = Path(os.environ.get("HEALTH_ALERTS_JSONL", str(_DEFAULT_ALERTS_PATH)))
 
 PORT = int(os.environ.get("DASHBOARD_PORT", "8080"))
@@ -103,6 +103,13 @@ def build_dashboard_data(events: list[dict]) -> dict:
         "project_breakdown": aggregate_projects(events),
         "health_alerts": load_health_alerts(),
     }
+
+
+def render_static_html(data: dict) -> str:
+    """データをインライン埋め込みしたスタンドアロン HTML を返す。"""
+    json_str = json.dumps(data, ensure_ascii=False).replace("</script>", r"<\/script>")
+    inline = f'<script>window.__DATA__ = {json_str};</script>\n'
+    return _HTML_TEMPLATE.replace('</head>', inline + '</head>', 1)
 
 
 _HTML_TEMPLATE = """<!DOCTYPE html>
@@ -215,8 +222,9 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
 
     async function loadAndRender() {
       try {
-        const resp = await fetch('/api/data');
-        const data = await resp.json();
+        const data = (typeof window.__DATA__ !== 'undefined')
+          ? window.__DATA__
+          : await (await fetch('/api/data')).json();
 
         document.getElementById('last-updated').textContent =
           new Date(data.last_updated).toLocaleString('ja-JP');
@@ -278,3 +286,4 @@ if __name__ == "__main__":
         server.serve_forever()
     except KeyboardInterrupt:
         print("\nサーバーを停止しました。")
+
