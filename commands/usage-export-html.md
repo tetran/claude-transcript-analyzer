@@ -4,8 +4,8 @@ Generate a standalone static HTML report of Claude Code Skills and Subagents usa
 python3 ${CLAUDE_PLUGIN_ROOT}/reports/export_html.py
 ```
 
-This creates a self-contained HTML file (no server required) at
-`~/.claude/transcript-analyzer/report.html` and prints the output path.
+This creates a self-contained HTML file (no server required) at the default path
+(`$HOME/.claude/transcript-analyzer/report.html`) and prints the absolute output path.
 
 To specify a custom output path:
 

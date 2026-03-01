@@ -45,7 +45,7 @@ def main(argv: list[str] | None = None) -> None:
     html = render_static_html(data)
 
     output.write_text(html, encoding="utf-8")
-    print(str(output))
+    print(str(output.expanduser().resolve()))
 
 
 if __name__ == "__main__":
