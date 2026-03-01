@@ -29,6 +29,16 @@
         ]
       }
     ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/record_subagent.py"
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [

@@ -45,6 +45,17 @@ def _handle_post_tool_use(data: dict) -> None:
     _append_event(event)
 
 
+def _handle_subagent_start(data: dict) -> None:
+    event = {
+        "event_type": "subagent_start",
+        "subagent_type": data.get("agent_type", ""),
+        "project": _project_from_cwd(data.get("cwd", "")),
+        "session_id": data.get("session_id", ""),
+        "timestamp": _now_iso(),
+    }
+    _append_event(event)
+
+
 def main() -> None:
     raw = sys.stdin.read()
     try:
@@ -55,6 +66,8 @@ def main() -> None:
     event_name = data.get("hook_event_name", "")
     if event_name == "PostToolUse":
         _handle_post_tool_use(data)
+    elif event_name == "SubagentStart":
+        _handle_subagent_start(data)
 
 
 if __name__ == "__main__":

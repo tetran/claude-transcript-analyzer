@@ -144,6 +144,57 @@ class TestPostToolUseAgent:
             assert "timestamp" in ev
 
 
+class TestSubagentStartEvent:
+    """SubagentStart フックイベントのテスト"""
+
+    def test_subagent_start_hook_event_is_recorded(self, tmp_path):
+        usage_file = str(tmp_path / "usage.jsonl")
+        stdin = {
+            "hook_event_name": "SubagentStart",
+            "agent_type": "ui-designer",
+            "agent_id": "agent-abc123",
+            "session_id": "abc123",
+            "cwd": "/Users/kkoichi/Developer/personal/chirper",
+        }
+        result = run_script(stdin, usage_file)
+        assert result.returncode == 0
+        events = read_events(usage_file)
+        assert len(events) == 1
+        ev = events[0]
+        assert ev["event_type"] == "subagent_start"
+        assert ev["subagent_type"] == "ui-designer"
+        assert ev["project"] == "chirper"
+        assert ev["session_id"] == "abc123"
+        assert "timestamp" in ev
+
+    def test_subagent_start_general_purpose(self, tmp_path):
+        usage_file = str(tmp_path / "usage.jsonl")
+        stdin = {
+            "hook_event_name": "SubagentStart",
+            "agent_type": "general-purpose",
+            "agent_id": "agent-xyz",
+            "session_id": "s1",
+            "cwd": "/p",
+        }
+        run_script(stdin, usage_file)
+        events = read_events(usage_file)
+        assert len(events) == 1
+        assert events[0]["subagent_type"] == "general-purpose"
+
+    def test_subagent_start_missing_agent_type_uses_empty_string(self, tmp_path):
+        usage_file = str(tmp_path / "usage.jsonl")
+        stdin = {
+            "hook_event_name": "SubagentStart",
+            "agent_id": "agent-xyz",
+            "session_id": "s1",
+            "cwd": "/p",
+        }
+        run_script(stdin, usage_file)
+        events = read_events(usage_file)
+        assert len(events) == 1
+        assert events[0]["subagent_type"] == ""
+
+
 class TestEdgeCases:
     def test_tool_input_null_exits_cleanly(self, tmp_path):
         """tool_input が null でもクラッシュしない"""
