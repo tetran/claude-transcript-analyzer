@@ -84,13 +84,6 @@ Total events: 42
 └── health_alerts.jsonl  # 異常検知アラートログ（自動生成）
 ```
 
-## 手動アンインストール
-
-`~/.claude/settings.json` から以下のエントリを削除し、Claude Code を再起動する：
-
-- `hooks.PostToolUse` の `"Skill"` と `"Task"` matcher エントリ
-- `hooks.UserPromptSubmit` のエントリ
-
 ---
 
 ## その他のインストール方法
@@ -117,6 +110,11 @@ chmod +x install.sh
 `install.sh` は `~/.claude/settings.json` に hooks エントリを追加する。
 既存の設定は保持され、実行前にバックアップ（`settings.json.bak`）が作成される。
 何度実行しても安全（べき等）。
+
+アンインストールするときは `~/.claude/settings.json` から以下のエントリを削除して Claude Code を再起動する：
+
+- `hooks.PostToolUse` の `"Skill"` と `"Task"` matcher エントリ
+- `hooks.UserPromptSubmit` のエントリ
 
 ### 旧バージョンからのデータ移行
 
