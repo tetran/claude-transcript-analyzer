@@ -4,8 +4,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 SCRIPT = Path(__file__).parent.parent / "install" / "merge_settings.py"
 REPO_DIR = Path(__file__).parent.parent
 

@@ -18,7 +18,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from dashboard.server import (
     build_dashboard_data,
     load_events,
-    load_health_alerts,
     render_static_html,
 )
 

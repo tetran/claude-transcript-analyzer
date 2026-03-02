@@ -7,7 +7,6 @@ Usage:
     python3 merge_settings.py <repo_dir>
 """
 import json
-import os
 import shutil
 import sys
 from pathlib import Path

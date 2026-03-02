@@ -65,6 +65,6 @@ def print_report(events: list[dict]) -> None:
 
 
 if __name__ == "__main__":
-    events = load_events()
-    print_report(events)
+    all_events = load_events()
+    print_report(all_events)
 

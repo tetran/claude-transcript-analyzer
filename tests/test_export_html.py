@@ -1,13 +1,11 @@
 """tests/test_export_html.py — render_static_html() と export_html.py のテスト。"""
+# pylint: disable=line-too-long
 import importlib
 import json
 import os
 import sys
-import tempfile
 from pathlib import Path
 from unittest import mock
-
-import pytest
 
 # dashboard モジュールへのパスを通す
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -19,7 +17,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 class TestRenderStaticHtml:
     def _import(self):
-        import importlib
         import dashboard.server as m
         importlib.reload(m)
         return m

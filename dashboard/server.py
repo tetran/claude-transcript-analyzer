@@ -274,7 +274,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def log_message(self, format, *args):
+    def log_message(self, fmt, *args):
         pass
 
 

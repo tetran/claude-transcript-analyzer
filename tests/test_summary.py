@@ -1,10 +1,7 @@
 """tests/test_summary.py — reports/summary.py のテスト"""
-import importlib.util
+# pylint: disable=line-too-long
 import json
-import sys
 from pathlib import Path
-
-import pytest
 
 # reports/summary.py をモジュールとして読み込む
 _SUMMARY_PATH = Path(__file__).parent.parent / "reports" / "summary.py"
@@ -12,7 +9,7 @@ _SUMMARY_PATH = Path(__file__).parent.parent / "reports" / "summary.py"
 
 def load_summary_module(usage_jsonl: Path):
     """USAGE_JSONL をパッチした状態で summary モジュールを読み込む。"""
-    import importlib
+    import importlib.util
     spec = importlib.util.spec_from_file_location("summary", _SUMMARY_PATH)
     mod = importlib.util.module_from_spec(spec)
     # モジュールレベル定数を差し替えるため、先に sys.modules に登録しない

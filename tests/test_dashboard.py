@@ -1,4 +1,5 @@
 """tests/test_dashboard.py — dashboard/server.py のテスト"""
+# pylint: disable=line-too-long
 import importlib.util
 import json
 import os
@@ -6,8 +7,6 @@ import socketserver
 import threading
 import urllib.request
 from pathlib import Path
-
-import pytest
 
 _DASHBOARD_PATH = Path(__file__).parent.parent / "dashboard" / "server.py"
 

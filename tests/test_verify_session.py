@@ -4,8 +4,6 @@ import json
 import sys
 from pathlib import Path
 
-import pytest
-
 _HOOKS_DIR = Path(__file__).parent.parent / "hooks"
 sys.path.insert(0, str(_HOOKS_DIR))
 

@@ -3,10 +3,7 @@ import json
 import os
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
-
-import pytest
 
 SCRIPT = Path(__file__).parent.parent / "hooks" / "record_subagent.py"
 
