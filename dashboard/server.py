@@ -63,7 +63,7 @@ def aggregate_daily(events: list[dict]) -> list[dict]:
         if ts and len(ts) >= 10:
             date = ts[:10]
             counter[date] += 1
-    return [{"date": date, "count": count} for date, count in sorted(counter.items())]
+    return [{"date": date, "count": count} for date, count in sorted(counter.items(), reverse=True)]
 
 
 def aggregate_projects(events: list[dict], top_n: int = TOP_N) -> list[dict]:
@@ -135,8 +135,9 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
     .card + .card { margin-top: 1.25rem; }
     .card h2 { font-size: 0.85rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 1rem; padding-bottom: 0.6rem; border-bottom: 1px solid #2d2d4e; }
     .no-data { color: #475569; font-size: 0.875rem; text-align: center; padding: 1.5rem 0; }
-    .bar-row { display: flex; align-items: center; gap: 0.625rem; margin-bottom: 0.5rem; }
-    .bar-label { font-size: 0.775rem; color: #94a3b8; width: 130px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, monospace; }
+    .bar-row { margin-bottom: 0.75rem; }
+    .bar-label { font-size: 0.775rem; color: #94a3b8; margin-bottom: 0.3rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, monospace; }
+    .bar-track-row { display: flex; align-items: center; gap: 0.625rem; }
     .bar-track { flex: 1; height: 18px; background: #0f0f1a; border-radius: 4px; overflow: hidden; }
     .bar-fill { height: 100%; border-radius: 4px; transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1); min-width: 2px; }
     .bar-fill-skill  { background: linear-gradient(90deg, #4f46e5, #818cf8); }
@@ -211,10 +212,12 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
         return [
           '<div class="bar-row">',
           '  <div class="bar-label" title="' + label + '">' + label + '</div>',
-          '  <div class="bar-track">',
-          '    <div class="bar-fill ' + fillClass + '" style="width:' + pct + '%"></div>',
+          '  <div class="bar-track-row">',
+          '    <div class="bar-track">',
+          '      <div class="bar-fill ' + fillClass + '" style="width:' + pct + '%"></div>',
+          '    </div>',
+          '    <div class="bar-count">' + item[countKey] + '</div>',
           '  </div>',
-          '  <div class="bar-count">' + item[countKey] + '</div>',
           '</div>',
         ].join('');
       }).join('');

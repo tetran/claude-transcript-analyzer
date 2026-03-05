@@ -87,7 +87,7 @@ class TestBuildDashboardData:
         assert data["subagent_ranking"][0] == {"name": "Explore", "count": 2}
         assert data["subagent_ranking"][1] == {"name": "Plan", "count": 1}
 
-    def test_daily_trend_grouped_by_date_sorted_asc(self, tmp_path):
+    def test_daily_trend_grouped_by_date_sorted_desc(self, tmp_path):
         mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
         events = [
             {"event_type": "skill_tool", "skill": "a", "project": "p", "session_id": "s", "timestamp": "2026-01-02T10:00:00+00:00"},
@@ -95,8 +95,8 @@ class TestBuildDashboardData:
             {"event_type": "skill_tool", "skill": "c", "project": "p", "session_id": "s", "timestamp": "2026-01-01T10:00:00+00:00"},
         ]
         data = mod.build_dashboard_data(events)
-        assert data["daily_trend"][0] == {"date": "2026-01-01", "count": 2}
-        assert data["daily_trend"][1] == {"date": "2026-01-02", "count": 1}
+        assert data["daily_trend"][0] == {"date": "2026-01-02", "count": 1}
+        assert data["daily_trend"][1] == {"date": "2026-01-01", "count": 2}
 
     def test_daily_trend_excludes_events_without_timestamp(self, tmp_path):
         mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
@@ -157,6 +157,11 @@ class TestBuildDashboardData:
         template = mod._HTML_TEMPLATE
         assert "function esc(s)" in template
         assert "esc(item[nameKey])" in template
+
+    def test_bar_chart_uses_stacked_layout(self, tmp_path):
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        assert "bar-track-row" in mod._HTML_TEMPLATE
+        assert "width: 130px" not in mod._HTML_TEMPLATE
 
     def test_project_breakdown_sorted_by_count(self, tmp_path):
         mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
