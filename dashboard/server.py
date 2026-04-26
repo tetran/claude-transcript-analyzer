@@ -1,11 +1,15 @@
 """dashboard/server.py — ローカル HTTP サーバーでダッシュボードを提供する。"""
 import json
 import os
+import signal
 import sys
+import threading
+import time
 from collections import Counter
 from datetime import datetime, timezone
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Callable, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from subagent_metrics import aggregate_subagent_metrics, usage_invocation_events
@@ -16,7 +20,34 @@ DATA_FILE = Path(os.environ.get("USAGE_JSONL", str(_DEFAULT_PATH)))
 _DEFAULT_ALERTS_PATH = Path.home() / ".claude" / "transcript-analyzer" / "health_alerts.jsonl"
 ALERTS_FILE = Path(os.environ.get("HEALTH_ALERTS_JSONL", str(_DEFAULT_ALERTS_PATH)))
 
-PORT = int(os.environ.get("DASHBOARD_PORT", "8080"))
+_DEFAULT_SERVER_JSON_PATH = Path.home() / ".claude" / "transcript-analyzer" / "server.json"
+SERVER_JSON_PATH = Path(os.environ.get("DASHBOARD_SERVER_JSON", str(_DEFAULT_SERVER_JSON_PATH)))
+
+
+def _resolve_port() -> int:
+    """`DASHBOARD_PORT` 未指定 or `0` → OS 任せ、具体値 → そのまま。"""
+    raw = os.environ.get("DASHBOARD_PORT")
+    if raw is None:
+        return 0
+    try:
+        return int(raw)
+    except ValueError:
+        return 0
+
+
+def _resolve_idle_seconds() -> float:
+    """`DASHBOARD_IDLE_SECONDS` 未指定 → 600s デフォルト、`0` → 無効。"""
+    raw = os.environ.get("DASHBOARD_IDLE_SECONDS")
+    if raw is None:
+        return 600.0
+    try:
+        return float(raw)
+    except ValueError:
+        return 600.0
+
+
+PORT = _resolve_port()
+IDLE_SECONDS = _resolve_idle_seconds()
 
 TOP_N = 10
 
@@ -184,8 +215,14 @@ _HTML_TEMPLATE = (Path(__file__).resolve().parent / "template.html").read_text(e
 
 class DashboardHandler(BaseHTTPRequestHandler):
     def do_GET(self):
+        # idle カウンタリセット (DashboardServer 利用時のみ; 旧 HTTPServer 直叩きテスト互換のため defensive)
+        touch = getattr(self.server, "touch", None)
+        if callable(touch):
+            touch()
         if self.path == "/api/data":
             self._serve_api()
+        elif self.path == "/healthz":
+            self._serve_healthz()
         else:
             self._serve_html()
 
@@ -193,6 +230,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
         events = load_events()
         data = build_dashboard_data(events)
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_healthz(self):
+        started_at = getattr(self.server, "started_at", _now_iso())
+        payload = {"status": "ok", "started_at": started_at}
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
@@ -211,11 +258,140 @@ class DashboardHandler(BaseHTTPRequestHandler):
         pass
 
 
-if __name__ == "__main__":
-    server = HTTPServer(("localhost", PORT), DashboardHandler)
-    print(f"サーバーが起動しました: http://localhost:{PORT}")
-    print("停止するには Ctrl+C を押してください。")
+class DashboardServer(ThreadingHTTPServer):
+    """ライブダッシュボード用 HTTP サーバー。
+
+    - ThreadingHTTPServer で並行リクエスト処理
+    - `idle_seconds > 0` で idle watchdog を起動し、最終リクエストから
+      `idle_seconds` 経過で graceful shutdown
+    - `touch()` / `idle_for()` でハンドラから idle カウンタを操作
+    """
+
+    daemon_threads = True
+    allow_reuse_address = True
+
+    def __init__(self, server_address, RequestHandlerClass, *, idle_seconds: float = 0.0):
+        super().__init__(server_address, RequestHandlerClass)
+        self.idle_seconds = float(idle_seconds)
+        self._activity_lock = threading.Lock()
+        self._last_activity = time.monotonic()
+        self._stop_event = threading.Event()
+        self.started_at = _now_iso()
+        self._watchdog_thread: Optional[threading.Thread] = None
+        if self.idle_seconds > 0:
+            self._start_watchdog()
+
+    def touch(self) -> None:
+        with self._activity_lock:
+            self._last_activity = time.monotonic()
+
+    def idle_for(self) -> float:
+        with self._activity_lock:
+            return time.monotonic() - self._last_activity
+
+    def _start_watchdog(self) -> None:
+        check_interval = max(0.05, min(self.idle_seconds / 2.0, 1.0))
+
+        def loop():
+            while not self._stop_event.wait(check_interval):
+                if self.idle_for() > self.idle_seconds:
+                    # shutdown は serve_forever が exit するまでブロックするので別スレで叩く
+                    threading.Thread(target=super(DashboardServer, self).shutdown, daemon=True).start()
+                    return
+
+        self._watchdog_thread = threading.Thread(
+            target=loop, daemon=True, name="DashboardIdleWatchdog"
+        )
+        self._watchdog_thread.start()
+
+    def shutdown(self) -> None:
+        # 外部 / 内部いずれの shutdown 経路でも watchdog ループを止める
+        self._stop_event.set()
+        super().shutdown()
+
+    def server_close(self) -> None:
+        self._stop_event.set()
+        super().server_close()
+
+
+def create_server(
+    port: int = 0,
+    idle_seconds: float = 0.0,
+    handler_cls=None,
+    host: str = "localhost",
+) -> DashboardServer:
+    """Phase A 仕様の DashboardServer を返す（serve_forever は呼び出し側）。"""
+    return DashboardServer(
+        (host, port),
+        handler_cls or DashboardHandler,
+        idle_seconds=idle_seconds,
+    )
+
+
+def write_server_json(path: Path, info: dict) -> None:
+    """`{pid, port, url, started_at}` を atomic に書く（tmp + os.replace）。"""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + f".{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(info, ensure_ascii=False), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def remove_server_json(path: Path) -> None:
+    """server.json をべき等に削除する。"""
+    try:
+        Path(path).unlink()
+    except FileNotFoundError:
+        pass
+
+
+def run(
+    server: DashboardServer,
+    server_json_path: Path,
+    *,
+    install_signals: bool = True,
+    on_ready: Optional[Callable[[], None]] = None,
+    log_stream=sys.stderr,
+) -> None:
+    """server を起動し、server.json の write/remove を結線する。
+
+    - `install_signals=True` で SIGTERM / SIGINT を graceful shutdown にフック
+    - `on_ready` は server.json を書いた直後に呼ばれる（テスト用同期点）
+    """
+    actual_port = server.server_address[1]
+    info = {
+        "pid": os.getpid(),
+        "port": actual_port,
+        "url": f"http://localhost:{actual_port}",
+        "started_at": server.started_at,
+    }
+    write_server_json(server_json_path, info)
+
+    if install_signals:
+        def _signal_shutdown(signum, frame):  # pragma: no cover - signal path
+            threading.Thread(target=server.shutdown, daemon=True).start()
+        try:
+            signal.signal(signal.SIGTERM, _signal_shutdown)
+            signal.signal(signal.SIGINT, _signal_shutdown)
+        except ValueError:
+            # signal.signal はメインスレッド以外では ValueError。テスト経路で起こりうる
+            pass
+
+    print(f"Dashboard available: {info['url']}", file=log_stream)
+    if on_ready is not None:
+        on_ready()
+
     try:
         server.serve_forever()
-    except KeyboardInterrupt:
-        print("\nサーバーを停止しました。")
+    finally:
+        remove_server_json(server_json_path)
+        server.server_close()
+
+
+def main() -> None:
+    server = create_server(port=PORT, idle_seconds=IDLE_SECONDS)
+    run(server, SERVER_JSON_PATH)
+
+
+if __name__ == "__main__":
+    main()

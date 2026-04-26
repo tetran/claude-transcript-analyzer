@@ -5,7 +5,10 @@ import json
 import os
 import socketserver
 import threading
+import time
+import urllib.error
 import urllib.request
+from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 _DASHBOARD_PATH = Path(__file__).parent.parent / "dashboard" / "server.py"
@@ -743,3 +746,259 @@ class TestGraphDataTooltip:
         template = mod._HTML_TEMPLATE
         # ranking 系（既存の `title=` 付き）はスコープ外。daily / proj に aria-label を付ける
         assert "aria-label" in template
+
+
+# ======================================================================
+# Issue #19 Phase A — ライブダッシュボード基盤
+# ======================================================================
+
+
+def _start_server_in_thread(server) -> threading.Thread:
+    t = threading.Thread(target=server.serve_forever, daemon=True)
+    t.start()
+    return t
+
+
+class TestThreadingServer:
+    """Phase A: ThreadingHTTPServer 化 + 空きポート取得。"""
+
+    def test_create_server_returns_threading_http_server(self, tmp_path):
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        server = mod.create_server(port=0, idle_seconds=0)
+        try:
+            assert isinstance(server, ThreadingHTTPServer)
+        finally:
+            server.server_close()
+
+    def test_create_server_with_port_zero_picks_free_port(self, tmp_path):
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        server = mod.create_server(port=0, idle_seconds=0)
+        try:
+            actual = server.server_address[1]
+            assert actual != 0
+            assert 1024 <= actual <= 65535
+        finally:
+            server.server_close()
+
+    def test_create_server_with_specific_port(self, tmp_path):
+        """DASHBOARD_PORT 具体ポート指定時の互換: bind に成功する。"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        # 一時 bind して空きポートを得てから即解放、そのポートで create_server
+        with socketserver.TCPServer(("127.0.0.1", 0), socketserver.BaseRequestHandler) as probe:
+            free_port = probe.server_address[1]
+        server = mod.create_server(port=free_port, idle_seconds=0)
+        try:
+            assert server.server_address[1] == free_port
+        finally:
+            server.server_close()
+
+    def test_concurrent_requests_processed(self, tmp_path):
+        """ThreadingHTTPServer なので、ハンドラが少しブロックしても同時に複数リクエストを返せる。"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        server = mod.create_server(port=0, idle_seconds=0)
+        port = server.server_address[1]
+        _start_server_in_thread(server)
+        try:
+            results: list[int] = []
+            errors: list[BaseException] = []
+
+            def hit():
+                try:
+                    with urllib.request.urlopen(f"http://127.0.0.1:{port}/healthz", timeout=3) as resp:
+                        results.append(resp.status)
+                except BaseException as exc:  # pylint: disable=broad-except
+                    errors.append(exc)
+
+            threads = [threading.Thread(target=hit) for _ in range(5)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(timeout=5)
+            assert errors == []
+            assert results == [200, 200, 200, 200, 200]
+        finally:
+            server.shutdown()
+            server.server_close()
+
+
+class TestHealthzEndpoint:
+    """Phase A: /healthz が `200 OK` + `{"status":"ok","started_at":...}` を返す。"""
+
+    def test_healthz_returns_200_and_json(self, tmp_path):
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        server = mod.create_server(port=0, idle_seconds=0)
+        port = server.server_address[1]
+        _start_server_in_thread(server)
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/healthz") as resp:
+                assert resp.status == 200
+                assert "application/json" in resp.headers["Content-Type"]
+                payload = json.loads(resp.read())
+                assert payload["status"] == "ok"
+                # started_at は ISO8601 文字列
+                assert isinstance(payload["started_at"], str)
+                assert payload["started_at"] == server.started_at
+        finally:
+            server.shutdown()
+            server.server_close()
+
+
+class TestServerJsonLifecycle:
+    """Phase A: server.json を atomic write し、停止時に削除する。"""
+
+    def test_write_server_json_creates_file_with_required_fields(self, tmp_path):
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        target = tmp_path / "server.json"
+        info = {
+            "pid": 12345,
+            "port": 53412,
+            "url": "http://localhost:53412",
+            "started_at": "2026-04-27T10:00:00+00:00",
+        }
+        mod.write_server_json(target, info)
+        assert target.exists()
+        loaded = json.loads(target.read_text(encoding="utf-8"))
+        assert loaded == info
+
+    def test_write_server_json_uses_atomic_replace(self, tmp_path, monkeypatch):
+        """tmp に書いて os.replace で原子性を確保する実装になっていること。"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        target = tmp_path / "server.json"
+
+        replace_calls: list[tuple[str, str]] = []
+        original_replace = os.replace
+
+        def spy_replace(src, dst):
+            replace_calls.append((str(src), str(dst)))
+            return original_replace(src, dst)
+
+        monkeypatch.setattr(os, "replace", spy_replace)
+        info = {"pid": 1, "port": 1, "url": "u", "started_at": "t"}
+        mod.write_server_json(target, info)
+        assert len(replace_calls) == 1
+        src, dst = replace_calls[0]
+        assert dst == str(target)
+        # tmp ファイルは別パスで、replace 後に target だけ残る
+        assert src != dst
+        assert not Path(src).exists()
+
+    def test_write_server_json_creates_parent_directories(self, tmp_path):
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        target = tmp_path / "nested" / "dir" / "server.json"
+        mod.write_server_json(target, {"pid": 1, "port": 1, "url": "u", "started_at": "t"})
+        assert target.exists()
+
+    def test_remove_server_json_idempotent(self, tmp_path):
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        target = tmp_path / "server.json"
+        # ファイル不在時もエラーにならない
+        mod.remove_server_json(target)
+        target.write_text("{}", encoding="utf-8")
+        mod.remove_server_json(target)
+        assert not target.exists()
+        # 削除後の二重呼び出しもエラーにならない
+        mod.remove_server_json(target)
+
+
+class TestIdleWatchdog:
+    """Phase A: idle 経過で graceful shutdown / 0 で無効化 / リクエストで idle カウンタ reset。"""
+
+    def test_idle_for_returns_elapsed_seconds(self, tmp_path):
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        server = mod.create_server(port=0, idle_seconds=0)
+        try:
+            time.sleep(0.05)
+            elapsed = server.idle_for()
+            assert elapsed >= 0.04
+            assert elapsed < 1.0
+        finally:
+            server.server_close()
+
+    def test_request_resets_idle_counter(self, tmp_path):
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        server = mod.create_server(port=0, idle_seconds=0)
+        port = server.server_address[1]
+        _start_server_in_thread(server)
+        try:
+            time.sleep(0.1)
+            assert server.idle_for() >= 0.09
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/healthz") as resp:
+                resp.read()
+            # リクエスト直後は idle はほぼ 0
+            assert server.idle_for() < 0.05
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_watchdog_shuts_down_after_idle(self, tmp_path):
+        """idle_seconds 経過で server がシャットダウンする。"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        server = mod.create_server(port=0, idle_seconds=0.2)
+        t = _start_server_in_thread(server)
+        try:
+            t.join(timeout=3.0)
+            assert not t.is_alive(), "watchdog で serve_forever が exit していない"
+        finally:
+            server.server_close()
+
+    def test_watchdog_disabled_when_idle_seconds_zero(self, tmp_path):
+        """idle_seconds=0 で watchdog は起動せず、外部 shutdown まで生き続ける。"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        server = mod.create_server(port=0, idle_seconds=0)
+        t = _start_server_in_thread(server)
+        try:
+            time.sleep(0.5)
+            assert t.is_alive(), "idle_seconds=0 なのに自動停止した"
+        finally:
+            server.shutdown()
+            server.server_close()
+            t.join(timeout=2.0)
+
+
+class TestRunIntegration:
+    """Phase A: run() が server.json の write/remove を結線する。"""
+
+    def test_run_writes_server_json_with_pid_port_url(self, tmp_path):
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        server = mod.create_server(port=0, idle_seconds=0)
+        target = tmp_path / "server.json"
+
+        ready = threading.Event()
+
+        def runner():
+            mod.run(server, target, install_signals=False, on_ready=ready.set)
+
+        t = threading.Thread(target=runner, daemon=True)
+        t.start()
+        try:
+            assert ready.wait(timeout=2.0), "run() が ready シグナルを発火しなかった"
+            # server.json に required fields が揃っている
+            info = json.loads(target.read_text(encoding="utf-8"))
+            assert info["pid"] == os.getpid()
+            assert info["port"] == server.server_address[1]
+            assert info["url"] == f"http://localhost:{server.server_address[1]}"
+            assert info["started_at"] == server.started_at
+        finally:
+            server.shutdown()
+            t.join(timeout=2.0)
+
+    def test_run_removes_server_json_on_shutdown(self, tmp_path):
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        server = mod.create_server(port=0, idle_seconds=0)
+        target = tmp_path / "server.json"
+
+        ready = threading.Event()
+
+        def runner():
+            mod.run(server, target, install_signals=False, on_ready=ready.set)
+
+        t = threading.Thread(target=runner, daemon=True)
+        t.start()
+        try:
+            assert ready.wait(timeout=2.0)
+            assert target.exists()
+        finally:
+            server.shutdown()
+            t.join(timeout=2.0)
+        # serve_forever が exit した後、server.json は削除されている
+        assert not target.exists()
