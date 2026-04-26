@@ -667,3 +667,79 @@ class TestHTTPEndpoints:
         finally:
             server.shutdown()
             server.server_close()
+
+
+class TestGraphDataTooltip:
+    """Issue #17: sparkline と project stack のデータポイントに floating tooltip を追加。
+
+    - sparkline の各 dot に hover で {date} / {events} を表示
+    - stack の各 seg / legend に hover で {project} / {count} / {percent} を表示
+    - native title= 属性は廃止（OS tooltip との重複表示を避ける）
+    - 既存の `?` ヘルプポップアップとは視覚的に区別される
+    """
+
+    def test_template_has_data_tooltip_element(self, tmp_path):
+        """共有 floating tooltip 要素 (#dataTooltip) が body に存在する。"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        template = mod._HTML_TEMPLATE
+        assert 'id="dataTooltip"' in template
+
+    def test_template_has_data_tooltip_css(self, tmp_path):
+        """data-tip 用の CSS クラス（.data-tip）が定義されている。"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        template = mod._HTML_TEMPLATE
+        assert ".data-tip" in template
+        # fixed positioning でマウス追従できる
+        assert "position: fixed" in template
+
+    def test_data_tooltip_visually_distinct_from_help_pop(self, tmp_path):
+        """データ tooltip は help-pop と別クラスで定義され、視覚的に区別できる。"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        template = mod._HTML_TEMPLATE
+        # help-pop と data-tip は別の class 名
+        assert ".data-tip" in template
+        assert ".help-pop" in template
+        # data-tip は値中心なので mono フォントを使う
+        assert "data-tip" in template
+
+    def test_sparkline_dots_have_data_attributes(self, tmp_path):
+        """sparkline の dot に data-tip="daily" + data-d / data-c が付与される。"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        template = mod._HTML_TEMPLATE
+        # JS の dots 生成箇所で data-tip="daily" を埋め込んでいる
+        assert 'data-tip="daily"' in template
+        assert "data-d=" in template
+        assert "data-c=" in template
+
+    def test_project_stack_has_data_attributes(self, tmp_path):
+        """stack seg / legend の各行に data-tip="proj" + data-p / data-c / data-pct が付与される。"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        template = mod._HTML_TEMPLATE
+        assert 'data-tip="proj"' in template
+        assert "data-p=" in template
+        assert "data-pct=" in template
+
+    def test_no_native_title_on_project_stack_segments(self, tmp_path):
+        """seg と legend pn の native title= は削除済み（floating tooltip に置き換え）。"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        template = mod._HTML_TEMPLATE
+        # 削除前は `<div class="seg" title=` / `<div class="pn" title=` を含んでいた
+        assert '<div class="seg" title=' not in template
+        assert "class=\"seg\" title=" not in template
+        assert "class=\"pn\" title=" not in template
+
+    def test_data_tooltip_handler_attached(self, tmp_path):
+        """delegated mouseover ハンドラで data-tip 要素を捕捉している。"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        template = mod._HTML_TEMPLATE
+        # mouseover/mousemove/mouseout のいずれか + data-tip セレクタ
+        assert "mouseover" in template or "mouseenter" in template
+        assert "mousemove" in template
+        assert "[data-tip]" in template
+
+    def test_data_tooltip_has_aria_label_for_accessibility(self, tmp_path):
+        """hover 対象要素に aria-label を付与（最低限のキーボード/SR 対応）。"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        template = mod._HTML_TEMPLATE
+        # ranking 系（既存の `title=` 付き）はスコープ外。daily / proj に aria-label を付ける
+        assert "aria-label" in template
