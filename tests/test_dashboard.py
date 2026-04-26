@@ -229,16 +229,22 @@ class TestBuildDashboardData:
         assert data["health_alerts"][0]["session_id"] == "sess-011"
         assert data["health_alerts"][-1]["session_id"] == "sess-060"
 
-    def test_html_template_has_xss_escape_for_bar_labels(self, tmp_path):
+    def test_html_template_has_xss_escape_for_user_strings(self, tmp_path):
+        """ユーザー入力文字列（skill 名 / プロジェクト名）は必ず esc() を通すこと。"""
         mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
         template = mod._HTML_TEMPLATE
         assert "function esc(s)" in template
-        assert "esc(item[nameKey])" in template
+        # ranking 行 + project legend で esc() 通過
+        assert "esc(it.name)" in template
+        assert "esc(p.project)" in template
 
-    def test_bar_chart_uses_stacked_layout(self, tmp_path):
+    def test_ranking_uses_inline_gauge_layout(self, tmp_path):
+        """ランキングは行内に gauge-bar を持つレイアウト（旧 v0.2 の固定幅 bar-track ではない）。"""
         mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
-        assert "bar-track-row" in mod._HTML_TEMPLATE
-        assert "width: 130px" not in mod._HTML_TEMPLATE
+        template = mod._HTML_TEMPLATE
+        assert "gauge-bar" in template
+        assert "rank-row" in template
+        assert "width: 130px" not in template
 
     def test_project_breakdown_sorted_by_count(self, tmp_path):
         mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
