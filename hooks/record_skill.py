@@ -37,6 +37,18 @@ def _append_event(event: dict) -> None:
         f.write(json.dumps(event, ensure_ascii=False) + "\n")
 
 
+def _enrich_with_post_tool_use_meta(event: dict, data: dict) -> None:
+    if "duration_ms" in data:
+        event["duration_ms"] = data["duration_ms"]
+    if "permission_mode" in data:
+        event["permission_mode"] = data["permission_mode"]
+    if "tool_use_id" in data:
+        event["tool_use_id"] = data["tool_use_id"]
+    tool_response = data.get("tool_response")
+    if isinstance(tool_response, dict) and "success" in tool_response:
+        event["success"] = tool_response["success"]
+
+
 def _handle_post_tool_use(data: dict) -> None:
     if data.get("tool_name") != "Skill":
         return
@@ -49,6 +61,7 @@ def _handle_post_tool_use(data: dict) -> None:
         "session_id": data.get("session_id", ""),
         "timestamp": _now_iso(),
     }
+    _enrich_with_post_tool_use_meta(event, data)
     _append_event(event)
 
 

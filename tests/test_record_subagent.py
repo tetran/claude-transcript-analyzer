@@ -141,6 +141,128 @@ class TestPostToolUseAgent:
             assert "timestamp" in ev
 
 
+class TestPostToolUseSubagentMetaFields:
+    """Issue #6: PostToolUse の付加情報フィールド (duration_ms / success / permission_mode / tool_use_id)"""
+
+    def test_all_meta_fields_are_recorded(self, tmp_path):
+        usage_file = str(tmp_path / "usage.jsonl")
+        stdin = {
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Task",
+            "tool_input": {"subagent_type": "Explore", "description": "..."},
+            "tool_response": {"success": True},
+            "session_id": "abc123",
+            "cwd": "/Users/kkoichi/Developer/personal/chirper",
+            "duration_ms": 5000,
+            "permission_mode": "plan",
+            "tool_use_id": "toolu_01XYZ",
+        }
+        run_script(stdin, usage_file)
+        ev = read_events(usage_file)[0]
+        assert ev["duration_ms"] == 5000
+        assert ev["success"] is True
+        assert ev["permission_mode"] == "plan"
+        assert ev["tool_use_id"] == "toolu_01XYZ"
+
+    def test_success_false_is_preserved(self, tmp_path):
+        usage_file = str(tmp_path / "usage.jsonl")
+        stdin = {
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Agent",
+            "tool_input": {"subagent_type": "Plan"},
+            "tool_response": {"success": False},
+            "session_id": "s1",
+            "cwd": "/p",
+        }
+        run_script(stdin, usage_file)
+        assert read_events(usage_file)[0]["success"] is False
+
+    def test_meta_fields_are_omitted_when_absent(self, tmp_path):
+        """既存ログとの後方互換: 付加フィールドが入力に無いときはイベントにも入れない"""
+        usage_file = str(tmp_path / "usage.jsonl")
+        stdin = {
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Task",
+            "tool_input": {"subagent_type": "Explore", "description": "..."},
+            "session_id": "s1",
+            "cwd": "/p",
+        }
+        run_script(stdin, usage_file)
+        ev = read_events(usage_file)[0]
+        for key in ("duration_ms", "success", "permission_mode", "tool_use_id"):
+            assert key not in ev
+
+    def test_tool_response_without_success_does_not_add_success(self, tmp_path):
+        usage_file = str(tmp_path / "usage.jsonl")
+        stdin = {
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Task",
+            "tool_input": {"subagent_type": "Explore"},
+            "tool_response": {"summary": "done"},
+            "session_id": "s1",
+            "cwd": "/p",
+        }
+        run_script(stdin, usage_file)
+        assert "success" not in read_events(usage_file)[0]
+
+    def test_partial_meta_fields_only_added_when_present(self, tmp_path):
+        usage_file = str(tmp_path / "usage.jsonl")
+        stdin = {
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Task",
+            "tool_input": {"subagent_type": "Explore"},
+            "session_id": "s1",
+            "cwd": "/p",
+            "permission_mode": "auto",
+        }
+        run_script(stdin, usage_file)
+        ev = read_events(usage_file)[0]
+        assert ev["permission_mode"] == "auto"
+        assert "duration_ms" not in ev
+        assert "success" not in ev
+        assert "tool_use_id" not in ev
+
+    def test_existing_keys_remain_unchanged(self, tmp_path):
+        """後方互換: 既存の key (event_type / subagent_type / project / session_id / timestamp) は維持"""
+        usage_file = str(tmp_path / "usage.jsonl")
+        stdin = {
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Task",
+            "tool_input": {"subagent_type": "Explore"},
+            "tool_response": {"success": True},
+            "session_id": "abc123",
+            "cwd": "/Users/kkoichi/Developer/personal/chirper",
+            "duration_ms": 12,
+            "permission_mode": "default",
+            "tool_use_id": "toolu_01ABC",
+        }
+        run_script(stdin, usage_file)
+        ev = read_events(usage_file)[0]
+        assert ev["event_type"] == "subagent_start"
+        assert ev["subagent_type"] == "Explore"
+        assert ev["project"] == "chirper"
+        assert ev["session_id"] == "abc123"
+        assert "timestamp" in ev
+
+    def test_tool_input_null_with_meta_fields_still_works(self, tmp_path):
+        """tool_input が null でも meta フィールドは取り込まれる"""
+        usage_file = str(tmp_path / "usage.jsonl")
+        stdin = {
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Agent",
+            "tool_input": None,
+            "tool_response": {"success": True},
+            "session_id": "s1",
+            "cwd": "/p",
+            "duration_ms": 7,
+        }
+        run_script(stdin, usage_file)
+        ev = read_events(usage_file)[0]
+        assert ev["subagent_type"] == ""
+        assert ev["duration_ms"] == 7
+        assert ev["success"] is True
+
+
 class TestSubagentStartEvent:
     """SubagentStart フックイベントのテスト"""
 
