@@ -103,6 +103,31 @@ def aggregate_subagent_stats(events: list[dict]) -> dict[str, dict]:
     return stats
 
 
+def aggregate_session_stats(events: list[dict]) -> dict:
+    total_sessions = 0
+    resume_count = 0
+    compact_count = 0
+    permission_prompt_count = 0
+    for ev in events:
+        et = ev.get("event_type")
+        if et == "session_start":
+            total_sessions += 1
+            if ev.get("source") == "resume":
+                resume_count += 1
+        elif et == "compact_start":
+            compact_count += 1
+        elif et == "notification" and ev.get("notification_type") == "permission_prompt":
+            permission_prompt_count += 1
+    resume_rate = (resume_count / total_sessions) if total_sessions else 0.0
+    return {
+        "total_sessions": total_sessions,
+        "resume_count": resume_count,
+        "resume_rate": resume_rate,
+        "compact_count": compact_count,
+        "permission_prompt_count": permission_prompt_count,
+    }
+
+
 def _format_duration(ms: float | None) -> str:
     if ms is None:
         return "-"
@@ -114,8 +139,18 @@ def _format_duration(ms: float | None) -> str:
 def print_report(events: list[dict]) -> None:
     skill_stats = aggregate_skill_stats(events)
     subagent_stats = aggregate_subagent_stats(events)
+    session_stats = aggregate_session_stats(events)
 
     print(f"Total events: {len(events)}\n")
+
+    print("=== Sessions ===")
+    print(f"  Total sessions:       {session_stats['total_sessions']}")
+    if session_stats["total_sessions"]:
+        rate_pct = session_stats["resume_rate"] * 100
+        print(f"  Resume rate:          {session_stats['resume_count']} ({rate_pct:.0f}%)")
+    print(f"  Compact events:       {session_stats['compact_count']}")
+    print(f"  Permission prompts:   {session_stats['permission_prompt_count']}")
+    print()
 
     print("=== Skills (skill_tool + user_slash_command) ===")
     if skill_stats:

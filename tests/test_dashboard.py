@@ -291,6 +291,55 @@ class TestSubagentFailureAndDurationStats:
         assert item["failure_count"] == 1
 
 
+class TestSessionStats:
+    """Issue #9: セッション・コンテキスト・摩擦サマリ"""
+
+    def test_session_stats_counts_sessions(self, tmp_path):
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        events = [
+            {"event_type": "session_start", "source": "startup", "session_id": "s1", "project": "p", "timestamp": "2026-01-01T00:00:00+00:00"},
+            {"event_type": "session_start", "source": "resume", "session_id": "s2", "project": "p", "timestamp": "2026-01-02T00:00:00+00:00"},
+            {"event_type": "session_start", "source": "resume", "session_id": "s3", "project": "p", "timestamp": "2026-01-03T00:00:00+00:00"},
+        ]
+        data = mod.build_dashboard_data(events)
+        s = data["session_stats"]
+        assert s["total_sessions"] == 3
+        assert s["resume_count"] == 2
+        assert abs(s["resume_rate"] - (2 / 3)) < 1e-9
+
+    def test_session_stats_zero_when_no_sessions(self, tmp_path):
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        data = mod.build_dashboard_data([])
+        s = data["session_stats"]
+        assert s["total_sessions"] == 0
+        assert s["resume_count"] == 0
+        assert s["resume_rate"] == 0.0
+        assert s["compact_count"] == 0
+        assert s["permission_prompt_count"] == 0
+
+    def test_session_stats_compact_count(self, tmp_path):
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        events = [
+            {"event_type": "compact_start", "trigger": "auto", "session_id": "s1", "project": "p", "timestamp": "2026-01-01T00:00:00+00:00"},
+            {"event_type": "compact_end", "trigger": "auto", "session_id": "s1", "project": "p", "timestamp": "2026-01-01T00:00:10+00:00"},
+            {"event_type": "compact_start", "trigger": "manual", "session_id": "s1", "project": "p", "timestamp": "2026-01-01T01:00:00+00:00"},
+        ]
+        data = mod.build_dashboard_data(events)
+        # compact_start のみカウント（pair で重複しない）
+        assert data["session_stats"]["compact_count"] == 2
+
+    def test_session_stats_permission_prompt_count(self, tmp_path):
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        events = [
+            {"event_type": "notification", "notification_type": "permission_prompt", "session_id": "s1", "project": "p", "timestamp": "2026-01-01T00:00:00+00:00"},
+            {"event_type": "notification", "notification_type": "idle_prompt", "session_id": "s1", "project": "p", "timestamp": "2026-01-01T00:01:00+00:00"},
+            {"event_type": "notification", "notification_type": "permission_prompt", "session_id": "s1", "project": "p", "timestamp": "2026-01-01T00:02:00+00:00"},
+        ]
+        data = mod.build_dashboard_data(events)
+        # permission_prompt のみカウント
+        assert data["session_stats"]["permission_prompt_count"] == 2
+
+
 class TestHTTPEndpoints:
     def _start_server(self, mod):
         server = socketserver.TCPServer(("127.0.0.1", 0), mod.DashboardHandler)

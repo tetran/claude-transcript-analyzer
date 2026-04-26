@@ -158,6 +158,35 @@ class TestAggregateSkillStats:
         assert abs(stats["commit"]["failure_rate"] - 0.5) < 1e-9
 
 
+class TestAggregateSessionStats:
+    """Issue #9: セッション・コンテキスト・摩擦サマリ"""
+
+    def test_session_stats_counts_and_resume_rate(self, tmp_path):
+        usage_file = tmp_path / "usage.jsonl"
+        sample_events = [
+            {"event_type": "session_start", "source": "startup", "session_id": "s1", "project": "p", "timestamp": "2026-01-01T00:00:00+00:00"},
+            {"event_type": "session_start", "source": "resume", "session_id": "s2", "project": "p", "timestamp": "2026-01-02T00:00:00+00:00"},
+        ]
+        write_events(usage_file, sample_events)
+        mod = load_summary_module(usage_file)
+        events = mod.load_events()
+        s = mod.aggregate_session_stats(events)
+        assert s["total_sessions"] == 2
+        assert s["resume_count"] == 1
+        assert s["resume_rate"] == 0.5
+
+    def test_session_stats_zero_when_empty(self, tmp_path):
+        usage_file = tmp_path / "usage.jsonl"
+        write_events(usage_file, [])
+        mod = load_summary_module(usage_file)
+        events = mod.load_events()
+        s = mod.aggregate_session_stats(events)
+        assert s["total_sessions"] == 0
+        assert s["resume_rate"] == 0.0
+        assert s["compact_count"] == 0
+        assert s["permission_prompt_count"] == 0
+
+
 class TestAggregateSubagentStats:
     """Issue #8: 失敗率と平均 duration を含む拡張集計"""
 

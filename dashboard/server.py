@@ -117,6 +117,31 @@ def aggregate_projects(events: list[dict], top_n: int = TOP_N) -> list[dict]:
     return [{"project": project, "count": count} for project, count in counter.most_common(top_n)]
 
 
+def aggregate_session_stats(events: list[dict]) -> dict:
+    total_sessions = 0
+    resume_count = 0
+    compact_count = 0
+    permission_prompt_count = 0
+    for ev in events:
+        et = ev.get("event_type")
+        if et == "session_start":
+            total_sessions += 1
+            if ev.get("source") == "resume":
+                resume_count += 1
+        elif et == "compact_start":
+            compact_count += 1
+        elif et == "notification" and ev.get("notification_type") == "permission_prompt":
+            permission_prompt_count += 1
+    resume_rate = (resume_count / total_sessions) if total_sessions else 0.0
+    return {
+        "total_sessions": total_sessions,
+        "resume_count": resume_count,
+        "resume_rate": resume_rate,
+        "compact_count": compact_count,
+        "permission_prompt_count": permission_prompt_count,
+    }
+
+
 _MAX_ALERTS = 50
 
 
@@ -143,6 +168,7 @@ def build_dashboard_data(events: list[dict]) -> dict:
         "subagent_ranking": aggregate_subagents(events),
         "daily_trend": aggregate_daily(events),
         "project_breakdown": aggregate_projects(events),
+        "session_stats": aggregate_session_stats(events),
         "health_alerts": load_health_alerts(),
     }
 
@@ -214,6 +240,22 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
       <div class="stat-card">
         <div class="label">プロジェクト数</div>
         <div class="value" id="project-count">-</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">セッション数</div>
+        <div class="value" id="session-total">-</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Resume 率</div>
+        <div class="value" id="resume-rate">-</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Compact 数</div>
+        <div class="value" id="compact-count">-</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Permission Prompt</div>
+        <div class="value" id="permission-prompt-count">-</div>
       </div>
     </div>
 
@@ -295,6 +337,12 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
         document.getElementById('skill-count').textContent = data.skill_ranking.length;
         document.getElementById('subagent-count').textContent = data.subagent_ranking.length;
         document.getElementById('project-count').textContent = data.project_breakdown.length;
+        const ss = data.session_stats || {};
+        document.getElementById('session-total').textContent = ss.total_sessions ?? 0;
+        const rrPct = Math.round((ss.resume_rate || 0) * 100);
+        document.getElementById('resume-rate').textContent = (ss.total_sessions ? rrPct + '%' : '-');
+        document.getElementById('compact-count').textContent = ss.compact_count ?? 0;
+        document.getElementById('permission-prompt-count').textContent = ss.permission_prompt_count ?? 0;
 
         renderBarChart('skill-chart', data.skill_ranking, 'name', 'count', 'bar-fill-skill');
         renderBarChart('subagent-chart', data.subagent_ranking, 'name', 'count', 'bar-fill-subagent');
