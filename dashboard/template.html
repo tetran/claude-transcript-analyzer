@@ -426,6 +426,61 @@
     padding: 1px 5px;
     border-radius: 4px;
   }
+
+  /* ---------- data tooltip (graph data points) ---------- */
+  /* `?` ヘルプ (.help-pop) は説明テキスト中心、こちらはデータ値中心。
+     位置はマウス追従、フォントは mono で値を強調、左に accent stripe。 */
+  .data-tip {
+    position: fixed;
+    z-index: 60;
+    top: 0; left: 0;
+    pointer-events: none;
+    background: var(--bg-app);
+    border: 1px solid var(--line-strong);
+    border-left: 3px solid var(--peri);
+    border-radius: var(--r-sm);
+    padding: 6px 10px 7px;
+    font-family: var(--ff-mono);
+    font-size: 11.5px;
+    line-height: 1.45;
+    color: var(--ink);
+    box-shadow:
+      0 1px 2px rgba(0,0,0,0.30),
+      0 8px 24px rgba(0,0,0,0.45);
+    white-space: nowrap;
+    visibility: hidden;
+    opacity: 0;
+    transform: translate3d(0,0,0);
+    transition: opacity 90ms ease;
+  }
+  .data-tip[data-show="true"] { visibility: visible; opacity: 1; }
+  .data-tip[data-kind="proj"] { border-left-color: var(--peach); }
+  .data-tip .lbl {
+    color: var(--ink-faint);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-right: 6px;
+    font-family: var(--ff-sans);
+    font-weight: 500;
+  }
+  .data-tip .val {
+    color: var(--ink);
+    font-weight: 600;
+  }
+  .data-tip .sep { color: var(--ink-faint); margin: 0 6px; }
+  .data-tip .ttl {
+    display: block;
+    color: var(--ink);
+    font-weight: 600;
+    font-size: 12px;
+    margin-bottom: 2px;
+    font-family: var(--ff-mono);
+  }
+  .stack .seg { cursor: default; }
+  .stack-legend .leg-row { cursor: default; }
+  /* sparkline 用の hit-area circle はマウスを受ける */
+  .spark-svg .dot-hit { cursor: default; }
 </style>
 </head>
 <body>
@@ -529,6 +584,8 @@
       <span>stdlib only · no third-party js</span>
     </footer>
   </div>
+
+  <div class="data-tip" id="dataTooltip" role="tooltip" aria-hidden="true"></div>
 
 <script>
 (async function(){
@@ -653,10 +710,17 @@
     const peakIdx = days.findIndex(d => d.count === max);
     const peakDate = days[peakIdx].date;
 
-    const dots = days.map((d,i) => d.count > 0
-      ? '<circle cx="' + xs(i).toFixed(2) + '" cy="' + ys(d.count).toFixed(2) + '" r="1.7" fill="#8aa6ff" fill-opacity="0.85"/>'
-      : ''
-    ).join('');
+    const dots = days.map((d,i) => {
+      if (d.count <= 0) return '';
+      const cx = xs(i).toFixed(2);
+      const cy = ys(d.count).toFixed(2);
+      const al = d.date + ': ' + d.count + ' events';
+      // 可視 dot + 透明な hit-area circle（hover usability 向上 + data 属性キャリア）
+      return '<circle cx="' + cx + '" cy="' + cy + '" r="1.7" fill="#8aa6ff" fill-opacity="0.85"/>' +
+        '<circle class="dot-hit" cx="' + cx + '" cy="' + cy + '" r="6" fill="transparent" ' +
+        'data-tip="daily" data-d="' + d.date + '" data-c="' + d.count + '" ' +
+        'tabindex="0" role="img" aria-label="' + al + '"/>';
+    }).join('');
 
     const ticks = days.map((d,i) => i % Math.ceil(days.length/8) === 0
       ? '<text x="' + xs(i).toFixed(2) + '" y="' + (H - 3) + '" font-size="9.5" font-family="JetBrains Mono, monospace" fill="#7e8290" text-anchor="middle">' + d.date.slice(5) + '</text>'
@@ -702,16 +766,22 @@
   const projs = (data.project_breakdown||[]);
   const projTotal = projs.reduce((s,p)=>s+p.count, 0);
   const palette = ['#6fe3c8','#ff8a76','#8aa6ff','#ffc97a','#ff6f9c','#a78bfa','#7ed3a3','#ffa86b','#5dc9e2','#e6a8e8'];
+  function projPct(p) { return projTotal ? (p.count/projTotal*100).toFixed(1) + '%' : '0.0%'; }
+  function projAria(p, pct) { return esc(p.project) + ': ' + fmtN(p.count) + ' events (' + pct + ')'; }
   document.getElementById('stack').innerHTML = projs.map((p, i) => {
     const w = projTotal ? (p.count/projTotal*100) : 0;
-    return '<div class="seg" title="' + esc(p.project) + ' · ' + p.count + '" style="background:' + palette[i % palette.length] + ';width:' + w + '%"></div>';
+    const pct = projPct(p);
+    return '<div class="seg" data-tip="proj" data-p="' + esc(p.project) + '" data-c="' + p.count + '" data-pct="' + pct + '" ' +
+      'tabindex="0" role="img" aria-label="' + projAria(p, pct) + '" ' +
+      'style="background:' + palette[i % palette.length] + ';width:' + w + '%"></div>';
   }).join('');
   document.getElementById('stackLegend').innerHTML = projs.map((p, i) => {
-    const pct = projTotal ? (p.count/projTotal*100).toFixed(1) + '%' : '0.0%';
+    const pct = projPct(p);
     const display = p.project.length > 28 ? p.project.slice(0,26) + '…' : p.project;
-    return '<div class="leg-row">' +
+    return '<div class="leg-row" data-tip="proj" data-p="' + esc(p.project) + '" data-c="' + p.count + '" data-pct="' + pct + '" ' +
+      'tabindex="0" aria-label="' + projAria(p, pct) + '">' +
       '<div class="sw" style="background:' + palette[i % palette.length] + '"></div>' +
-      '<div class="pn" title="' + esc(p.project) + '">' + esc(display) + '</div>' +
+      '<div class="pn">' + esc(display) + '</div>' +
       '<div class="pc">' + fmtN(p.count) + '</div>' +
       '<div class="pp">' + pct + '</div>' +
     '</div>';
@@ -782,6 +852,106 @@
       const btn = document.querySelector('button[data-help-id="' + pop.id + '"]');
       if (btn) placePop(pop, btn);
     });
+  });
+
+  // ============================================================
+  //  Data tooltip (graph data points, [data-tip] elements)
+  // ============================================================
+  const dtip = document.getElementById('dataTooltip');
+  let dtipActive = null;
+
+  function dtipShow(html, kind) {
+    dtip.innerHTML = html;
+    dtip.setAttribute('data-kind', kind);
+    dtip.setAttribute('data-show', 'true');
+    dtip.setAttribute('aria-hidden', 'false');
+  }
+  function dtipHide() {
+    dtip.removeAttribute('data-show');
+    dtip.setAttribute('aria-hidden', 'true');
+    dtipActive = null;
+  }
+  function dtipMove(clientX, clientY) {
+    const offset = 14;
+    let x = clientX + offset;
+    let y = clientY + offset;
+    const tw = dtip.offsetWidth;
+    const th = dtip.offsetHeight;
+    if (x + tw > window.innerWidth - 8) x = clientX - offset - tw;
+    if (y + th > window.innerHeight - 8) y = clientY - offset - th;
+    if (x < 4) x = 4;
+    if (y < 4) y = 4;
+    dtip.style.transform = 'translate3d(' + x + 'px,' + y + 'px,0)';
+  }
+  function dtipBuild(el) {
+    const kind = el.getAttribute('data-tip');
+    if (kind === 'daily') {
+      const d = el.getAttribute('data-d');
+      const c = el.getAttribute('data-c');
+      return {
+        kind: 'daily',
+        html: '<span class="ttl">' + esc(d) + '</span>' +
+              '<span class="lbl">events</span><span class="val">' + fmtN(c) + '</span>'
+      };
+    }
+    if (kind === 'proj') {
+      const p = el.getAttribute('data-p');
+      const c = el.getAttribute('data-c');
+      const pct = el.getAttribute('data-pct');
+      return {
+        kind: 'proj',
+        html: '<span class="ttl">' + esc(p) + '</span>' +
+              '<span class="lbl">events</span><span class="val">' + fmtN(c) + '</span>' +
+              '<span class="sep">·</span>' +
+              '<span class="lbl">share</span><span class="val">' + esc(pct) + '</span>'
+      };
+    }
+    return null;
+  }
+
+  document.addEventListener('mouseover', function(e) {
+    const el = e.target.closest('[data-tip]');
+    if (!el) return;
+    if (el !== dtipActive) {
+      const info = dtipBuild(el);
+      if (!info) return;
+      dtipShow(info.html, info.kind);
+      dtipActive = el;
+    }
+    dtipMove(e.clientX, e.clientY);
+  });
+
+  document.addEventListener('mousemove', function(e) {
+    if (!dtipActive) return;
+    const el = e.target.closest('[data-tip]');
+    if (el === dtipActive) {
+      dtipMove(e.clientX, e.clientY);
+    }
+  });
+
+  document.addEventListener('mouseout', function(e) {
+    if (!dtipActive) return;
+    const el = e.target.closest('[data-tip]');
+    if (el !== dtipActive) return;
+    if (e.relatedTarget && dtipActive.contains(e.relatedTarget)) return;
+    dtipHide();
+  });
+
+  // keyboard fallback: focus する要素にも tooltip を出す
+  document.addEventListener('focusin', function(e) {
+    const el = e.target.closest('[data-tip]');
+    if (!el) return;
+    const info = dtipBuild(el);
+    if (!info) return;
+    dtipShow(info.html, info.kind);
+    dtipActive = el;
+    const r = el.getBoundingClientRect();
+    dtipMove(r.right, r.bottom);
+  });
+
+  document.addEventListener('focusout', function(e) {
+    const el = e.target.closest('[data-tip]');
+    if (el && el === dtipActive) dtipHide();
   });
 })();
 </script>
