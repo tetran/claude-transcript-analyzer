@@ -362,6 +362,179 @@ class TestUserPromptSubmit:
         assert events[0]["skill"] == "/codex-review"
 
 
+class TestUserPromptExpansion:
+    """Issue #7: UserPromptExpansion を観測ポイントとして追加（XML 正規表現脱却）"""
+
+    def test_slash_command_expansion_is_recorded(self, tmp_path):
+        usage_file = str(tmp_path / "usage.jsonl")
+        stdin = {
+            "hook_event_name": "UserPromptExpansion",
+            "expansion_type": "slash_command",
+            "command_name": "insights",
+            "command_args": "",
+            "command_source": "plugin",
+            "prompt": "/insights",
+            "session_id": "abc123",
+            "cwd": "/Users/kkoichi/Developer/personal/chirper",
+        }
+        result = run_script(stdin, usage_file)
+        assert result.returncode == 0
+        events = read_events(usage_file)
+        assert len(events) == 1
+        ev = events[0]
+        assert ev["event_type"] == "user_slash_command"
+        assert ev["skill"] == "/insights"
+        assert ev["project"] == "chirper"
+        assert ev["session_id"] == "abc123"
+        assert "timestamp" in ev
+
+    def test_command_name_with_leading_slash_preserved(self, tmp_path):
+        """command_name が既に '/' で始まっとっても二重にならん"""
+        usage_file = str(tmp_path / "usage.jsonl")
+        stdin = {
+            "hook_event_name": "UserPromptExpansion",
+            "expansion_type": "slash_command",
+            "command_name": "/insights",
+            "session_id": "s1",
+            "cwd": "/p",
+        }
+        run_script(stdin, usage_file)
+        ev = read_events(usage_file)[0]
+        assert ev["skill"] == "/insights"
+
+    def test_mcp_prompt_expansion_is_ignored(self, tmp_path):
+        """expansion_type が slash_command 以外（mcp_prompt 等）は記録せん"""
+        usage_file = str(tmp_path / "usage.jsonl")
+        stdin = {
+            "hook_event_name": "UserPromptExpansion",
+            "expansion_type": "mcp_prompt",
+            "command_name": "some-mcp-prompt",
+            "session_id": "s1",
+            "cwd": "/p",
+        }
+        run_script(stdin, usage_file)
+        assert read_events(usage_file) == []
+
+    def test_builtin_command_expansion_is_ignored(self, tmp_path):
+        """組み込みコマンド（/clear など）の expansion は記録せん"""
+        usage_file = str(tmp_path / "usage.jsonl")
+        for name in ("clear", "help", "exit", "compact"):
+            stdin = {
+                "hook_event_name": "UserPromptExpansion",
+                "expansion_type": "slash_command",
+                "command_name": name,
+                "session_id": "s1",
+                "cwd": "/p",
+            }
+            run_script(stdin, usage_file)
+        assert read_events(usage_file) == []
+
+    def test_empty_command_name_is_ignored(self, tmp_path):
+        usage_file = str(tmp_path / "usage.jsonl")
+        stdin = {
+            "hook_event_name": "UserPromptExpansion",
+            "expansion_type": "slash_command",
+            "command_name": "",
+            "session_id": "s1",
+            "cwd": "/p",
+        }
+        run_script(stdin, usage_file)
+        assert read_events(usage_file) == []
+
+
+class TestUserPromptExpansionDedup:
+    """Issue #7: Expansion + Submit 連続発火でダブルカウントせん"""
+
+    def _expansion(self, name: str, session: str = "s1", cwd: str = "/Users/kkoichi/Developer/personal/chirper") -> dict:
+        return {
+            "hook_event_name": "UserPromptExpansion",
+            "expansion_type": "slash_command",
+            "command_name": name,
+            "session_id": session,
+            "cwd": cwd,
+        }
+
+    def _submit(self, command: str, session: str = "s1", cwd: str = "/Users/kkoichi/Developer/personal/chirper") -> dict:
+        return {
+            "hook_event_name": "UserPromptSubmit",
+            "prompt": f"<command-name>{command}</command-name>",
+            "session_id": session,
+            "cwd": cwd,
+        }
+
+    def test_expansion_then_submit_records_only_once(self, tmp_path):
+        """同一 session/command の連続発火 → 1 件のみ"""
+        usage_file = str(tmp_path / "usage.jsonl")
+        run_script(self._expansion("insights"), usage_file)
+        run_script(self._submit("/insights"), usage_file)
+        events = read_events(usage_file)
+        assert len(events) == 1
+        assert events[0]["event_type"] == "user_slash_command"
+        assert events[0]["skill"] == "/insights"
+
+    def test_submit_alone_still_records(self, tmp_path):
+        """UserPromptExpansion が来ない経路では従来通り Submit から記録（fallback）"""
+        usage_file = str(tmp_path / "usage.jsonl")
+        run_script(self._submit("/codex-review"), usage_file)
+        events = read_events(usage_file)
+        assert len(events) == 1
+        assert events[0]["skill"] == "/codex-review"
+
+    def test_different_command_does_not_dedup(self, tmp_path):
+        usage_file = str(tmp_path / "usage.jsonl")
+        run_script(self._expansion("insights"), usage_file)
+        run_script(self._submit("/codex-review"), usage_file)
+        events = read_events(usage_file)
+        assert len(events) == 2
+        assert {e["skill"] for e in events} == {"/insights", "/codex-review"}
+
+    def test_different_session_does_not_dedup(self, tmp_path):
+        usage_file = str(tmp_path / "usage.jsonl")
+        run_script(self._expansion("insights", session="sA"), usage_file)
+        run_script(self._submit("/insights", session="sB"), usage_file)
+        events = read_events(usage_file)
+        assert len(events) == 2
+
+    def test_two_unrelated_expansions_both_recorded(self, tmp_path):
+        usage_file = str(tmp_path / "usage.jsonl")
+        run_script(self._expansion("insights"), usage_file)
+        run_script(self._expansion("codex-review"), usage_file)
+        events = read_events(usage_file)
+        assert len(events) == 2
+        assert {e["skill"] for e in events} == {"/insights", "/codex-review"}
+
+    def test_dedup_window_is_finite(self, tmp_path, monkeypatch):
+        """時間窓を越えた古い expansion とは dedup されへん（fallback で記録される）"""
+        usage_file = str(tmp_path / "usage.jsonl")
+        old_event = {
+            "event_type": "user_slash_command",
+            "skill": "/insights",
+            "args": "",
+            "project": "chirper",
+            "session_id": "s1",
+            "timestamp": "2020-01-01T00:00:00+00:00",
+        }
+        Path(usage_file).write_text(json.dumps(old_event) + "\n", encoding="utf-8")
+        run_script(self._submit("/insights"), usage_file)
+        events = read_events(usage_file)
+        assert len(events) == 2
+
+    def test_plain_slash_command_after_expansion_is_deduped(self, tmp_path):
+        """<command-name> タグ無しのプレーン slash コマンドも dedup 対象"""
+        usage_file = str(tmp_path / "usage.jsonl")
+        run_script(self._expansion("codex-review"), usage_file)
+        plain_submit = {
+            "hook_event_name": "UserPromptSubmit",
+            "prompt": "/codex-review",
+            "session_id": "s1",
+            "cwd": "/Users/kkoichi/Developer/personal/chirper",
+        }
+        run_script(plain_submit, usage_file)
+        events = read_events(usage_file)
+        assert len(events) == 1
+        assert events[0]["skill"] == "/codex-review"
+
+
 class TestEdgeCases:
     def test_invalid_json_exits_cleanly(self, tmp_path):
         env = os.environ.copy()

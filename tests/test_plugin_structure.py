@@ -63,6 +63,11 @@ class TestHooksJson:
         data = json.loads(self.hooks_json_path.read_text(encoding="utf-8"))
         assert "UserPromptSubmit" in data["hooks"]
 
+    def test_has_user_prompt_expansion(self):
+        """Issue #7: UserPromptExpansion でスラッシュコマンド展開を直接観測"""
+        data = json.loads(self.hooks_json_path.read_text(encoding="utf-8"))
+        assert "UserPromptExpansion" in data["hooks"]
+
     def test_has_stop(self):
         data = json.loads(self.hooks_json_path.read_text(encoding="utf-8"))
         assert "Stop" in data["hooks"]
