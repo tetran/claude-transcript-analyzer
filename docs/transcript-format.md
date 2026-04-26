@@ -205,7 +205,10 @@ Hook スクリプトは標準入力で JSON を受け取る。共通フィール
 | `expansion_type` | string | `slash_command` のみ採用 |
 | `command_name` | string | スキル名（`/` プレフィクスは付かないことがある） |
 
-両方とも発火するため、`record_skill.py` は 5 秒以内の同一 (session, command) を重複と見なして抑止する。
+両方とも発火するため、`record_skill.py` は記録時に `source: "expansion" | "submit"` を付与し、submit 経路の dedup は **source!="submit" のレコードに対してのみ** 5 秒以内の重複として抑止する。
+これにより expansion→submit の二重発火は 1 件にまとめつつ、expansion が来ない経路での submit 連打は両方記録される。
+
+> **既知の制約 (mixed-mode dedup)**: 1 回目が expansion+submit ペアで発火し、2 回目が submit のみ（expansion 落ち）で発火する mixed-mode シナリオでは、2 回目の submit が直前の expansion を見て dedup されてしまい undercount になる。append-only ログで「ペア消費」状態を持てない構造的制約。実機の Claude Code は通常両方発火するため実害は限定的。
 
 ### `SubagentStart` / `SubagentStop`
 
@@ -216,9 +219,21 @@ Hook スクリプトは標準入力で JSON を受け取る。共通フィール
 | `duration_ms` | number | 実行時間（Stop 時） |
 | `success` | bool | 成否（Stop 時） |
 
-> **設計メモ — 二重発火**
-> サブエージェント起動は `PostToolUse(Task\|Agent)` と `SubagentStart` の両方が発火し、本実装はどちらも `event_type: subagent_start` として記録する。
-> `tool_use_id` の有無で経路を区別できる。詳細は `CLAUDE.md` の同名セクションを参照。
+> **設計メモ — 観測点の役割分担**
+> `PostToolUse(Task\|Agent)` を **正規観測点** として `event_type: subagent_start` で記録する（count 集計の主ソース）。
+> `SubagentStart` hook 由来は補助観測として `event_type: subagent_lifecycle_start` で別個に記録する。
+> 集計側 (`subagent_metrics.aggregate_subagent_metrics`) は `(session_id, subagent_type)` バケット内で
+> 両ソースを timestamp 順マージし `INVOCATION_MERGE_WINDOW_SECONDS` (1 秒) 以内なら同一 invocation の重複扱い、
+> それ以上離れていれば別 invocation として count する。これにより：
+> - 両 hook 並列発火 → 1 invocation（重複統合）
+> - PostToolUse 不在で lifecycle のみ → lifecycle 件数だけ invocation
+> - 起動失敗 (start) と独立した lifecycle → 別 invocation として両方カウント
+>
+> ヘッドラインメトリクス (`total_events` / `daily_trend` / `project_breakdown`) も
+> `subagent_metrics.usage_invocation_events()` 経由で同じ invocation 同定を使い、
+> 各 invocation の代表イベント (start を優先、無ければ lifecycle) 1 件だけを反映する。
+> これで lifecycle-only invocation も headline に現れ、`subagent_ranking` と数字が必ず一致する。
+> 詳細は `CLAUDE.md` の同名セクションを参照。
 
 ### `SessionStart` / `SessionEnd`
 
@@ -239,7 +254,10 @@ Hook スクリプトは標準入力で JSON を受け取る。共通フィール
 
 | フィールド | 型 | 説明 |
 |-----------|----|------|
-| `notification_type` | string | `idle` / `permission` 等 |
+| `notification_type` | string | `permission` / `permission_prompt` / `idle` / `idle_prompt` 等 |
+
+> 集計側 (`dashboard/server.py` / `reports/summary.py`) では `permission` と `permission_prompt` を同一視して
+> permission_prompt_count に加算する（公式仕様の短縮形と過去実装の値ゆれを吸収）。
 
 ### `InstructionsLoaded`
 

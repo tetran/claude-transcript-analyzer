@@ -594,6 +594,30 @@ class TestUserPromptExpansionDedup:
         events = read_events(usage_file)
         assert len(events) == 2
 
+    def test_two_consecutive_submits_without_expansion_both_recorded(self, tmp_path):
+        """Codex Finding A: UserPromptExpansion が来ない経路では submit 連打も
+        両方記録される（dedup は expansion 由来との衝突に限定）"""
+        usage_file = str(tmp_path / "usage.jsonl")
+        run_script(self._submit("/insights"), usage_file)
+        run_script(self._submit("/insights"), usage_file)
+        events = read_events(usage_file)
+        assert len(events) == 2
+        assert all(e["skill"] == "/insights" for e in events)
+
+    def test_submit_records_source_field(self, tmp_path):
+        """submit 由来のレコードは source='submit' タグ付き"""
+        usage_file = str(tmp_path / "usage.jsonl")
+        run_script(self._submit("/codex-review"), usage_file)
+        events = read_events(usage_file)
+        assert events[0].get("source") == "submit"
+
+    def test_expansion_records_source_field(self, tmp_path):
+        """expansion 由来のレコードは source='expansion' タグ付き"""
+        usage_file = str(tmp_path / "usage.jsonl")
+        run_script(self._expansion("insights"), usage_file)
+        events = read_events(usage_file)
+        assert events[0].get("source") == "expansion"
+
     def test_plain_slash_command_after_expansion_is_deduped(self, tmp_path):
         """<command-name> タグ無しのプレーン slash コマンドも dedup 対象"""
         usage_file = str(tmp_path / "usage.jsonl")

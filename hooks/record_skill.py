@@ -126,6 +126,10 @@ def _read_recent_events_tail() -> list[dict]:
 
 
 def _is_recent_duplicate_slash_command(session_id: str, command: str) -> bool:
+    """submit ハンドラから呼ばれる dedup 判定。
+    UserPromptExpansion 由来 (source != "submit") のレコードに対してのみ重複と判定する。
+    submit 連打は別個の操作として両方記録するため、source=="submit" のレコードはマッチしない。
+    過去フォーマット (source 欄なし) は expansion 由来とみなして従来挙動を維持。"""
     now = datetime.now(timezone.utc)
     for ev in reversed(_read_recent_events_tail()):
         if ev.get("event_type") != "user_slash_command":
@@ -133,6 +137,8 @@ def _is_recent_duplicate_slash_command(session_id: str, command: str) -> bool:
         if ev.get("session_id") != session_id:
             continue
         if ev.get("skill") != command:
+            continue
+        if ev.get("source") == "submit":
             continue
         ts_str = ev.get("timestamp")
         if not ts_str:
@@ -159,6 +165,7 @@ def _handle_user_prompt_expansion(data: dict) -> None:
         "event_type": "user_slash_command",
         "skill": command,
         "args": "",
+        "source": "expansion",
         "project": _project_from_cwd(data.get("cwd", "")),
         "session_id": data.get("session_id", ""),
         "timestamp": _now_iso(),
@@ -186,6 +193,7 @@ def _handle_user_prompt_submit(data: dict) -> None:
         "event_type": "user_slash_command",
         "skill": command,
         "args": "",
+        "source": "submit",
         "project": _project_from_cwd(data.get("cwd", "")),
         "session_id": session_id,
         "timestamp": _now_iso(),

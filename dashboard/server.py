@@ -1,10 +1,14 @@
 """dashboard/server.py — ローカル HTTP サーバーでダッシュボードを提供する。"""
 import json
 import os
+import sys
 from collections import Counter
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from subagent_metrics import aggregate_subagent_metrics, usage_invocation_events
 
 _DEFAULT_PATH = Path.home() / ".claude" / "transcript-analyzer" / "usage.jsonl"
 DATA_FILE = Path(os.environ.get("USAGE_JSONL", str(_DEFAULT_PATH)))
@@ -15,6 +19,32 @@ ALERTS_FILE = Path(os.environ.get("HEALTH_ALERTS_JSONL", str(_DEFAULT_ALERTS_PAT
 PORT = int(os.environ.get("DASHBOARD_PORT", "8080"))
 
 TOP_N = 10
+
+# Notification.notification_type は公式仕様で `permission`、過去実装/テストでは `permission_prompt` を観測。
+# 両方を許可ダイアログ系としてカウントする。
+_PERMISSION_NOTIFICATION_TYPES = frozenset({"permission", "permission_prompt"})
+
+# total_events / aggregate_daily / aggregate_projects はプロジェクト目的の
+# 「Skills と Subagents の使用状況」を示すメトリクスなので、usage 系イベントだけで集計する。
+# session_*, notification, instructions_loaded, compact_*, subagent_stop は session_stats /
+# health_alerts 等に分かれて表示されるため、ここで二重カウントしない。
+_SKILL_USAGE_EVENT_TYPES = frozenset({
+    "skill_tool",
+    "user_slash_command",
+})
+
+
+def _filter_usage_events(events: list[dict]) -> list[dict]:
+    """headline 集計用に usage 系イベントを返す。subagent は invocation 単位 dedup。
+
+    `subagent_start` (PostToolUse 由来) と `subagent_lifecycle_start` (SubagentStart 由来) は
+    通常ペアで発火し、PostToolUse が flaky / 不在な環境では lifecycle のみが届く。
+    `usage_invocation_events()` で `aggregate_subagent_metrics()` と同じ invocation 同定を行い、
+    各 invocation の代表イベント 1 件だけを採用することで、subagent_ranking と
+    total_events / daily_trend / project_breakdown を必ず一致させる。
+    """
+    skill_events = [ev for ev in events if ev.get("event_type") in _SKILL_USAGE_EVENT_TYPES]
+    return skill_events + usage_invocation_events(events)
 
 
 def _now_iso() -> str:
@@ -61,41 +91,9 @@ def aggregate_skills(events: list[dict], top_n: int = TOP_N) -> list[dict]:
 
 
 def aggregate_subagents(events: list[dict], top_n: int = TOP_N) -> list[dict]:
-    counter: Counter = Counter()
-    failure_counter: Counter = Counter()
-    stop_durations: dict[str, list[float]] = {}
-    start_durations: dict[str, list[float]] = {}
-    for ev in events:
-        et = ev.get("event_type")
-        name = ev.get("subagent_type", "")
-        if not name:
-            continue
-        if et == "subagent_start":
-            counter[name] += 1
-            if ev.get("success") is False:
-                failure_counter[name] += 1
-            d = ev.get("duration_ms")
-            if isinstance(d, (int, float)):
-                start_durations.setdefault(name, []).append(float(d))
-        elif et == "subagent_stop":
-            if ev.get("success") is False:
-                failure_counter[name] += 1
-            d = ev.get("duration_ms")
-            if isinstance(d, (int, float)):
-                stop_durations.setdefault(name, []).append(float(d))
-    items = []
-    for name, count in counter.most_common(top_n):
-        failure = failure_counter.get(name, 0)
-        durations = stop_durations.get(name) or start_durations.get(name) or []
-        avg_duration = (sum(durations) / len(durations)) if durations else None
-        items.append({
-            "name": name,
-            "count": count,
-            "failure_count": failure,
-            "failure_rate": (failure / count) if count else 0.0,
-            "avg_duration_ms": avg_duration,
-        })
-    return items
+    metrics = aggregate_subagent_metrics(events)
+    ranked = sorted(metrics.items(), key=lambda kv: -kv[1]["count"])[:top_n]
+    return [{"name": name, **m} for name, m in ranked]
 
 
 def aggregate_daily(events: list[dict]) -> list[dict]:
@@ -130,7 +128,7 @@ def aggregate_session_stats(events: list[dict]) -> dict:
                 resume_count += 1
         elif et == "compact_start":
             compact_count += 1
-        elif et == "notification" and ev.get("notification_type") == "permission_prompt":
+        elif et == "notification" and ev.get("notification_type") in _PERMISSION_NOTIFICATION_TYPES:
             permission_prompt_count += 1
     resume_rate = (resume_count / total_sessions) if total_sessions else 0.0
     return {
@@ -161,13 +159,14 @@ def load_health_alerts() -> list[dict]:
 
 
 def build_dashboard_data(events: list[dict]) -> dict:
+    usage_events = _filter_usage_events(events)
     return {
         "last_updated": _now_iso(),
-        "total_events": len(events),
+        "total_events": len(usage_events),
         "skill_ranking": aggregate_skills(events),
         "subagent_ranking": aggregate_subagents(events),
-        "daily_trend": aggregate_daily(events),
-        "project_breakdown": aggregate_projects(events),
+        "daily_trend": aggregate_daily(usage_events),
+        "project_breakdown": aggregate_projects(usage_events),
         "session_stats": aggregate_session_stats(events),
         "health_alerts": load_health_alerts(),
     }

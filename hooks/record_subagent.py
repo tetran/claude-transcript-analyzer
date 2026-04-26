@@ -88,8 +88,11 @@ def _handle_post_tool_use_failure(data: dict) -> None:
 
 
 def _handle_subagent_start(data: dict) -> None:
+    """SubagentStart hook: ライフサイクル開始の補助記録。
+    PostToolUse(Task|Agent) 経由の `subagent_start` と二重カウントしないよう
+    別 event_type `subagent_lifecycle_start` を使う。集計の count には入らない。"""
     event = {
-        "event_type": "subagent_start",
+        "event_type": "subagent_lifecycle_start",
         "subagent_type": data.get("agent_type", ""),
         "project": _project_from_cwd(data.get("cwd", "")),
         "session_id": data.get("session_id", ""),

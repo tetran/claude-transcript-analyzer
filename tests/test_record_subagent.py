@@ -264,9 +264,11 @@ class TestPostToolUseSubagentMetaFields:
 
 
 class TestSubagentStartEvent:
-    """SubagentStart フックイベントのテスト"""
+    """SubagentStart フックイベントのテスト。
+    観測冗長性を保ちつつ count の二重計上を避けるため、
+    PostToolUse(Task|Agent) 経由とは別の event_type "subagent_lifecycle_start" として記録する。"""
 
-    def test_subagent_start_hook_event_is_recorded(self, tmp_path):
+    def test_subagent_start_hook_event_is_recorded_as_lifecycle_start(self, tmp_path):
         usage_file = str(tmp_path / "usage.jsonl")
         stdin = {
             "hook_event_name": "SubagentStart",
@@ -280,7 +282,7 @@ class TestSubagentStartEvent:
         events = read_events(usage_file)
         assert len(events) == 1
         ev = events[0]
-        assert ev["event_type"] == "subagent_start"
+        assert ev["event_type"] == "subagent_lifecycle_start"
         assert ev["subagent_type"] == "ui-designer"
         assert ev["project"] == "chirper"
         assert ev["session_id"] == "abc123"
@@ -298,6 +300,7 @@ class TestSubagentStartEvent:
         run_script(stdin, usage_file)
         events = read_events(usage_file)
         assert len(events) == 1
+        assert events[0]["event_type"] == "subagent_lifecycle_start"
         assert events[0]["subagent_type"] == "general-purpose"
 
     def test_subagent_start_missing_agent_type_uses_empty_string(self, tmp_path):
@@ -311,6 +314,7 @@ class TestSubagentStartEvent:
         run_script(stdin, usage_file)
         events = read_events(usage_file)
         assert len(events) == 1
+        assert events[0]["event_type"] == "subagent_lifecycle_start"
         assert events[0]["subagent_type"] == ""
 
 

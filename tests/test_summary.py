@@ -186,6 +186,20 @@ class TestAggregateSessionStats:
         assert s["compact_count"] == 0
         assert s["permission_prompt_count"] == 0
 
+    def test_session_stats_permission_prompt_accepts_short_form(self, tmp_path):
+        """公式 hooks 仕様の短縮形 'permission' も permission_prompt と同じくカウント対象"""
+        usage_file = tmp_path / "usage.jsonl"
+        sample_events = [
+            {"event_type": "notification", "notification_type": "permission", "session_id": "s1", "project": "p", "timestamp": "2026-01-01T00:00:00+00:00"},
+            {"event_type": "notification", "notification_type": "permission_prompt", "session_id": "s1", "project": "p", "timestamp": "2026-01-01T00:01:00+00:00"},
+            {"event_type": "notification", "notification_type": "idle", "session_id": "s1", "project": "p", "timestamp": "2026-01-01T00:02:00+00:00"},
+        ]
+        write_events(usage_file, sample_events)
+        mod = load_summary_module(usage_file)
+        events = mod.load_events()
+        s = mod.aggregate_session_stats(events)
+        assert s["permission_prompt_count"] == 2
+
 
 class TestAggregateSubagentStats:
     """Issue #8: 失敗率と平均 duration を含む拡張集計"""
@@ -203,6 +217,69 @@ class TestAggregateSubagentStats:
         stats = mod.aggregate_subagent_stats(events)
         assert stats["Explore"]["count"] == 1
         assert stats["Explore"]["avg_duration_ms"] == 2000.0
+
+    def test_failure_count_capped_by_count_when_both_events_fail(self, tmp_path):
+        """1 invocation の起動失敗と実行失敗が重複しても failure_rate は 100% を超えない"""
+        usage_file = tmp_path / "usage.jsonl"
+        sample_events = [
+            {"event_type": "subagent_start", "subagent_type": "Explore", "success": False, "tool_use_id": "toolu_x", "project": "p", "session_id": "s", "timestamp": "2026-01-01T00:00:00+00:00"},
+            {"event_type": "subagent_stop", "subagent_type": "Explore", "success": False, "subagent_id": "agent_x", "project": "p", "session_id": "s", "timestamp": "2026-01-01T00:00:10+00:00"},
+        ]
+        write_events(usage_file, sample_events)
+        mod = load_summary_module(usage_file)
+        events = mod.load_events()
+        stats = mod.aggregate_subagent_stats(events)
+        assert stats["Explore"]["count"] == 1
+        assert stats["Explore"]["failure_count"] == 1
+        assert stats["Explore"]["failure_rate"] == 1.0
+
+    def test_failure_count_invocation_pairing_mixed_mode(self, tmp_path):
+        """Codex round 4 P1: mixed mode で invocation 単位 dedup が効く"""
+        usage_file = tmp_path / "usage.jsonl"
+        sample_events = [
+            {"event_type": "subagent_start", "subagent_type": "Plan", "success": False, "tool_use_id": "toolu_a", "project": "p", "session_id": "s", "timestamp": "2026-01-01T00:00:00+00:00"},
+            {"event_type": "subagent_stop", "subagent_type": "Plan", "success": False, "subagent_id": "agent_a", "project": "p", "session_id": "s", "timestamp": "2026-01-01T00:00:10+00:00"},
+            {"event_type": "subagent_start", "subagent_type": "Plan", "tool_use_id": "toolu_b", "project": "p", "session_id": "s", "timestamp": "2026-01-01T00:01:00+00:00"},
+            {"event_type": "subagent_stop", "subagent_type": "Plan", "success": False, "subagent_id": "agent_b", "project": "p", "session_id": "s", "timestamp": "2026-01-01T00:01:30+00:00"},
+            {"event_type": "subagent_start", "subagent_type": "Plan", "tool_use_id": "toolu_c", "project": "p", "session_id": "s", "timestamp": "2026-01-01T00:02:00+00:00"},
+            {"event_type": "subagent_stop", "subagent_type": "Plan", "success": True, "subagent_id": "agent_c", "project": "p", "session_id": "s", "timestamp": "2026-01-01T00:02:30+00:00"},
+        ]
+        write_events(usage_file, sample_events)
+        mod = load_summary_module(usage_file)
+        events = mod.load_events()
+        stats = mod.aggregate_subagent_stats(events)
+        assert stats["Plan"]["count"] == 3
+        assert stats["Plan"]["failure_count"] == 2
+        assert abs(stats["Plan"]["failure_rate"] - (2 / 3)) < 1e-9
+
+    def test_failures_from_distinct_invocations_summed(self, tmp_path):
+        """別 invocation の起動失敗と実行失敗を別個にカウントできる"""
+        usage_file = tmp_path / "usage.jsonl"
+        sample_events = [
+            {"event_type": "subagent_start", "subagent_type": "Explore", "success": False, "tool_use_id": "toolu_a", "project": "p", "session_id": "s", "timestamp": "2026-01-01T00:00:00+00:00"},
+            {"event_type": "subagent_start", "subagent_type": "Explore", "tool_use_id": "toolu_b", "project": "p", "session_id": "s", "timestamp": "2026-01-01T00:01:00+00:00"},
+            {"event_type": "subagent_stop", "subagent_type": "Explore", "success": False, "subagent_id": "agent_b", "project": "p", "session_id": "s", "timestamp": "2026-01-01T00:01:30+00:00"},
+        ]
+        write_events(usage_file, sample_events)
+        mod = load_summary_module(usage_file)
+        events = mod.load_events()
+        stats = mod.aggregate_subagent_stats(events)
+        assert stats["Explore"]["count"] == 2
+        assert stats["Explore"]["failure_count"] == 2
+        assert stats["Explore"]["failure_rate"] == 1.0
+
+    def test_subagent_lifecycle_start_does_not_inflate_count(self, tmp_path):
+        """SubagentStart 経由の subagent_lifecycle_start は count に入らない"""
+        usage_file = tmp_path / "usage.jsonl"
+        sample_events = [
+            {"event_type": "subagent_start", "subagent_type": "Explore", "tool_use_id": "toolu_x", "project": "p", "session_id": "s", "timestamp": "2026-01-01T00:00:00+00:00"},
+            {"event_type": "subagent_lifecycle_start", "subagent_type": "Explore", "project": "p", "session_id": "s", "timestamp": "2026-01-01T00:00:01+00:00"},
+        ]
+        write_events(usage_file, sample_events)
+        mod = load_summary_module(usage_file)
+        events = mod.load_events()
+        stats = mod.aggregate_subagent_stats(events)
+        assert stats["Explore"]["count"] == 1
 
     def test_subagent_stats_failure_count(self, tmp_path):
         usage_file = tmp_path / "usage.jsonl"
