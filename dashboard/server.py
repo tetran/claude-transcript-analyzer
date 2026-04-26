@@ -340,12 +340,32 @@ def write_server_json(path: Path, info: dict) -> None:
     os.replace(tmp, path)
 
 
-def remove_server_json(path: Path) -> None:
-    """server.json をべき等に削除する。"""
+def remove_server_json(path: Path, expected_pid: Optional[int] = None) -> bool:
+    """server.json をべき等に削除する。返り値は実際に削除したか。
+
+    `expected_pid` を渡したときは compare-and-delete: ファイル中の `pid` が一致する場合
+    のみ削除する。多重インスタンスで他プロセスが上書きしたレジストリを誤って消さないため。
+    壊れた JSON / 不在ファイル / pid 不一致はいずれも `False` を返して安全側に倒す。
+    """
+    path = Path(path)
+    if expected_pid is not None:
+        try:
+            content = path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return False
+        except OSError:
+            return False
+        try:
+            info = json.loads(content)
+        except json.JSONDecodeError:
+            return False
+        if info.get("pid") != expected_pid:
+            return False
     try:
-        Path(path).unlink()
+        path.unlink()
+        return True
     except FileNotFoundError:
-        pass
+        return False
 
 
 def run(
@@ -387,7 +407,8 @@ def run(
     try:
         server.serve_forever()
     finally:
-        remove_server_json(server_json_path)
+        # compare-and-delete: 他インスタンスが上書きした server.json は消さない
+        remove_server_json(server_json_path, expected_pid=info["pid"])
         server.server_close()
 
 

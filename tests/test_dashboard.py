@@ -925,6 +925,42 @@ class TestServerJsonLifecycle:
         # 削除後の二重呼び出しもエラーにならない
         mod.remove_server_json(target)
 
+    def test_remove_server_json_compare_and_delete_matches_pid(self, tmp_path):
+        """expected_pid が一致するとき削除する。"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        target = tmp_path / "server.json"
+        target.write_text(json.dumps({"pid": 4242, "port": 1, "url": "u", "started_at": "t"}))
+        removed = mod.remove_server_json(target, expected_pid=4242)
+        assert removed is True
+        assert not target.exists()
+
+    def test_remove_server_json_compare_and_delete_preserves_other_pid(self, tmp_path):
+        """別プロセスが上書きした server.json を消さない（多重インスタンス保護）。"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        target = tmp_path / "server.json"
+        target.write_text(json.dumps({"pid": 9999, "port": 1, "url": "u", "started_at": "t"}))
+        removed = mod.remove_server_json(target, expected_pid=4242)
+        assert removed is False
+        assert target.exists()
+        # 中身は元のまま
+        assert json.loads(target.read_text())["pid"] == 9999
+
+    def test_remove_server_json_compare_and_delete_handles_invalid_json(self, tmp_path):
+        """壊れた JSON のときは消さない（誰かが書き換え中の可能性）。"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        target = tmp_path / "server.json"
+        target.write_text("not valid json")
+        removed = mod.remove_server_json(target, expected_pid=4242)
+        assert removed is False
+        assert target.exists()
+
+    def test_remove_server_json_compare_and_delete_handles_missing_file(self, tmp_path):
+        """ファイル不在でもエラーにならず False を返す。"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        target = tmp_path / "server.json"
+        removed = mod.remove_server_json(target, expected_pid=4242)
+        assert removed is False
+
 
 class TestIdleWatchdog:
     """Phase A: idle 経過で graceful shutdown / 0 で無効化 / リクエストで idle カウンタ reset。"""
@@ -1007,6 +1043,36 @@ class TestRunIntegration:
         finally:
             server.shutdown()
             t.join(timeout=2.0)
+
+    def test_run_does_not_remove_server_json_overwritten_by_another_instance(self, tmp_path):
+        """codex P2 回帰: A が起動 → B が同じ path に server.json を上書き →
+        A が exit しても B のレジストリは残る (compare-and-delete)。"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        server = mod.create_server(port=0, idle_seconds=0)
+        target = tmp_path / "server.json"
+
+        ready = threading.Event()
+
+        def runner():
+            mod.run(server, target, install_signals=False, on_ready=ready.set)
+
+        t = threading.Thread(target=runner, daemon=True)
+        t.start()
+        try:
+            assert ready.wait(timeout=2.0)
+            # 別インスタンス B が同じ path に自分の server.json を被せる
+            other_pid = os.getpid() + 1
+            target.write_text(
+                json.dumps({"pid": other_pid, "port": 99999, "url": "http://x", "started_at": "t"}),
+                encoding="utf-8",
+            )
+        finally:
+            server.shutdown()
+            t.join(timeout=2.0)
+        # A exit 後でも server.json は B のものとして残る
+        assert target.exists(), "別インスタンスのレジストリを誤って削除した"
+        info = json.loads(target.read_text(encoding="utf-8"))
+        assert info["pid"] == other_pid
 
     def test_run_removes_server_json_on_shutdown(self, tmp_path):
         mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
