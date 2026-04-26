@@ -792,6 +792,32 @@ class TestThreadingServer:
         finally:
             server.server_close()
 
+    def test_init_failure_does_not_mask_original_error_with_attribute_error(self, tmp_path):
+        """codex P1 回帰: bind 失敗時、親 TCPServer の `try/except: self.server_close()` 経路で
+        override した server_close() が走る。`_stop_event` が super().__init__() より後に初期化
+        されていると AttributeError で本来の OSError をマスクする。
+        `_stop_event` は super().__init__() より前に作る必要がある。"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        # 占有プロセスを建ててから同じポートで生成 → bind 失敗を誘発
+        occupier = mod.create_server(port=0, idle_seconds=0)
+        busy_port = occupier.server_address[1]
+        try:
+            try:
+                mod.create_server(port=busy_port, idle_seconds=0)
+            except BaseException as exc:  # pylint: disable=broad-except
+                # AttributeError でマスクされていないことを保証
+                assert not isinstance(exc, AttributeError), (
+                    f"bind 失敗が AttributeError でマスクされている: {exc!r}"
+                )
+                # 本来は OSError (EADDRINUSE) が出る
+                assert isinstance(exc, OSError), f"想定外の例外型: {type(exc).__name__}: {exc}"
+            else:
+                # bind が成功してしまった環境（OS によっては SO_REUSEADDR で許される）
+                # 本テストの目的は「マスクしない」検証なので skip 相当の no-op
+                pass
+        finally:
+            occupier.server_close()
+
     def test_concurrent_requests_processed(self, tmp_path):
         """ThreadingHTTPServer なので、ハンドラが少しブロックしても同時に複数リクエストを返せる。"""
         mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")

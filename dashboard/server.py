@@ -271,13 +271,16 @@ class DashboardServer(ThreadingHTTPServer):
     allow_reuse_address = True
 
     def __init__(self, server_address, RequestHandlerClass, *, idle_seconds: float = 0.0):
-        super().__init__(server_address, RequestHandlerClass)
-        self.idle_seconds = float(idle_seconds)
+        # bind/activate 失敗時、親 TCPServer.__init__ が `except: self.server_close()` で
+        # 我々の override (`_stop_event.set()` を触る) を呼ぶ。属性が無いと AttributeError で
+        # 本来の OSError をマスクするため、必ず super().__init__() より前に初期化する。
+        self._stop_event = threading.Event()
         self._activity_lock = threading.Lock()
         self._last_activity = time.monotonic()
-        self._stop_event = threading.Event()
-        self.started_at = _now_iso()
         self._watchdog_thread: Optional[threading.Thread] = None
+        self.idle_seconds = float(idle_seconds)
+        self.started_at = _now_iso()
+        super().__init__(server_address, RequestHandlerClass)
         if self.idle_seconds > 0:
             self._start_watchdog()
 
