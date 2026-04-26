@@ -520,7 +520,9 @@ class TestUserPromptExpansion:
 class TestUserPromptExpansionDedup:
     """Issue #7: Expansion + Submit 連続発火でダブルカウントせん"""
 
-    def _expansion(self, name: str, session: str = "s1", cwd: str = "/Users/kkoichi/Developer/personal/chirper") -> dict:
+    DEFAULT_CWD = "/Users/kkoichi/Developer/personal/chirper"
+
+    def _expansion(self, name: str, session: str = "s1", cwd: str = DEFAULT_CWD) -> dict:
         return {
             "hook_event_name": "UserPromptExpansion",
             "expansion_type": "slash_command",
@@ -529,7 +531,7 @@ class TestUserPromptExpansionDedup:
             "cwd": cwd,
         }
 
-    def _submit(self, command: str, session: str = "s1", cwd: str = "/Users/kkoichi/Developer/personal/chirper") -> dict:
+    def _submit(self, command: str, session: str = "s1", cwd: str = DEFAULT_CWD) -> dict:
         return {
             "hook_event_name": "UserPromptSubmit",
             "prompt": f"<command-name>{command}</command-name>",
@@ -578,7 +580,7 @@ class TestUserPromptExpansionDedup:
         assert len(events) == 2
         assert {e["skill"] for e in events} == {"/insights", "/codex-review"}
 
-    def test_dedup_window_is_finite(self, tmp_path, monkeypatch):
+    def test_dedup_window_is_finite(self, tmp_path):
         """時間窓を越えた古い expansion とは dedup されへん（fallback で記録される）"""
         usage_file = str(tmp_path / "usage.jsonl")
         old_event = {

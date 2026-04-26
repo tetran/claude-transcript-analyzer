@@ -85,6 +85,108 @@ def usage_invocation_events(events: list[dict]) -> list[dict]:
     return result
 
 
+def _bucket_events(events: list[dict]) -> tuple[dict, dict, dict]:
+    """events を `(session_id, subagent_type)` キーで starts / stops / lifecycle に振り分け。"""
+    starts_by_key: dict = {}
+    stops_by_key: dict = {}
+    lifecycle_by_key: dict = {}
+    for ev in events:
+        et = ev.get("event_type")
+        name = ev.get("subagent_type", "")
+        if not name:
+            continue
+        key = (ev.get("session_id", ""), name)
+        if et == "subagent_start":
+            starts_by_key.setdefault(key, []).append(ev)
+        elif et == "subagent_stop":
+            stops_by_key.setdefault(key, []).append(ev)
+        elif et == "subagent_lifecycle_start":
+            lifecycle_by_key.setdefault(key, []).append(ev)
+    return starts_by_key, stops_by_key, lifecycle_by_key
+
+
+def _invocation_duration(start: dict | None, stop: dict | None) -> float | None:
+    """invocation 1 件の duration: stop.duration_ms 優先、無ければ start.duration_ms。"""
+    for ev in (stop, start):
+        if ev is None:
+            continue
+        d = ev.get("duration_ms")
+        if isinstance(d, (int, float)):
+            return float(d)
+    return None
+
+
+def _process_bucket(
+    invocations: list[dict],
+    stops_sorted: list[dict],
+) -> tuple[int, list[float]]:
+    """1 バケット (session×type) の invocation 群を処理し (failure_count, durations) を返す。"""
+    failures = 0
+    durations: list[float] = []
+    paired_stops = len(invocations) == len(stops_sorted)
+    stop_idx = 0
+    for inv in invocations:
+        start = inv.get("start")
+        start_failed = bool(start) and start.get("success") is False
+        stop: dict | None = None
+        if start_failed and not paired_stops:
+            failures += 1
+        else:
+            stop = stops_sorted[stop_idx] if stop_idx < len(stops_sorted) else None
+            if stop is not None:
+                stop_idx += 1
+            if stop is None and start_failed:
+                failures += 1
+            elif stop is not None and (start_failed or stop.get("success") is False):
+                failures += 1
+        inv_duration = _invocation_duration(start, stop)
+        if inv_duration is not None:
+            durations.append(inv_duration)
+    for stop in stops_sorted[stop_idx:]:
+        d = stop.get("duration_ms")
+        if isinstance(d, (int, float)):
+            durations.append(float(d))
+    return failures, durations
+
+
+def _ts_key(ev: dict) -> str:
+    return ev.get("timestamp", "")
+
+
+def _aggregate_bucket(
+    key: tuple, starts_by_key: dict, stops_by_key: dict, lifecycle_by_key: dict
+) -> tuple[str, int, int, list[float]]:
+    """1 バケット分の (name, n_invocations, failures, durations) を返す。"""
+    _, name = key
+    invocations = _build_invocations(
+        sorted(starts_by_key.get(key, []), key=_ts_key),
+        sorted(lifecycle_by_key.get(key, []), key=_ts_key),
+    )
+    failures, durations = _process_bucket(
+        invocations, sorted(stops_by_key.get(key, []), key=_ts_key)
+    )
+    return name, len(invocations), failures, durations
+
+
+def _build_metrics(
+    type_count: Counter,
+    failure_counter: Counter,
+    invocation_durations: dict[str, list[float]],
+) -> dict[str, dict]:
+    """集計済みカウンタから返却用 metrics dict を組み立てる。"""
+    metrics: dict[str, dict] = {}
+    for name, count in type_count.items():
+        failure = failure_counter.get(name, 0)
+        durations = invocation_durations.get(name, [])
+        metrics[name] = {
+            "count": count,
+            "failure_count": failure,
+            "failure_rate": (failure / count) if count else 0.0,
+            "avg_duration_ms": (sum(durations) / len(durations)) if durations else None,
+        }
+    return metrics
+
+
 def aggregate_subagent_metrics(events: list[dict]) -> dict[str, dict]:
     """subagent イベント列を invocation 単位でペアリングし、集計メトリクスを返す。
 
@@ -108,79 +210,18 @@ def aggregate_subagent_metrics(events: list[dict]) -> dict[str, dict]:
     返却フォーマット:
       {name: {"count": int, "failure_count": int, "failure_rate": float, "avg_duration_ms": float|None}}
     """
-    starts_by_key: dict = {}
-    stops_by_key: dict = {}
-    lifecycle_by_key: dict = {}
-    for ev in events:
-        et = ev.get("event_type")
-        name = ev.get("subagent_type", "")
-        if not name:
-            continue
-        session = ev.get("session_id", "")
-        key = (session, name)
-        if et == "subagent_start":
-            starts_by_key.setdefault(key, []).append(ev)
-        elif et == "subagent_stop":
-            stops_by_key.setdefault(key, []).append(ev)
-        elif et == "subagent_lifecycle_start":
-            lifecycle_by_key.setdefault(key, []).append(ev)
+    starts_by_key, stops_by_key, lifecycle_by_key = _bucket_events(events)
 
     type_count: Counter = Counter()
     failure_counter: Counter = Counter()
     invocation_durations: dict[str, list[float]] = {}
-    all_keys = set(starts_by_key) | set(lifecycle_by_key)
-    for key in all_keys:
-        _, name = key
-        starts_sorted = sorted(starts_by_key.get(key, []), key=lambda e: e.get("timestamp", ""))
-        lifecycle_sorted = sorted(lifecycle_by_key.get(key, []), key=lambda e: e.get("timestamp", ""))
-        stops_sorted = sorted(stops_by_key.get(key, []), key=lambda e: e.get("timestamp", ""))
+    for key in set(starts_by_key) | set(lifecycle_by_key):
+        name, n_inv, failures, durations = _aggregate_bucket(
+            key, starts_by_key, stops_by_key, lifecycle_by_key
+        )
+        type_count[name] += n_inv
+        failure_counter[name] += failures
+        if durations:
+            invocation_durations.setdefault(name, []).extend(durations)
 
-        invocations = _build_invocations(starts_sorted, lifecycle_sorted)
-        n_invocations = len(invocations)
-        type_count[name] += n_invocations
-
-        paired_stops = n_invocations == len(stops_sorted)
-        stop_idx = 0
-        for inv in invocations:
-            start = inv.get("start")
-            start_failed = bool(start) and start.get("success") is False
-            stop: dict | None = None
-            if start_failed and not paired_stops:
-                failure_counter[name] += 1
-            else:
-                stop = stops_sorted[stop_idx] if stop_idx < len(stops_sorted) else None
-                if stop is not None:
-                    stop_idx += 1
-                if stop is None:
-                    if start_failed:
-                        failure_counter[name] += 1
-                elif start_failed or stop.get("success") is False:
-                    failure_counter[name] += 1
-            inv_duration = None
-            if stop is not None:
-                d = stop.get("duration_ms")
-                if isinstance(d, (int, float)):
-                    inv_duration = float(d)
-            if inv_duration is None and start is not None:
-                d = start.get("duration_ms")
-                if isinstance(d, (int, float)):
-                    inv_duration = float(d)
-            if inv_duration is not None:
-                invocation_durations.setdefault(name, []).append(inv_duration)
-        for stop in stops_sorted[stop_idx:]:
-            d = stop.get("duration_ms")
-            if isinstance(d, (int, float)):
-                invocation_durations.setdefault(name, []).append(float(d))
-
-    metrics: dict[str, dict] = {}
-    for name, count in type_count.items():
-        failure = failure_counter.get(name, 0)
-        durations = invocation_durations.get(name, [])
-        avg_duration = (sum(durations) / len(durations)) if durations else None
-        metrics[name] = {
-            "count": count,
-            "failure_count": failure,
-            "failure_rate": (failure / count) if count else 0.0,
-            "avg_duration_ms": avg_duration,
-        }
-    return metrics
+    return _build_metrics(type_count, failure_counter, invocation_durations)
