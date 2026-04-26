@@ -70,17 +70,6 @@ claude-transcript-analyzer/
 ```bash
 # テスト実行
 python3 -m pytest tests/
-
-# 集計レポート
-python3 reports/summary.py
-
-# ダッシュボード起動
-python3 dashboard/server.py
-# → http://localhost:8080 をブラウザで開く
-
-# インストール（初回 or 更新時）
-./install.sh
-# → Claude Code を再起動する
 ```
 
 ## トランスクリプトのソースファイル
