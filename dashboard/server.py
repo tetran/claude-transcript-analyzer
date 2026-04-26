@@ -1,10 +1,14 @@
 """dashboard/server.py — ローカル HTTP サーバーでダッシュボードを提供する。"""
 import json
 import os
+import sys
 from collections import Counter
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from subagent_metrics import aggregate_subagent_metrics, usage_invocation_events
 
 _DEFAULT_PATH = Path.home() / ".claude" / "transcript-analyzer" / "usage.jsonl"
 DATA_FILE = Path(os.environ.get("USAGE_JSONL", str(_DEFAULT_PATH)))
@@ -15,6 +19,32 @@ ALERTS_FILE = Path(os.environ.get("HEALTH_ALERTS_JSONL", str(_DEFAULT_ALERTS_PAT
 PORT = int(os.environ.get("DASHBOARD_PORT", "8080"))
 
 TOP_N = 10
+
+# Notification.notification_type は公式仕様で `permission`、過去実装/テストでは `permission_prompt` を観測。
+# 両方を許可ダイアログ系としてカウントする。
+_PERMISSION_NOTIFICATION_TYPES = frozenset({"permission", "permission_prompt"})
+
+# total_events / aggregate_daily / aggregate_projects はプロジェクト目的の
+# 「Skills と Subagents の使用状況」を示すメトリクスなので、usage 系イベントだけで集計する。
+# session_*, notification, instructions_loaded, compact_*, subagent_stop は session_stats /
+# health_alerts 等に分かれて表示されるため、ここで二重カウントしない。
+_SKILL_USAGE_EVENT_TYPES = frozenset({
+    "skill_tool",
+    "user_slash_command",
+})
+
+
+def _filter_usage_events(events: list[dict]) -> list[dict]:
+    """headline 集計用に usage 系イベントを返す。subagent は invocation 単位 dedup。
+
+    `subagent_start` (PostToolUse 由来) と `subagent_lifecycle_start` (SubagentStart 由来) は
+    通常ペアで発火し、PostToolUse が flaky / 不在な環境では lifecycle のみが届く。
+    `usage_invocation_events()` で `aggregate_subagent_metrics()` と同じ invocation 同定を行い、
+    各 invocation の代表イベント 1 件だけを採用することで、subagent_ranking と
+    total_events / daily_trend / project_breakdown を必ず一致させる。
+    """
+    skill_events = [ev for ev in events if ev.get("event_type") in _SKILL_USAGE_EVENT_TYPES]
+    return skill_events + usage_invocation_events(events)
 
 
 def _now_iso() -> str:
@@ -38,22 +68,32 @@ def load_events() -> list[dict]:
 
 def aggregate_skills(events: list[dict], top_n: int = TOP_N) -> list[dict]:
     counter: Counter = Counter()
+    failure_counter: Counter = Counter()
     for ev in events:
-        if ev.get("event_type") in ("skill_tool", "user_slash_command"):
+        et = ev.get("event_type")
+        if et in ("skill_tool", "user_slash_command"):
             key = ev.get("skill", "")
-            if key:
-                counter[key] += 1
-    return [{"name": name, "count": count} for name, count in counter.most_common(top_n)]
+            if not key:
+                continue
+            counter[key] += 1
+            if et == "skill_tool" and ev.get("success") is False:
+                failure_counter[key] += 1
+    items = []
+    for name, count in counter.most_common(top_n):
+        failure = failure_counter.get(name, 0)
+        items.append({
+            "name": name,
+            "count": count,
+            "failure_count": failure,
+            "failure_rate": (failure / count) if count else 0.0,
+        })
+    return items
 
 
 def aggregate_subagents(events: list[dict], top_n: int = TOP_N) -> list[dict]:
-    counter: Counter = Counter()
-    for ev in events:
-        if ev.get("event_type") == "subagent_start":
-            key = ev.get("subagent_type", "")
-            if key:
-                counter[key] += 1
-    return [{"name": name, "count": count} for name, count in counter.most_common(top_n)]
+    metrics = aggregate_subagent_metrics(events)
+    ranked = sorted(metrics.items(), key=lambda kv: -kv[1]["count"])[:top_n]
+    return [{"name": name, **m} for name, m in ranked]
 
 
 def aggregate_daily(events: list[dict]) -> list[dict]:
@@ -75,6 +115,31 @@ def aggregate_projects(events: list[dict], top_n: int = TOP_N) -> list[dict]:
     return [{"project": project, "count": count} for project, count in counter.most_common(top_n)]
 
 
+def aggregate_session_stats(events: list[dict]) -> dict:
+    total_sessions = 0
+    resume_count = 0
+    compact_count = 0
+    permission_prompt_count = 0
+    for ev in events:
+        et = ev.get("event_type")
+        if et == "session_start":
+            total_sessions += 1
+            if ev.get("source") == "resume":
+                resume_count += 1
+        elif et == "compact_start":
+            compact_count += 1
+        elif et == "notification" and ev.get("notification_type") in _PERMISSION_NOTIFICATION_TYPES:
+            permission_prompt_count += 1
+    resume_rate = (resume_count / total_sessions) if total_sessions else 0.0
+    return {
+        "total_sessions": total_sessions,
+        "resume_count": resume_count,
+        "resume_rate": resume_rate,
+        "compact_count": compact_count,
+        "permission_prompt_count": permission_prompt_count,
+    }
+
+
 _MAX_ALERTS = 50
 
 
@@ -94,13 +159,15 @@ def load_health_alerts() -> list[dict]:
 
 
 def build_dashboard_data(events: list[dict]) -> dict:
+    usage_events = _filter_usage_events(events)
     return {
         "last_updated": _now_iso(),
-        "total_events": len(events),
+        "total_events": len(usage_events),
         "skill_ranking": aggregate_skills(events),
         "subagent_ranking": aggregate_subagents(events),
-        "daily_trend": aggregate_daily(events),
-        "project_breakdown": aggregate_projects(events),
+        "daily_trend": aggregate_daily(usage_events),
+        "project_breakdown": aggregate_projects(usage_events),
+        "session_stats": aggregate_session_stats(events),
         "health_alerts": load_health_alerts(),
     }
 
@@ -145,6 +212,9 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
     .bar-fill-project { background: linear-gradient(90deg, #059669, #34d399); }
     .bar-fill-daily { background: linear-gradient(90deg, #d97706, #fbbf24); }
     .bar-count { font-size: 0.75rem; color: #64748b; width: 2rem; text-align: right; flex-shrink: 0; font-family: ui-monospace, monospace; }
+    .bar-meta { font-size: 0.7rem; color: #64748b; margin-top: 0.2rem; font-family: ui-monospace, monospace; display: flex; gap: 0.75rem; }
+    .bar-meta .fail { color: #f87171; }
+    .bar-meta .avg { color: #94a3b8; }
   </style>
 </head>
 <body>
@@ -169,6 +239,22 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
       <div class="stat-card">
         <div class="label">プロジェクト数</div>
         <div class="value" id="project-count">-</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">セッション数</div>
+        <div class="value" id="session-total">-</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Resume 率</div>
+        <div class="value" id="resume-rate">-</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Compact 数</div>
+        <div class="value" id="compact-count">-</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Permission Prompt</div>
+        <div class="value" id="permission-prompt-count">-</div>
       </div>
     </div>
 
@@ -199,6 +285,11 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
       const t = String(s);
       return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
     }
+    function fmtDuration(ms) {
+      if (ms == null) return '-';
+      if (ms >= 1000) return (ms / 1000).toFixed(1) + 's';
+      return Math.round(ms) + 'ms';
+    }
     function renderBarChart(containerId, items, nameKey, countKey, fillClass) {
       const container = document.getElementById(containerId);
       if (!items || items.length === 0) {
@@ -209,6 +300,15 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
       container.innerHTML = items.map(item => {
         const pct = max > 0 ? (item[countKey] / max * 100) : 0;
         const label = esc(item[nameKey]);
+        const meta = [];
+        if (item.failure_count != null && item.failure_count > 0) {
+          const ratePct = Math.round((item.failure_rate || 0) * 100);
+          meta.push('<span class="fail">失敗 ' + item.failure_count + ' (' + ratePct + '%)</span>');
+        }
+        if (item.avg_duration_ms != null) {
+          meta.push('<span class="avg">avg ' + fmtDuration(item.avg_duration_ms) + '</span>');
+        }
+        const metaHtml = meta.length ? '<div class="bar-meta">' + meta.join('') + '</div>' : '';
         return [
           '<div class="bar-row">',
           '  <div class="bar-label" title="' + label + '">' + label + '</div>',
@@ -218,6 +318,7 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
           '    </div>',
           '    <div class="bar-count">' + item[countKey] + '</div>',
           '  </div>',
+          metaHtml,
           '</div>',
         ].join('');
       }).join('');
@@ -235,6 +336,12 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
         document.getElementById('skill-count').textContent = data.skill_ranking.length;
         document.getElementById('subagent-count').textContent = data.subagent_ranking.length;
         document.getElementById('project-count').textContent = data.project_breakdown.length;
+        const ss = data.session_stats || {};
+        document.getElementById('session-total').textContent = ss.total_sessions ?? 0;
+        const rrPct = Math.round((ss.resume_rate || 0) * 100);
+        document.getElementById('resume-rate').textContent = (ss.total_sessions ? rrPct + '%' : '-');
+        document.getElementById('compact-count').textContent = ss.compact_count ?? 0;
+        document.getElementById('permission-prompt-count').textContent = ss.permission_prompt_count ?? 0;
 
         renderBarChart('skill-chart', data.skill_ranking, 'name', 'count', 'bar-fill-skill');
         renderBarChart('subagent-chart', data.subagent_ranking, 'name', 'count', 'bar-fill-subagent');
