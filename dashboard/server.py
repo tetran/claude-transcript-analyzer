@@ -38,22 +38,64 @@ def load_events() -> list[dict]:
 
 def aggregate_skills(events: list[dict], top_n: int = TOP_N) -> list[dict]:
     counter: Counter = Counter()
+    failure_counter: Counter = Counter()
     for ev in events:
-        if ev.get("event_type") in ("skill_tool", "user_slash_command"):
+        et = ev.get("event_type")
+        if et in ("skill_tool", "user_slash_command"):
             key = ev.get("skill", "")
-            if key:
-                counter[key] += 1
-    return [{"name": name, "count": count} for name, count in counter.most_common(top_n)]
+            if not key:
+                continue
+            counter[key] += 1
+            if et == "skill_tool" and ev.get("success") is False:
+                failure_counter[key] += 1
+    items = []
+    for name, count in counter.most_common(top_n):
+        failure = failure_counter.get(name, 0)
+        items.append({
+            "name": name,
+            "count": count,
+            "failure_count": failure,
+            "failure_rate": (failure / count) if count else 0.0,
+        })
+    return items
 
 
 def aggregate_subagents(events: list[dict], top_n: int = TOP_N) -> list[dict]:
     counter: Counter = Counter()
+    failure_counter: Counter = Counter()
+    stop_durations: dict[str, list[float]] = {}
+    start_durations: dict[str, list[float]] = {}
     for ev in events:
-        if ev.get("event_type") == "subagent_start":
-            key = ev.get("subagent_type", "")
-            if key:
-                counter[key] += 1
-    return [{"name": name, "count": count} for name, count in counter.most_common(top_n)]
+        et = ev.get("event_type")
+        name = ev.get("subagent_type", "")
+        if not name:
+            continue
+        if et == "subagent_start":
+            counter[name] += 1
+            if ev.get("success") is False:
+                failure_counter[name] += 1
+            d = ev.get("duration_ms")
+            if isinstance(d, (int, float)):
+                start_durations.setdefault(name, []).append(float(d))
+        elif et == "subagent_stop":
+            if ev.get("success") is False:
+                failure_counter[name] += 1
+            d = ev.get("duration_ms")
+            if isinstance(d, (int, float)):
+                stop_durations.setdefault(name, []).append(float(d))
+    items = []
+    for name, count in counter.most_common(top_n):
+        failure = failure_counter.get(name, 0)
+        durations = stop_durations.get(name) or start_durations.get(name) or []
+        avg_duration = (sum(durations) / len(durations)) if durations else None
+        items.append({
+            "name": name,
+            "count": count,
+            "failure_count": failure,
+            "failure_rate": (failure / count) if count else 0.0,
+            "avg_duration_ms": avg_duration,
+        })
+    return items
 
 
 def aggregate_daily(events: list[dict]) -> list[dict]:
@@ -145,6 +187,9 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
     .bar-fill-project { background: linear-gradient(90deg, #059669, #34d399); }
     .bar-fill-daily { background: linear-gradient(90deg, #d97706, #fbbf24); }
     .bar-count { font-size: 0.75rem; color: #64748b; width: 2rem; text-align: right; flex-shrink: 0; font-family: ui-monospace, monospace; }
+    .bar-meta { font-size: 0.7rem; color: #64748b; margin-top: 0.2rem; font-family: ui-monospace, monospace; display: flex; gap: 0.75rem; }
+    .bar-meta .fail { color: #f87171; }
+    .bar-meta .avg { color: #94a3b8; }
   </style>
 </head>
 <body>
@@ -199,6 +244,11 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
       const t = String(s);
       return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
     }
+    function fmtDuration(ms) {
+      if (ms == null) return '-';
+      if (ms >= 1000) return (ms / 1000).toFixed(1) + 's';
+      return Math.round(ms) + 'ms';
+    }
     function renderBarChart(containerId, items, nameKey, countKey, fillClass) {
       const container = document.getElementById(containerId);
       if (!items || items.length === 0) {
@@ -209,6 +259,15 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
       container.innerHTML = items.map(item => {
         const pct = max > 0 ? (item[countKey] / max * 100) : 0;
         const label = esc(item[nameKey]);
+        const meta = [];
+        if (item.failure_count != null && item.failure_count > 0) {
+          const ratePct = Math.round((item.failure_rate || 0) * 100);
+          meta.push('<span class="fail">失敗 ' + item.failure_count + ' (' + ratePct + '%)</span>');
+        }
+        if (item.avg_duration_ms != null) {
+          meta.push('<span class="avg">avg ' + fmtDuration(item.avg_duration_ms) + '</span>');
+        }
+        const metaHtml = meta.length ? '<div class="bar-meta">' + meta.join('') + '</div>' : '';
         return [
           '<div class="bar-row">',
           '  <div class="bar-label" title="' + label + '">' + label + '</div>',
@@ -218,6 +277,7 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
           '    </div>',
           '    <div class="bar-count">' + item[countKey] + '</div>',
           '  </div>',
+          metaHtml,
           '</div>',
         ].join('');
       }).join('');

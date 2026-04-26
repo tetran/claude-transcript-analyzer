@@ -49,6 +49,20 @@ def _enrich_with_post_tool_use_meta(event: dict, data: dict) -> None:
         event["success"] = tool_response["success"]
 
 
+def _enrich_with_failure_meta(event: dict, data: dict) -> None:
+    event["success"] = False
+    if "error" in data:
+        event["error"] = data["error"]
+    if "is_interrupt" in data:
+        event["is_interrupt"] = data["is_interrupt"]
+    if "duration_ms" in data:
+        event["duration_ms"] = data["duration_ms"]
+    if "permission_mode" in data:
+        event["permission_mode"] = data["permission_mode"]
+    if "tool_use_id" in data:
+        event["tool_use_id"] = data["tool_use_id"]
+
+
 def _handle_post_tool_use(data: dict) -> None:
     if data.get("tool_name") != "Skill":
         return
@@ -62,6 +76,22 @@ def _handle_post_tool_use(data: dict) -> None:
         "timestamp": _now_iso(),
     }
     _enrich_with_post_tool_use_meta(event, data)
+    _append_event(event)
+
+
+def _handle_post_tool_use_failure(data: dict) -> None:
+    if data.get("tool_name") != "Skill":
+        return
+    tool_input = data.get("tool_input") or {}
+    event = {
+        "event_type": "skill_tool",
+        "skill": tool_input.get("skill", ""),
+        "args": tool_input.get("args", ""),
+        "project": _project_from_cwd(data.get("cwd", "")),
+        "session_id": data.get("session_id", ""),
+        "timestamp": _now_iso(),
+    }
+    _enrich_with_failure_meta(event, data)
     _append_event(event)
 
 
@@ -173,6 +203,8 @@ def main() -> None:
     event_name = data.get("hook_event_name", "")
     if event_name == "PostToolUse":
         _handle_post_tool_use(data)
+    elif event_name == "PostToolUseFailure":
+        _handle_post_tool_use_failure(data)
     elif event_name == "UserPromptSubmit":
         _handle_user_prompt_submit(data)
     elif event_name == "UserPromptExpansion":

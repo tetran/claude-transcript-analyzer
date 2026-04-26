@@ -43,23 +43,96 @@ def aggregate_subagents(events: list[dict]) -> Counter:
     return counter
 
 
+def aggregate_skill_stats(events: list[dict]) -> dict[str, dict]:
+    counter: Counter = Counter()
+    failure_counter: Counter = Counter()
+    for ev in events:
+        et = ev.get("event_type")
+        if et in ("skill_tool", "user_slash_command"):
+            key = ev.get("skill", "")
+            if not key:
+                continue
+            counter[key] += 1
+            if et == "skill_tool" and ev.get("success") is False:
+                failure_counter[key] += 1
+    stats = {}
+    for name, count in counter.items():
+        failure = failure_counter.get(name, 0)
+        stats[name] = {
+            "count": count,
+            "failure_count": failure,
+            "failure_rate": (failure / count) if count else 0.0,
+        }
+    return stats
+
+
+def aggregate_subagent_stats(events: list[dict]) -> dict[str, dict]:
+    counter: Counter = Counter()
+    failure_counter: Counter = Counter()
+    stop_durations: dict[str, list[float]] = {}
+    start_durations: dict[str, list[float]] = {}
+    for ev in events:
+        et = ev.get("event_type")
+        name = ev.get("subagent_type", "")
+        if not name:
+            continue
+        if et == "subagent_start":
+            counter[name] += 1
+            if ev.get("success") is False:
+                failure_counter[name] += 1
+            d = ev.get("duration_ms")
+            if isinstance(d, (int, float)):
+                start_durations.setdefault(name, []).append(float(d))
+        elif et == "subagent_stop":
+            if ev.get("success") is False:
+                failure_counter[name] += 1
+            d = ev.get("duration_ms")
+            if isinstance(d, (int, float)):
+                stop_durations.setdefault(name, []).append(float(d))
+    stats = {}
+    for name, count in counter.items():
+        failure = failure_counter.get(name, 0)
+        durations = stop_durations.get(name) or start_durations.get(name) or []
+        avg_duration = (sum(durations) / len(durations)) if durations else None
+        stats[name] = {
+            "count": count,
+            "failure_count": failure,
+            "failure_rate": (failure / count) if count else 0.0,
+            "avg_duration_ms": avg_duration,
+        }
+    return stats
+
+
+def _format_duration(ms: float | None) -> str:
+    if ms is None:
+        return "-"
+    if ms >= 1000:
+        return f"{ms / 1000:.1f}s"
+    return f"{ms:.0f}ms"
+
+
 def print_report(events: list[dict]) -> None:
-    skill_counts = aggregate_skills(events)
-    subagent_counts = aggregate_subagents(events)
+    skill_stats = aggregate_skill_stats(events)
+    subagent_stats = aggregate_subagent_stats(events)
 
     print(f"Total events: {len(events)}\n")
 
     print("=== Skills (skill_tool + user_slash_command) ===")
-    if skill_counts:
-        for skill, count in skill_counts.most_common():
-            print(f"  {count:4d}  {skill}")
+    if skill_stats:
+        for skill, s in sorted(skill_stats.items(), key=lambda kv: -kv[1]["count"]):
+            fail = s["failure_count"]
+            rate_str = f"{s['failure_rate'] * 100:.0f}%" if fail else "-"
+            print(f"  {s['count']:4d}  fail={fail:3d} ({rate_str})  {skill}")
     else:
         print("  (no data)")
 
     print("\n=== Subagents ===")
-    if subagent_counts:
-        for subagent_type, count in subagent_counts.most_common():
-            print(f"  {count:4d}  {subagent_type}")
+    if subagent_stats:
+        for subagent_type, s in sorted(subagent_stats.items(), key=lambda kv: -kv[1]["count"]):
+            fail = s["failure_count"]
+            rate_str = f"{s['failure_rate'] * 100:.0f}%" if fail else "-"
+            avg = _format_duration(s["avg_duration_ms"])
+            print(f"  {s['count']:4d}  fail={fail:3d} ({rate_str})  avg={avg:>7s}  {subagent_type}")
     else:
         print("  (no data)")
 

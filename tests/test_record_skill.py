@@ -203,6 +203,81 @@ class TestPostToolUseSkillMetaFields:
         assert "timestamp" in ev
 
 
+class TestPostToolUseFailureSkill:
+    """Issue #8: PostToolUseFailure で skill_tool を success: false として記録"""
+
+    def test_failure_records_skill_tool_with_success_false(self, tmp_path):
+        usage_file = str(tmp_path / "usage.jsonl")
+        stdin = {
+            "hook_event_name": "PostToolUseFailure",
+            "tool_name": "Skill",
+            "tool_input": {"skill": "user-story-creation", "args": "6"},
+            "tool_use_id": "toolu_01ABC",
+            "error": "Skill not found",
+            "duration_ms": 50,
+            "permission_mode": "default",
+            "session_id": "abc123",
+            "cwd": "/Users/kkoichi/Developer/personal/chirper",
+        }
+        result = run_script(stdin, usage_file)
+        assert result.returncode == 0
+        ev = read_events(usage_file)[0]
+        assert ev["event_type"] == "skill_tool"
+        assert ev["skill"] == "user-story-creation"
+        assert ev["args"] == "6"
+        assert ev["success"] is False
+        assert ev["error"] == "Skill not found"
+        assert ev["duration_ms"] == 50
+        assert ev["tool_use_id"] == "toolu_01ABC"
+        assert ev["permission_mode"] == "default"
+        assert ev["project"] == "chirper"
+        assert ev["session_id"] == "abc123"
+
+    def test_failure_for_non_skill_tool_is_ignored(self, tmp_path):
+        usage_file = str(tmp_path / "usage.jsonl")
+        stdin = {
+            "hook_event_name": "PostToolUseFailure",
+            "tool_name": "Bash",
+            "tool_input": {"command": "ls"},
+            "error": "boom",
+            "session_id": "s1",
+            "cwd": "/p",
+        }
+        run_script(stdin, usage_file)
+        assert read_events(usage_file) == []
+
+    def test_failure_with_is_interrupt(self, tmp_path):
+        usage_file = str(tmp_path / "usage.jsonl")
+        stdin = {
+            "hook_event_name": "PostToolUseFailure",
+            "tool_name": "Skill",
+            "tool_input": {"skill": "my-skill"},
+            "error": "interrupted",
+            "is_interrupt": True,
+            "session_id": "s1",
+            "cwd": "/p",
+        }
+        run_script(stdin, usage_file)
+        ev = read_events(usage_file)[0]
+        assert ev["success"] is False
+        assert ev["is_interrupt"] is True
+
+    def test_failure_without_error_still_records(self, tmp_path):
+        """error フィールドが無くても success: false で記録される"""
+        usage_file = str(tmp_path / "usage.jsonl")
+        stdin = {
+            "hook_event_name": "PostToolUseFailure",
+            "tool_name": "Skill",
+            "tool_input": {"skill": "my-skill"},
+            "session_id": "s1",
+            "cwd": "/p",
+        }
+        run_script(stdin, usage_file)
+        ev = read_events(usage_file)[0]
+        assert ev["success"] is False
+        assert "error" not in ev
+
+
 class TestUserPromptSubmit:
     def test_custom_slash_command_is_recorded(self, tmp_path):
         usage_file = str(tmp_path / "usage.jsonl")

@@ -62,8 +62,10 @@ class TestBuildDashboardData:
             {"event_type": "skill_tool", "skill": "review", "project": "p", "session_id": "s", "timestamp": "2026-01-01T00:02:00+00:00"},
         ]
         data = mod.build_dashboard_data(events)
-        assert data["skill_ranking"][0] == {"name": "commit", "count": 2}
-        assert data["skill_ranking"][1] == {"name": "review", "count": 1}
+        assert data["skill_ranking"][0]["name"] == "commit"
+        assert data["skill_ranking"][0]["count"] == 2
+        assert data["skill_ranking"][1]["name"] == "review"
+        assert data["skill_ranking"][1]["count"] == 1
 
     def test_skill_ranking_includes_user_slash_command(self, tmp_path):
         mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
@@ -84,8 +86,10 @@ class TestBuildDashboardData:
             {"event_type": "subagent_start", "subagent_type": "Plan", "project": "p", "session_id": "s", "timestamp": "2026-01-01T00:02:00+00:00"},
         ]
         data = mod.build_dashboard_data(events)
-        assert data["subagent_ranking"][0] == {"name": "Explore", "count": 2}
-        assert data["subagent_ranking"][1] == {"name": "Plan", "count": 1}
+        assert data["subagent_ranking"][0]["name"] == "Explore"
+        assert data["subagent_ranking"][0]["count"] == 2
+        assert data["subagent_ranking"][1]["name"] == "Plan"
+        assert data["subagent_ranking"][1]["count"] == 1
 
     def test_daily_trend_grouped_by_date_sorted_desc(self, tmp_path):
         mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
@@ -173,6 +177,118 @@ class TestBuildDashboardData:
         data = mod.build_dashboard_data(events)
         assert data["project_breakdown"][0] == {"project": "proj-a", "count": 2}
         assert data["project_breakdown"][1] == {"project": "proj-b", "count": 1}
+
+
+class TestSkillFailureStats:
+    """Issue #8: skill_ranking に failure_count / failure_rate を含める"""
+
+    def test_skill_ranking_includes_failure_count(self, tmp_path):
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        events = [
+            {"event_type": "skill_tool", "skill": "commit", "success": True, "project": "p", "session_id": "s", "timestamp": "2026-01-01T00:00:00+00:00"},
+            {"event_type": "skill_tool", "skill": "commit", "success": False, "project": "p", "session_id": "s", "timestamp": "2026-01-01T00:01:00+00:00"},
+            {"event_type": "skill_tool", "skill": "commit", "project": "p", "session_id": "s", "timestamp": "2026-01-01T00:02:00+00:00"},
+        ]
+        data = mod.build_dashboard_data(events)
+        item = data["skill_ranking"][0]
+        assert item["name"] == "commit"
+        assert item["count"] == 3
+        assert item["failure_count"] == 1
+        assert abs(item["failure_rate"] - (1 / 3)) < 1e-9
+
+    def test_skill_ranking_failure_zero_when_no_failures(self, tmp_path):
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        events = [
+            {"event_type": "skill_tool", "skill": "review", "success": True, "project": "p", "session_id": "s", "timestamp": "2026-01-01T00:00:00+00:00"},
+        ]
+        data = mod.build_dashboard_data(events)
+        item = data["skill_ranking"][0]
+        assert item["failure_count"] == 0
+        assert item["failure_rate"] == 0.0
+
+    def test_user_slash_command_excluded_from_failure_stats(self, tmp_path):
+        """user_slash_command は呼出元（ユーザー入力）なので failure 集計対象外"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        events = [
+            {"event_type": "user_slash_command", "skill": "/insights", "project": "p", "session_id": "s", "timestamp": "2026-01-01T00:00:00+00:00"},
+        ]
+        data = mod.build_dashboard_data(events)
+        item = data["skill_ranking"][0]
+        assert item["count"] == 1
+        assert item["failure_count"] == 0
+
+
+class TestSubagentFailureAndDurationStats:
+    """Issue #8: subagent_ranking に failure_count / failure_rate / avg_duration_ms を含める"""
+
+    def test_subagent_ranking_includes_failure_count(self, tmp_path):
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        events = [
+            {"event_type": "subagent_start", "subagent_type": "Explore", "success": True, "project": "p", "session_id": "s", "timestamp": "2026-01-01T00:00:00+00:00"},
+            {"event_type": "subagent_start", "subagent_type": "Explore", "success": False, "project": "p", "session_id": "s", "timestamp": "2026-01-01T00:01:00+00:00"},
+        ]
+        data = mod.build_dashboard_data(events)
+        item = data["subagent_ranking"][0]
+        assert item["name"] == "Explore"
+        assert item["count"] == 2
+        assert item["failure_count"] == 1
+        assert abs(item["failure_rate"] - 0.5) < 1e-9
+
+    def test_subagent_ranking_avg_duration_from_subagent_stop(self, tmp_path):
+        """subagent_stop の duration_ms を優先して平均を取る"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        events = [
+            {"event_type": "subagent_start", "subagent_type": "Explore", "project": "p", "session_id": "s", "timestamp": "2026-01-01T00:00:00+00:00"},
+            {"event_type": "subagent_stop", "subagent_type": "Explore", "duration_ms": 1000, "project": "p", "session_id": "s", "timestamp": "2026-01-01T00:00:10+00:00"},
+            {"event_type": "subagent_stop", "subagent_type": "Explore", "duration_ms": 3000, "project": "p", "session_id": "s", "timestamp": "2026-01-01T00:00:20+00:00"},
+        ]
+        data = mod.build_dashboard_data(events)
+        item = data["subagent_ranking"][0]
+        assert item["avg_duration_ms"] == 2000.0
+
+    def test_subagent_ranking_avg_duration_falls_back_to_start(self, tmp_path):
+        """subagent_stop に duration_ms が無い場合は subagent_start の duration_ms を使う"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        events = [
+            {"event_type": "subagent_start", "subagent_type": "Plan", "duration_ms": 500, "project": "p", "session_id": "s", "timestamp": "2026-01-01T00:00:00+00:00"},
+            {"event_type": "subagent_start", "subagent_type": "Plan", "duration_ms": 1500, "project": "p", "session_id": "s", "timestamp": "2026-01-01T00:01:00+00:00"},
+        ]
+        data = mod.build_dashboard_data(events)
+        item = data["subagent_ranking"][0]
+        assert item["avg_duration_ms"] == 1000.0
+
+    def test_subagent_ranking_avg_duration_none_when_unavailable(self, tmp_path):
+        """duration_ms が一切無いときは None"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        events = [
+            {"event_type": "subagent_start", "subagent_type": "Explore", "project": "p", "session_id": "s", "timestamp": "2026-01-01T00:00:00+00:00"},
+        ]
+        data = mod.build_dashboard_data(events)
+        item = data["subagent_ranking"][0]
+        assert item["avg_duration_ms"] is None
+
+    def test_subagent_stop_does_not_inflate_count(self, tmp_path):
+        """subagent_stop は count（起動回数）を増やさない"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        events = [
+            {"event_type": "subagent_start", "subagent_type": "Explore", "project": "p", "session_id": "s", "timestamp": "2026-01-01T00:00:00+00:00"},
+            {"event_type": "subagent_stop", "subagent_type": "Explore", "duration_ms": 1000, "project": "p", "session_id": "s", "timestamp": "2026-01-01T00:00:10+00:00"},
+        ]
+        data = mod.build_dashboard_data(events)
+        item = data["subagent_ranking"][0]
+        assert item["count"] == 1
+
+    def test_subagent_stop_failure_counted(self, tmp_path):
+        """subagent_stop の success: false も failure_count に加算する"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        events = [
+            {"event_type": "subagent_start", "subagent_type": "Explore", "project": "p", "session_id": "s", "timestamp": "2026-01-01T00:00:00+00:00"},
+            {"event_type": "subagent_stop", "subagent_type": "Explore", "success": False, "project": "p", "session_id": "s", "timestamp": "2026-01-01T00:00:10+00:00"},
+        ]
+        data = mod.build_dashboard_data(events)
+        item = data["subagent_ranking"][0]
+        assert item["count"] == 1
+        assert item["failure_count"] == 1
 
 
 class TestHTTPEndpoints:

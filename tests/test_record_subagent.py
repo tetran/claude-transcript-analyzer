@@ -314,6 +314,165 @@ class TestSubagentStartEvent:
         assert events[0]["subagent_type"] == ""
 
 
+class TestSubagentStopEvent:
+    """Issue #8: SubagentStop フックイベントのテスト"""
+
+    def test_subagent_stop_event_is_recorded(self, tmp_path):
+        usage_file = str(tmp_path / "usage.jsonl")
+        stdin = {
+            "hook_event_name": "SubagentStop",
+            "agent_type": "Explore",
+            "agent_id": "agent-abc123",
+            "session_id": "abc123",
+            "cwd": "/Users/kkoichi/Developer/personal/chirper",
+        }
+        result = run_script(stdin, usage_file)
+        assert result.returncode == 0
+        events = read_events(usage_file)
+        assert len(events) == 1
+        ev = events[0]
+        assert ev["event_type"] == "subagent_stop"
+        assert ev["subagent_type"] == "Explore"
+        assert ev["subagent_id"] == "agent-abc123"
+        assert ev["project"] == "chirper"
+        assert ev["session_id"] == "abc123"
+        assert "timestamp" in ev
+
+    def test_subagent_stop_with_duration_and_success(self, tmp_path):
+        usage_file = str(tmp_path / "usage.jsonl")
+        stdin = {
+            "hook_event_name": "SubagentStop",
+            "agent_type": "Plan",
+            "agent_id": "agent-xyz",
+            "duration_ms": 45000,
+            "success": True,
+            "session_id": "s1",
+            "cwd": "/p",
+        }
+        run_script(stdin, usage_file)
+        ev = read_events(usage_file)[0]
+        assert ev["event_type"] == "subagent_stop"
+        assert ev["duration_ms"] == 45000
+        assert ev["success"] is True
+
+    def test_subagent_stop_with_failure(self, tmp_path):
+        usage_file = str(tmp_path / "usage.jsonl")
+        stdin = {
+            "hook_event_name": "SubagentStop",
+            "agent_type": "Explore",
+            "agent_id": "agent-fail",
+            "success": False,
+            "session_id": "s1",
+            "cwd": "/p",
+        }
+        run_script(stdin, usage_file)
+        ev = read_events(usage_file)[0]
+        assert ev["success"] is False
+
+    def test_subagent_stop_missing_optional_fields(self, tmp_path):
+        """duration_ms / success / agent_id が無くても記録される（後方互換）"""
+        usage_file = str(tmp_path / "usage.jsonl")
+        stdin = {
+            "hook_event_name": "SubagentStop",
+            "agent_type": "Explore",
+            "session_id": "s1",
+            "cwd": "/p",
+        }
+        run_script(stdin, usage_file)
+        ev = read_events(usage_file)[0]
+        assert ev["event_type"] == "subagent_stop"
+        assert ev["subagent_type"] == "Explore"
+        for key in ("duration_ms", "success"):
+            assert key not in ev
+        assert ev.get("subagent_id", "") == ""
+
+    def test_subagent_stop_missing_agent_type_uses_empty_string(self, tmp_path):
+        usage_file = str(tmp_path / "usage.jsonl")
+        stdin = {
+            "hook_event_name": "SubagentStop",
+            "agent_id": "agent-xyz",
+            "session_id": "s1",
+            "cwd": "/p",
+        }
+        run_script(stdin, usage_file)
+        ev = read_events(usage_file)[0]
+        assert ev["event_type"] == "subagent_stop"
+        assert ev["subagent_type"] == ""
+
+
+class TestPostToolUseFailureSubagent:
+    """Issue #8: PostToolUseFailure でも subagent_start を success: false として記録"""
+
+    def test_failure_records_subagent_start_with_success_false(self, tmp_path):
+        usage_file = str(tmp_path / "usage.jsonl")
+        stdin = {
+            "hook_event_name": "PostToolUseFailure",
+            "tool_name": "Task",
+            "tool_input": {"subagent_type": "Explore", "description": "..."},
+            "tool_use_id": "toolu_01XYZ",
+            "error": "Subagent crashed",
+            "duration_ms": 1234,
+            "session_id": "s1",
+            "cwd": "/Users/kkoichi/Developer/personal/chirper",
+        }
+        result = run_script(stdin, usage_file)
+        assert result.returncode == 0
+        ev = read_events(usage_file)[0]
+        assert ev["event_type"] == "subagent_start"
+        assert ev["subagent_type"] == "Explore"
+        assert ev["success"] is False
+        assert ev["error"] == "Subagent crashed"
+        assert ev["duration_ms"] == 1234
+        assert ev["tool_use_id"] == "toolu_01XYZ"
+        assert ev["project"] == "chirper"
+        assert ev["session_id"] == "s1"
+
+    def test_failure_for_agent_tool_is_recorded(self, tmp_path):
+        usage_file = str(tmp_path / "usage.jsonl")
+        stdin = {
+            "hook_event_name": "PostToolUseFailure",
+            "tool_name": "Agent",
+            "tool_input": {"subagent_type": "Plan"},
+            "error": "boom",
+            "session_id": "s1",
+            "cwd": "/p",
+        }
+        run_script(stdin, usage_file)
+        ev = read_events(usage_file)[0]
+        assert ev["event_type"] == "subagent_start"
+        assert ev["success"] is False
+
+    def test_failure_for_non_subagent_tool_is_ignored(self, tmp_path):
+        usage_file = str(tmp_path / "usage.jsonl")
+        stdin = {
+            "hook_event_name": "PostToolUseFailure",
+            "tool_name": "Bash",
+            "tool_input": {"command": "ls"},
+            "error": "boom",
+            "session_id": "s1",
+            "cwd": "/p",
+        }
+        run_script(stdin, usage_file)
+        assert read_events(usage_file) == []
+
+    def test_failure_with_is_interrupt(self, tmp_path):
+        """is_interrupt が true ならイベントに保存される"""
+        usage_file = str(tmp_path / "usage.jsonl")
+        stdin = {
+            "hook_event_name": "PostToolUseFailure",
+            "tool_name": "Task",
+            "tool_input": {"subagent_type": "Explore"},
+            "error": "interrupted",
+            "is_interrupt": True,
+            "session_id": "s1",
+            "cwd": "/p",
+        }
+        run_script(stdin, usage_file)
+        ev = read_events(usage_file)[0]
+        assert ev["success"] is False
+        assert ev["is_interrupt"] is True
+
+
 class TestEdgeCases:
     def test_tool_input_null_exits_cleanly(self, tmp_path):
         """tool_input が null でもクラッシュしない"""

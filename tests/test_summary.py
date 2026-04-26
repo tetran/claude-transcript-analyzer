@@ -138,3 +138,52 @@ class TestAggregateSubagents:
         events = mod.load_events()
         counts = mod.aggregate_subagents(events)
         assert len(counts) == 0
+
+
+class TestAggregateSkillStats:
+    """Issue #8: 失敗率を含む拡張集計"""
+
+    def test_skill_stats_includes_failure_count(self, tmp_path):
+        usage_file = tmp_path / "usage.jsonl"
+        sample_events = [
+            {"event_type": "skill_tool", "skill": "commit", "success": True, "project": "p", "session_id": "s", "timestamp": "2026-01-01T00:00:00+00:00"},
+            {"event_type": "skill_tool", "skill": "commit", "success": False, "project": "p", "session_id": "s", "timestamp": "2026-01-01T00:01:00+00:00"},
+        ]
+        write_events(usage_file, sample_events)
+        mod = load_summary_module(usage_file)
+        events = mod.load_events()
+        stats = mod.aggregate_skill_stats(events)
+        assert stats["commit"]["count"] == 2
+        assert stats["commit"]["failure_count"] == 1
+        assert abs(stats["commit"]["failure_rate"] - 0.5) < 1e-9
+
+
+class TestAggregateSubagentStats:
+    """Issue #8: 失敗率と平均 duration を含む拡張集計"""
+
+    def test_subagent_stats_includes_avg_duration_from_stop(self, tmp_path):
+        usage_file = tmp_path / "usage.jsonl"
+        sample_events = [
+            {"event_type": "subagent_start", "subagent_type": "Explore", "project": "p", "session_id": "s", "timestamp": "2026-01-01T00:00:00+00:00"},
+            {"event_type": "subagent_stop", "subagent_type": "Explore", "duration_ms": 1000, "project": "p", "session_id": "s", "timestamp": "2026-01-01T00:00:10+00:00"},
+            {"event_type": "subagent_stop", "subagent_type": "Explore", "duration_ms": 3000, "project": "p", "session_id": "s", "timestamp": "2026-01-01T00:00:20+00:00"},
+        ]
+        write_events(usage_file, sample_events)
+        mod = load_summary_module(usage_file)
+        events = mod.load_events()
+        stats = mod.aggregate_subagent_stats(events)
+        assert stats["Explore"]["count"] == 1
+        assert stats["Explore"]["avg_duration_ms"] == 2000.0
+
+    def test_subagent_stats_failure_count(self, tmp_path):
+        usage_file = tmp_path / "usage.jsonl"
+        sample_events = [
+            {"event_type": "subagent_start", "subagent_type": "Plan", "success": False, "project": "p", "session_id": "s", "timestamp": "2026-01-01T00:00:00+00:00"},
+            {"event_type": "subagent_start", "subagent_type": "Plan", "success": True, "project": "p", "session_id": "s", "timestamp": "2026-01-01T00:01:00+00:00"},
+        ]
+        write_events(usage_file, sample_events)
+        mod = load_summary_module(usage_file)
+        events = mod.load_events()
+        stats = mod.aggregate_subagent_stats(events)
+        assert stats["Plan"]["count"] == 2
+        assert stats["Plan"]["failure_count"] == 1
