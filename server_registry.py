@@ -24,8 +24,11 @@ if sys.platform == "win32":
     import msvcrt  # pylint: disable=import-error
 
     def _lock_fd(fd: int) -> None:
-        # LK_LOCK: 他プロセスが lock を握っている間、~10 秒リトライしてから OSError
-        msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+        # LK_NBLCK: 取得失敗時は ~1秒×10回リトライ (LK_LOCK) せず即 OSError。
+        # `launch_dashboard.py` の < 100ms exit budget を Win 競合時にも維持するため
+        # (Issue #24 PR#31 claude[bot] review #1)。`_file_lock` の yield False 経路で
+        # 呼び出し側が安全側に倒す責務を持つ設計と整合する。
+        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
 
     def _unlock_fd(fd: int) -> None:
         msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)

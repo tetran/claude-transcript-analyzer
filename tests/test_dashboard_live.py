@@ -431,7 +431,7 @@ class TestServerJsonCrossProcessLock:
             assert acquired is True
 
     def test_file_lock_yields_acquired_false_when_lock_call_fails(self, tmp_path, monkeypatch):
-        """lock 取得に失敗したとき (msvcrt.locking が 10 秒待っても OSError 等)、
+        """lock 取得に失敗したとき (Win: LK_NBLCK 即時 OSError / POSIX: flock OSError)、
         yield False で呼び出し側に伝える。silent best-effort で続行はしない
         (race 解消保証を緩めないため、安全側に倒す責務は呼び出し側へ)。"""
         mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
@@ -442,6 +442,45 @@ class TestServerJsonCrossProcessLock:
         monkeypatch.setattr(server_registry, "_lock_fd", boom)
         with mod._file_lock(tmp_path / "x.lock") as acquired:
             assert acquired is False
+
+    def test_windows_lock_fails_fast_when_contended(self, tmp_path):
+        """Issue #24 PR#31 claude[bot] review #1: Win 経路は LK_NBLCK で取得失敗時に
+        即時 OSError を上げる (LK_LOCK の ~10秒リトライではない)。launch_dashboard の
+        < 100ms exit budget を Win 競合時にも維持するための回帰ガード。
+
+        他 fd で lock を握った状態で `_lock_fd` を呼び、即時 (< 1秒) に OSError が
+        上がることを確認する。POSIX (fcntl.flock) はブロックするため skip。"""
+        if sys.platform != "win32":
+            import pytest  # pylint: disable=import-outside-toplevel
+            pytest.skip("Windows 専用: LK_NBLCK の non-blocking 挙動")
+        import msvcrt  # pylint: disable=import-error,import-outside-toplevel
+        lock_path = tmp_path / "x.lock"
+        # 他 fd で先に LK_NBLCK で握る (writer 役)
+        holder_fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT)
+        try:
+            msvcrt.locking(holder_fd, msvcrt.LK_NBLCK, 1)
+            try:
+                # contender 役: _lock_fd は同じ byte range を取りに行って即 OSError
+                contender_fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT)
+                try:
+                    start = time.monotonic()
+                    raised = False
+                    try:
+                        server_registry._lock_fd(contender_fd)
+                    except OSError:
+                        raised = True
+                    elapsed = time.monotonic() - start
+                    assert raised, "_lock_fd は競合時に OSError を上げる必要がある"
+                    assert elapsed < 1.0, (
+                        f"_lock_fd が non-blocking でない (elapsed={elapsed:.3f}s)。"
+                        "LK_LOCK にデグレードしている可能性"
+                    )
+                finally:
+                    os.close(contender_fd)
+            finally:
+                msvcrt.locking(holder_fd, msvcrt.LK_UNLCK, 1)
+        finally:
+            os.close(holder_fd)
 
     def test_lock_file_co_located_with_server_json(self, tmp_path):
         """`<server.json>.lock` ファイルが同じ親 dir に作られる (cleanup は best-effort)。"""
