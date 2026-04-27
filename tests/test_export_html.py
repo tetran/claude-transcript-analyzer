@@ -83,15 +83,29 @@ class TestHtmlTemplateFallback:
     def test_template_has_dynamic_fallback_fetch(self):
         """動的ダッシュボードとしても機能するよう fetch フォールバックが残っていることを確認。"""
         m = self._import()
-        assert "fetch('/api/data')" in m._HTML_TEMPLATE
+        assert "fetch('/api/data'" in m._HTML_TEMPLATE
 
     def test_template_prefers_window_data_over_fetch(self):
         """window.__DATA__ が fetch より先に参照されることを確認。"""
         m = self._import()
         tmpl = m._HTML_TEMPLATE
         window_data_pos = tmpl.index("window.__DATA__")
-        fetch_pos = tmpl.index("fetch('/api/data')")
+        fetch_pos = tmpl.index("fetch('/api/data'")
         assert window_data_pos < fetch_pos
+
+    def test_template_uses_static_badge_for_window_data(self):
+        """codex Finding 1 回帰: 静的 export では接続バッジを 'static' state に固定する。
+
+        修正前は EventSource 結線が `window.__DATA__` 経路で丸ごとスキップされ、
+        初期 'reconnect' 表示のまま固まっていた。
+        """
+        m = self._import()
+        tmpl = m._HTML_TEMPLATE
+        # static 用 CSS が定義されている
+        assert '[data-state="static"]' in tmpl
+        # static 用ラベルと setConnStatus('static') 呼び出しが入っている
+        assert "static:" in tmpl
+        assert "setConnStatus('static')" in tmpl
 
 
 # ---------------------------------------------------------------------------
