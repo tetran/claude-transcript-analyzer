@@ -20,7 +20,7 @@ PR #25 レビュー対応 (Codex F1/F2 + claude[bot] #1〜#5) で以下が変更
   リトライ後も fail でも **True 返却** (起動中 race window で多重起動を発生させないため)
 - `_HealthzHandler.status_code` は autouse fixture で test 終了時に default に戻す
 """
-# pylint: disable=line-too-long
+# pylint: disable=line-too-long,too-many-lines
 import importlib.util
 import io
 import json
@@ -834,7 +834,7 @@ class TestSystemMessageOutput:
         """spawn 成功 → 4 hook いずれでも systemMessage 出力。"""
         path = tmp_path / "server.json"
         mod = load_launch_module(path)
-        url = f"http://127.0.0.1:54321"
+        url = "http://127.0.0.1:54321"
         with mock.patch.object(mod.sys, "stdin", _stdin_with_event(event)), \
              mock.patch.object(mod, "_spawn_server", side_effect=self._fake_spawn_writing(path, 12345, url)):
             rc = mod.main()
