@@ -10,17 +10,10 @@ Phase B のスコープ:
 # pylint: disable=line-too-long
 import json
 import socket
-import threading
 import time
 from dataclasses import dataclass
 
-from test_dashboard import load_dashboard_module
-
-
-def _start_server_in_thread(server) -> threading.Thread:
-    t = threading.Thread(target=server.serve_forever, daemon=True)
-    t.start()
-    return t
+from test_dashboard import load_dashboard_module, start_server_in_thread
 
 
 def _wait_for_sse_clients(server, expected: int, timeout: float = 2.0) -> None:
@@ -95,7 +88,7 @@ class TestEventsEndpoint:
         mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
         server = mod.create_server(port=0, idle_seconds=0)
         port = server.server_address[1]
-        _start_server_in_thread(server)
+        start_server_in_thread(server)
         c = None
         try:
             c = _open_sse("127.0.0.1", port)
@@ -119,7 +112,7 @@ class TestEventsEndpoint:
         mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
         server = mod.create_server(port=0, idle_seconds=0)
         port = server.server_address[1]
-        _start_server_in_thread(server)
+        start_server_in_thread(server)
         c = None
         try:
             c = _open_sse("127.0.0.1", port)
@@ -144,7 +137,7 @@ class TestRefreshBroadcast:
         # poll_interval を短くしてテストを早める
         server = mod.create_server(port=0, idle_seconds=0, poll_interval=0.1)
         port = server.server_address[1]
-        _start_server_in_thread(server)
+        start_server_in_thread(server)
         c = None
         try:
             c = _open_sse("127.0.0.1", port)
@@ -175,7 +168,7 @@ class TestRefreshBroadcast:
         mod = load_dashboard_module(usage)
         server = mod.create_server(port=0, idle_seconds=0, poll_interval=0.1)
         port = server.server_address[1]
-        _start_server_in_thread(server)
+        start_server_in_thread(server)
         a = b = None
         try:
             a = _open_sse("127.0.0.1", port)
@@ -207,7 +200,7 @@ class TestRefreshBroadcast:
         mod = load_dashboard_module(usage)
         server = mod.create_server(port=0, idle_seconds=0, poll_interval=0.1)
         port = server.server_address[1]
-        _start_server_in_thread(server)
+        start_server_in_thread(server)
         c = None
         try:
             c = _open_sse("127.0.0.1", port)
@@ -232,7 +225,7 @@ class TestSseIdleCounter:
         # idle_seconds を非常に短く: 0.2s。SSE 接続があれば落ちない
         server = mod.create_server(port=0, idle_seconds=0.2, poll_interval=0.1)
         port = server.server_address[1]
-        t = _start_server_in_thread(server)
+        t = start_server_in_thread(server)
         c = None
         try:
             c = _open_sse("127.0.0.1", port)
@@ -262,7 +255,7 @@ class TestSseIdleCounter:
             port=0, idle_seconds=0.3, poll_interval=0.0, sse_keepalive=15.0,
         )
         port = server.server_address[1]
-        t = _start_server_in_thread(server)
+        t = start_server_in_thread(server)
         c = None
         try:
             c = _open_sse("127.0.0.1", port)
@@ -292,7 +285,7 @@ class TestSseIdleCounter:
             port=0, idle_seconds=0.3, poll_interval=0.1, sse_keepalive=0.05,
         )
         port = server.server_address[1]
-        t = _start_server_in_thread(server)
+        t = start_server_in_thread(server)
         c = None
         try:
             c = _open_sse("127.0.0.1", port)

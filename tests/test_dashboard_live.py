@@ -19,14 +19,8 @@ from pathlib import Path
 # 切り出された。`mod._lock_fd` を monkeypatch しても `server_registry._file_lock`
 # 内の参照は変わらないため、内部実装テストは `server_registry` を直接 monkeypatch する。
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from test_dashboard import load_dashboard_module  # noqa: F401, E402  (re-exported helper)
+from test_dashboard import load_dashboard_module, start_server_in_thread  # noqa: F401, E402  (re-exported helpers)
 import server_registry  # noqa: E402
-
-
-def _start_server_in_thread(server) -> threading.Thread:
-    t = threading.Thread(target=server.serve_forever, daemon=True)
-    t.start()
-    return t
 
 
 class TestThreadingServer:
@@ -93,7 +87,7 @@ class TestThreadingServer:
         mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
         server = mod.create_server(port=0, idle_seconds=0)
         port = server.server_address[1]
-        _start_server_in_thread(server)
+        start_server_in_thread(server)
         try:
             results: list[int] = []
             errors: list[BaseException] = []
@@ -124,7 +118,7 @@ class TestHealthzEndpoint:
         mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
         server = mod.create_server(port=0, idle_seconds=0)
         port = server.server_address[1]
-        _start_server_in_thread(server)
+        start_server_in_thread(server)
         try:
             with urllib.request.urlopen(f"http://127.0.0.1:{port}/healthz") as resp:
                 assert resp.status == 200
@@ -268,7 +262,7 @@ class TestIdleWatchdog:
         mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
         server = mod.create_server(port=0, idle_seconds=0)
         port = server.server_address[1]
-        _start_server_in_thread(server)
+        start_server_in_thread(server)
         try:
             time.sleep(0.1)
             assert server.idle_for() >= 0.09
@@ -284,7 +278,7 @@ class TestIdleWatchdog:
         """idle_seconds 経過で server がシャットダウンする。"""
         mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
         server = mod.create_server(port=0, idle_seconds=0.2)
-        t = _start_server_in_thread(server)
+        t = start_server_in_thread(server)
         try:
             t.join(timeout=3.0)
             assert not t.is_alive(), "watchdog で serve_forever が exit していない"
@@ -295,7 +289,7 @@ class TestIdleWatchdog:
         """idle_seconds=0 で watchdog は起動せず、外部 shutdown まで生き続ける。"""
         mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
         server = mod.create_server(port=0, idle_seconds=0)
-        t = _start_server_in_thread(server)
+        t = start_server_in_thread(server)
         try:
             time.sleep(0.5)
             assert t.is_alive(), "idle_seconds=0 なのに自動停止した"
