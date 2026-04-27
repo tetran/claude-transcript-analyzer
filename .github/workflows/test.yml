@@ -26,3 +26,34 @@ jobs:
         run: python -m pip install --upgrade pip pytest
       - name: Run pytest
         run: python -m pytest tests/ -q
+
+  pytest-no-python-alias:
+    # Issue #33: `python3` のみ存在し `python` alias が無い環境 (Ubuntu 22+ /
+    # macOS Homebrew のデフォルト) で hook の bash POSIX `command -v` fallback が
+    # 動くことを常時回帰防止する専用ジョブ。
+    name: pytest (Ubuntu, python alias absent — Issue #33 regression guard)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Remove `python` symlink (simulate Ubuntu 22+ / macOS Homebrew default)
+        run: |
+          # actions/setup-python は便宜上 `python` alias も作るが、本ジョブでは
+          # `python3` のみ存在する distro デフォルト環境を再現するため除去する。
+          if command -v python >/dev/null 2>&1; then
+            rm -f "$(command -v python)"
+          fi
+          if command -v python >/dev/null 2>&1; then
+            echo "ERROR: python alias still exists"
+            exit 1
+          fi
+          command -v python3
+      - name: Install pytest
+        run: python3 -m pip install --upgrade pip pytest
+      - name: Run pytest
+        run: python3 -m pytest tests/ -q
+      - name: Smoke test — bash POSIX `command -v` fallback resolves
+        run: bash -c '$(command -v python3 || command -v python) -c "import sys; print(sys.version)"'

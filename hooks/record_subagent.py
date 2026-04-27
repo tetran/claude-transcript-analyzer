@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """hooks/record_subagent.py
 
 PostToolUse(Task/Agent) イベントを受け取り、usage.jsonl にイベントを追記する。

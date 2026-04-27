@@ -26,8 +26,10 @@ def _load_settings(path: Path) -> dict:
 
 
 def _build_new_entries(repo_dir: str) -> dict:
-    record_skill = f"python {repo_dir}/hooks/record_skill.py"
-    record_subagent = f"python {repo_dir}/hooks/record_subagent.py"
+    # Issue #33: bash POSIX `command -v` fallback で python3/python の有無に依らず動く
+    launcher = "$(command -v python3 || command -v python)"
+    record_skill = f"{launcher} {repo_dir}/hooks/record_skill.py"
+    record_subagent = f"{launcher} {repo_dir}/hooks/record_subagent.py"
     return {
         "PostToolUse": [
             {
@@ -49,7 +51,7 @@ def _build_new_entries(repo_dir: str) -> dict:
 
 
 def _stop_hook_command(repo_dir: str) -> str:
-    return f"python {repo_dir}/hooks/verify_session.py"
+    return f"$(command -v python3 || command -v python) {repo_dir}/hooks/verify_session.py"
 
 
 def _merge_stop_hook_list(existing: list, command: str) -> list:
