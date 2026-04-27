@@ -546,6 +546,10 @@ class TestEndToEndLaunch:
         server.json が現れる。子サーバーは cleanup でちゃんと止める。"""
         server_json = tmp_path / "server.json"
         usage_jsonl = tmp_path / "usage.jsonl"
+        # Issue #24 PR#31 macOS CI debug: 子サーバーが silent crash する経路を取るため、
+        # launcher の `_LAUNCH_DASHBOARD_CHILD_LOG` 経路で子の stdout/stderr を file へ。
+        # 失敗時に pytest.fail に含めて CI ログから死因を見える化する (debug 完了後撤去)。
+        child_log = tmp_path / "child.log"
         env = os.environ.copy()
         env["DASHBOARD_SERVER_JSON"] = str(server_json)
         env["USAGE_JSONL"] = str(usage_jsonl)
@@ -554,6 +558,7 @@ class TestEndToEndLaunch:
         # server.json 書き込み直後に shutdown が動いてテストが捕まえられないことがある。
         # 30s に伸ばして CI flaky を解消 (Issue #24)。
         env["DASHBOARD_IDLE_SECONDS"] = "30"
+        env["_LAUNCH_DASHBOARD_CHILD_LOG"] = str(child_log)
         # 子サーバーが起動準備に時間がかかる場合があるので poll_interval は長めでも可
         result = subprocess.run(
             [sys.executable, str(_LAUNCH_PATH)],
@@ -579,7 +584,22 @@ class TestEndToEndLaunch:
                 except json.JSONDecodeError:
                     pass
             time.sleep(0.05)
-        assert server_json.exists(), "子サーバーが server.json を書いていない"
+        if not server_json.exists():
+            # macOS CI で死因取得用: 子サーバーの stdout/stderr を pytest.fail に流す
+            child_log_text = (
+                child_log.read_text(encoding="utf-8", errors="replace")
+                if child_log.exists()
+                else "<child.log was not created>"
+            )
+            pytest.fail(
+                "子サーバーが server.json を書いていない\n"
+                f"---- child stdout+stderr ({len(child_log_text)} bytes) ----\n"
+                f"{child_log_text}\n"
+                f"---- launcher stdout ----\n"
+                f"{result.stdout}\n"
+                f"---- launcher stderr ----\n"
+                f"{result.stderr}\n"
+            )
         info = json.loads(server_json.read_text(encoding="utf-8"))
         spawned_pid = info["pid"]
 

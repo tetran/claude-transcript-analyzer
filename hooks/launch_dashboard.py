@@ -252,15 +252,31 @@ def _spawn_server() -> None:
     共通:
     - `stdin/stdout/stderr=DEVNULL`: 親 hook の pipe を引き継がない
     - `close_fds=True`: 余計な fd を継承しない
+
+    Issue #24 PR#31 macOS CI debug: 環境変数 `_LAUNCH_DASHBOARD_CHILD_LOG` が
+    指定されたとき、子の stdout/stderr を当該 file に redirect する。
+    macOS CI で子サーバーが server.json を書けない原因 (silent crash) を取るための
+    一時経路。production では未設定、テスト/CI でのみ有効。
     """
     if not _SERVER_SCRIPT.exists():
         return
+    debug_log = os.environ.get("_LAUNCH_DASHBOARD_CHILD_LOG")
     kwargs: dict = {
         "stdin": subprocess.DEVNULL,
-        "stdout": subprocess.DEVNULL,
-        "stderr": subprocess.DEVNULL,
         "close_fds": True,
     }
+    if debug_log:
+        log_path = Path(debug_log)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        # buffering=0 で子の output を即座に file に flush し、テスト側で
+        # assertion fail 直後に読めるようにする。fd は child に継承後 close されるため
+        # parent 側で close する責務はない (subprocess 側で close される)。
+        log_fd = open(log_path, "wb", buffering=0)  # pylint: disable=consider-using-with
+        kwargs["stdout"] = log_fd
+        kwargs["stderr"] = subprocess.STDOUT  # stderr → stdout に統合
+    else:
+        kwargs["stdout"] = subprocess.DEVNULL
+        kwargs["stderr"] = subprocess.DEVNULL
     if sys.platform == "win32":
         kwargs["creationflags"] = (
             _WIN_DETACHED_PROCESS | _WIN_CREATE_NEW_PROCESS_GROUP
