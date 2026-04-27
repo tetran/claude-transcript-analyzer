@@ -254,8 +254,14 @@ class TestRenderStaticHtmlSecurity:
         assert "</style>" not in embedded_json, "`</style>` がエスケープされていない"
         assert r"<\/style>" in embedded_json
 
-    def test_html_comment_opener_in_data_is_escaped(self):
-        """`<!--` (HTML コメント opener) もエスケープされ <script> 解析を破らない。"""
+    def test_html_comment_opener_in_data_round_trips_safely(self):
+        """`<!--` 単体は escape されずそのままラウンドトリップする。
+
+        `</` 全般 escape で script-data-escaped state から `</script>` で抜ける経路が
+        既に塞がれているため、`<!--` 自体を escape する必要はない。
+        逆に `<\\!--` のような無効 JSON escape を入れると `JSON.parse` がエラーで
+        白画面化するバグになる (claude[bot] 再レビュー指摘)。
+        """
         m = self._import()
         data = {"project": "weird<!--name"}
         html = m.render_static_html(data)
@@ -263,17 +269,26 @@ class TestRenderStaticHtmlSecurity:
         idx = html.index(marker) + len(marker)
         end = html.index(";</script>", idx)
         embedded_json = html[idx:end]
-        assert "<!--" not in embedded_json, "`<!--` がエスケープされていない"
-        assert r"<\!--" in embedded_json
+        # `<!--` はそのまま通る (escape されない)
+        assert "<!--" in embedded_json
+        # それでも json.loads でラウンドトリップして元値に戻る (= JSON.parse も成功)
+        parsed = json.loads(embedded_json)
+        assert parsed["project"] == "weird<!--name"
 
     def test_data_round_trip_through_escaping_preserves_meaning(self):
         """エスケープしても JSON.parse 互換: `<\\/script>` は `</script>` として読み戻る。
 
         ブラウザは <script> の中で `<\\/script>` を「JSON 文字列としての /script」
         と解釈し、JSON.parse 後の値は元の `</script>` 文字列に戻る。
+        `<!--` を含む値も `</` 経由の escape を介さず JSON.parse がそのまま通せる
+        ことを併せて確認 (claude[bot] 再レビューのテストギャップ補完)。
         """
         m = self._import()
-        data = {"skill_ranking": [{"name": "</script>"}, {"name": "</style>"}]}
+        data = {"skill_ranking": [
+            {"name": "</script>"},
+            {"name": "</style>"},
+            {"name": "<!--comment-->"},
+        ]}
         html = m.render_static_html(data)
         marker = "window.__DATA__ = "
         idx = html.index(marker) + len(marker)
@@ -282,4 +297,5 @@ class TestRenderStaticHtmlSecurity:
         parsed = json.loads(html[idx:end])
         assert parsed["skill_ranking"][0]["name"] == "</script>"
         assert parsed["skill_ranking"][1]["name"] == "</style>"
+        assert parsed["skill_ranking"][2]["name"] == "<!--comment-->"
 

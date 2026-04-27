@@ -221,14 +221,17 @@ def render_static_html(data: dict) -> str:
     """データをインライン埋め込みしたスタンドアロン HTML を返す。
 
     `<script>` ブロック内の JSON literal は HTML script-data-state パーサーから見て
-    `</` で始まるシーケンス全般 (`</script>` だけでなく `</style>` 等も) と HTML
-    コメント開始 `<!--` を含むと、JSON 文字列リテラルの内側から `<script>` を
-    早期終了させられうる。project 名 (cwd 由来 = ユーザー由来) に偶然そういう文字列
-    が混入したケースで意図せず DOM が破られないよう、両方を `\\/` / `<\\!--` に
-    エスケープして出す (claude[bot] PR#27 review #1 対応)。
+    `</` で始まるシーケンスを含むと早期終了させられうる (`</script>` 直接抜けの他、
+    `<!--` で script-data-escaped state に入った後 `</script>` で抜けるパスもある)。
+    `</` 全般を `<\\/` に escape することで両方のパスを構造的に塞ぐ。
+    `\\/` は RFC 8259 で許可された JSON escape のため `JSON.parse` ラウンドトリップ
+    でブラウザには元の `</` として復元される。
+
+    `<!--` 単体は escape 不要: `</` 全般 escape の時点で script-data-escaped 経路の
+    `</script>` 抜け道は塞がれており、`<!--` 自体は構造化データの一部として
+    そのまま通せる (claude[bot] PR#27 review #1 / 再レビュー対応)。
     """
-    json_str = json.dumps(data, ensure_ascii=False)
-    json_str = json_str.replace("</", r"<\/").replace("<!--", r"<\!--")
+    json_str = json.dumps(data, ensure_ascii=False).replace("</", r"<\/")
     inline = f'<script>window.__DATA__ = {json_str};</script>\n'
     return _HTML_TEMPLATE.replace('</head>', inline + '</head>', 1)
 
