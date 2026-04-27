@@ -746,6 +746,21 @@ def write_server_json(path: Path, info: dict) -> None:
         os.replace(tmp, path)
 
 
+def _pid_matches(path: Path, expected_pid: int) -> bool:
+    """`server.json` の `pid` が `expected_pid` と一致するか。
+    不在 / OSError / JSON 不正 / pid 不一致はすべて False。
+    """
+    try:
+        content = path.read_text(encoding="utf-8")
+    except (FileNotFoundError, OSError):
+        return False
+    try:
+        info = json.loads(content)
+    except json.JSONDecodeError:
+        return False
+    return info.get("pid") == expected_pid
+
+
 def remove_server_json(path: Path, expected_pid: Optional[int] = None) -> bool:
     """server.json をべき等に削除する。返り値は実際に削除したか。
 
@@ -759,22 +774,10 @@ def remove_server_json(path: Path, expected_pid: Optional[int] = None) -> bool:
     """
     path = Path(path)
     with _file_lock(_lock_path_for(path)) as acquired:
-        if expected_pid is not None and not acquired:
+        if expected_pid is not None:
             # compare-and-delete モードで lock が取れない = 他プロセスが
             # 書き込み/削除中の可能性。安全側に倒して何もしない。
-            return False
-        if expected_pid is not None:
-            try:
-                content = path.read_text(encoding="utf-8")
-            except FileNotFoundError:
-                return False
-            except OSError:
-                return False
-            try:
-                info = json.loads(content)
-            except json.JSONDecodeError:
-                return False
-            if info.get("pid") != expected_pid:
+            if not acquired or not _pid_matches(path, expected_pid):
                 return False
         try:
             path.unlink()

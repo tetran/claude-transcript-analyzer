@@ -15,8 +15,6 @@ import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
-import pytest
-
 from test_dashboard import load_dashboard_module  # noqa: F401  (re-exported helper)
 
 

@@ -23,6 +23,11 @@ def run_merge_with_home(home: Path, repo_dir: Path) -> subprocess.CompletedProce
     import os
     env = os.environ.copy()
     env["HOME"] = str(home)
+    # Windows の `os.path.expanduser('~')` (= `Path.home()`) は Python 3.8 以降
+    # `HOME` を見ず `USERPROFILE` のみを参照するため、Windows でも tmp_path に
+    # リダイレクトされるよう同時に上書きする。POSIX では USERPROFILE は無視されるので
+    # 両 OS で同じヘルパを使える (Issue #24)。
+    env["USERPROFILE"] = str(home)
     return subprocess.run(
         [sys.executable, str(SCRIPT), str(repo_dir)],
         capture_output=True,

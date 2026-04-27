@@ -565,8 +565,11 @@ class TestEndToEndLaunch:
         )
         assert result.returncode == 0, f"launcher exit code: {result.returncode}, stderr: {result.stderr}"
 
-        # 子サーバーが server.json を書くまで待つ (CI で起動が遅いことを考慮)
-        deadline = time.time() + 10.0
+        # 子サーバーが server.json を書くまで待つ。
+        # CI macOS arm64 は Python の cold import + socket bind + write がトータルで
+        # 10s を超えることが観測されたため (Issue #24 PR#31 macos-latest fail)、
+        # 30s に伸ばす。ローカルでは 1s 未満で完了するので待ちオーバーヘッドは出ない。
+        deadline = time.time() + 30.0
         while time.time() < deadline:
             if server_json.exists():
                 try:
