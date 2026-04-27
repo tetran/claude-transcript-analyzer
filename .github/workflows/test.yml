@@ -43,11 +43,16 @@ jobs:
         run: |
           # actions/setup-python は便宜上 `python` alias も作るが、本ジョブでは
           # `python3` のみ存在する distro デフォルト環境を再現するため除去する。
+          # ubuntu-24.04 では `python` が PATH 上の複数箇所 (hostedtoolcache + /usr/bin)
+          # にある場合があるため、解決できなくなるまでループで除去する。
+          while command -v python >/dev/null 2>&1; do
+            p="$(command -v python)"
+            echo "Removing $p"
+            rm -f "$p"
+            hash -r 2>/dev/null || true
+          done
           if command -v python >/dev/null 2>&1; then
-            rm -f "$(command -v python)"
-          fi
-          if command -v python >/dev/null 2>&1; then
-            echo "ERROR: python alias still exists"
+            echo "ERROR: python alias still exists at $(command -v python)"
             exit 1
           fi
           command -v python3
