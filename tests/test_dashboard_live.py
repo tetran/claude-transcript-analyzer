@@ -14,6 +14,8 @@ import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
+import pytest
+
 from test_dashboard import load_dashboard_module  # noqa: F401  (re-exported helper)
 
 
@@ -377,3 +379,131 @@ class TestRunIntegration:
             t.join(timeout=2.0)
         # serve_forever が exit した後、server.json は削除されている
         assert not target.exists()
+
+
+class TestServerJsonCrossProcessLock:
+    """Issue #24: TOCTOU race 解消。write/remove を別ファイル lock 経由で逐次化。
+
+    現状の compare-and-delete は read → pid 比較 → unlink の 4 ステップが
+    非アトミックで、A が pid を読んだ後 B が atomic write で上書きすると、
+    A の unlink が B のレジストリ (pid 不一致) を誤削除する race が残る。
+    `_file_lock` で write/remove を 1 critical section に閉じ込めて解消する。
+    """
+
+    def test_file_lock_yields_acquired_true_on_success(self, tmp_path):
+        """通常経路: lock 取得成功時は True を yield する。"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        with mod._file_lock(tmp_path / "x.lock") as acquired:
+            assert acquired is True
+
+    def test_file_lock_yields_acquired_false_when_lock_call_fails(self, tmp_path, monkeypatch):
+        """lock 取得に失敗したとき (msvcrt.locking が 10 秒待っても OSError 等)、
+        yield False で呼び出し側に伝える。silent best-effort で続行はしない
+        (race 解消保証を緩めないため、安全側に倒す責務は呼び出し側へ)。"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+
+        def boom(_fd):
+            raise OSError("simulated lock failure")
+
+        monkeypatch.setattr(mod, "_lock_fd", boom)
+        with mod._file_lock(tmp_path / "x.lock") as acquired:
+            assert acquired is False
+
+    def test_lock_file_co_located_with_server_json(self, tmp_path):
+        """`<server.json>.lock` ファイルが同じ親 dir に作られる (cleanup は best-effort)。"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        target = tmp_path / "server.json"
+        mod.write_server_json(target, {"pid": 1, "port": 1, "url": "u", "started_at": "t"})
+        # 命名規約: server.json + ".lock" suffix
+        lock = tmp_path / "server.json.lock"
+        assert lock.exists(), f"lock ファイルが存在しない (期待パス: {lock})"
+
+    def test_remove_server_json_returns_false_when_lock_unavailable(self, tmp_path, monkeypatch):
+        """lock 取得失敗時、remove は何もせず False を返してファイルを残す (安全側)。"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        target = tmp_path / "server.json"
+        target.write_text(
+            json.dumps({"pid": 4242, "port": 1, "url": "u", "started_at": "t"}),
+            encoding="utf-8",
+        )
+
+        def boom(_fd):
+            raise OSError("simulated lock failure")
+
+        monkeypatch.setattr(mod, "_lock_fd", boom)
+        removed = mod.remove_server_json(target, expected_pid=4242)
+        assert removed is False
+        # ファイルは残る (削除を諦めた)
+        assert target.exists()
+
+    def test_concurrent_write_and_remove_are_serialized(self, tmp_path):
+        """write_server_json と remove_server_json を Barrier で同時起動。
+        lock があれば必ず逐次化され、最終 state は決定論的:
+          - write が後に走った → ファイル存在 + B の pid
+          - remove が後に走った → ファイル不在
+        race があると read 中の A が B の atomic write 直後の内容を「中途半端に」
+        読み取って例外を投げる、または unlink で B のファイルを誤削除する。"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        target = tmp_path / "server.json"
+        target.write_text(
+            json.dumps({"pid": 1, "port": 1, "url": "u", "started_at": "t"}),
+            encoding="utf-8",
+        )
+
+        barrier = threading.Barrier(2)
+        errors: list[BaseException] = []
+
+        def remove_fn():
+            try:
+                barrier.wait(timeout=2.0)
+                mod.remove_server_json(target, expected_pid=1)
+            except BaseException as exc:  # pylint: disable=broad-except
+                errors.append(exc)
+
+        def write_fn():
+            try:
+                barrier.wait(timeout=2.0)
+                mod.write_server_json(
+                    target,
+                    {"pid": 2, "port": 2, "url": "u2", "started_at": "t2"},
+                )
+            except BaseException as exc:  # pylint: disable=broad-except
+                errors.append(exc)
+
+        t1 = threading.Thread(target=remove_fn)
+        t2 = threading.Thread(target=write_fn)
+        t1.start()
+        t2.start()
+        t1.join(timeout=3.0)
+        t2.join(timeout=3.0)
+
+        assert errors == [], f"並行実行中に例外: {errors!r}"
+        # 最終 state: 存在するなら必ず B の pid (中間状態の混在ファイル不可)
+        if target.exists():
+            info = json.loads(target.read_text(encoding="utf-8"))
+            assert info["pid"] == 2, (
+                f"race 検出: 中間状態のファイルが残っている pid={info.get('pid')}"
+            )
+
+    def test_remove_holds_lock_during_compare_and_delete(self, tmp_path, monkeypatch):
+        """compare-and-delete の read → pid 比較 → unlink が `_file_lock` 内で
+        完結している (構造テスト)。lock を取らずに read+unlink すると
+        TOCTOU race が再発するため、lock acquire 経路を必ず通ることを保証。"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        target = tmp_path / "server.json"
+        target.write_text(
+            json.dumps({"pid": 4242, "port": 1, "url": "u", "started_at": "t"}),
+            encoding="utf-8",
+        )
+
+        lock_acquired_calls: list = []
+        original_lock_fd = mod._lock_fd
+
+        def spy_lock_fd(fd):
+            lock_acquired_calls.append(fd)
+            return original_lock_fd(fd)
+
+        monkeypatch.setattr(mod, "_lock_fd", spy_lock_fd)
+        removed = mod.remove_server_json(target, expected_pid=4242)
+        assert removed is True
+        assert len(lock_acquired_calls) >= 1, "remove_server_json が lock を取得していない"
