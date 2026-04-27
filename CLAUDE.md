@@ -97,9 +97,13 @@ hook が launch_dashboard を起動し直して **自動復活** する（同 or
 通常は hook 経由の自動起動で十分だが、手動でも起動可能：
 
 ```bash
-# 手動起動（既起動なら多重 bind で OSError）
+# 手動起動 (launcher 経由でべき等 — 既起動なら何もしない)
+python3 ${CLAUDE_PLUGIN_ROOT}/hooks/launch_dashboard.py
+# /usage-dashboard スラッシュコマンドも同じ経路
+
+# fg debug 用に直叩きする場合は事前に既起動確認 (二重起動防止)
+cat ~/.claude/transcript-analyzer/server.json  # 既起動なら kill してから
 python3 dashboard/server.py
-# /usage-dashboard スラッシュコマンドからも起動できる
 
 # 手動停止
 kill $(jq -r .pid ~/.claude/transcript-analyzer/server.json)

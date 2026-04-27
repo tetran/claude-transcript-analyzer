@@ -6,11 +6,19 @@ fork-and-detach で `dashboard/server.py` を起動して exit 0 する、べき
 
 テスト戦略:
 - 関数単位ユニットテスト: `_read_server_json` / `_is_pid_alive` / `_healthz_ok` /
-  `_server_is_alive` / `main` を、subprocess.Popen と urllib.request を patch して検証
-- 結合スモークテスト: 実スクリプトを subprocess.run で起動し、server.py が fork-and-detach
+  `_server_is_alive` / `_remove_stale_server_json` / `main` を、subprocess.Popen と
+  urllib.request を patch して検証
+- 結合スモークテスト: 実スクリプトを subprocess.run で起動し、server.py が fix-and-detach
   で起動されて server.json が現れることを確認（ベタ）
 
 Issue #14 AC のテスト要件「server.json 不在/alive/dead/healthz失敗 の 4 ケース」をカバー。
+
+PR #25 レビュー対応 (Codex F1/F2 + claude[bot] #1〜#5) で以下が変更された:
+- `_server_is_alive` は **ピュア化** (副作用 unlink を抜き、`_remove_stale_server_json`
+  に分離。`main()` で明示呼び出し)
+- `_server_is_alive` は **pid alive のとき healthz をリトライ** (50ms × 3)。
+  リトライ後も fail でも **True 返却** (起動中 race window で多重起動を発生させないため)
+- `_HealthzHandler.status_code` は autouse fixture で test 終了時に default に戻す
 """
 # pylint: disable=line-too-long
 import importlib.util
@@ -26,6 +34,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest import mock
 
+import pytest
+
 _LAUNCH_PATH = Path(__file__).parent.parent / "hooks" / "launch_dashboard.py"
 _SERVER_PATH = Path(__file__).parent.parent / "dashboard" / "server.py"
 
@@ -40,6 +50,40 @@ def load_launch_module(server_json: Path):
     finally:
         del os.environ["DASHBOARD_SERVER_JSON"]
     return mod
+
+
+# ----------------------------------------------------------------------------
+# テスト用 healthz handler — 全テストで共有するため state leak 対策が必要
+# ----------------------------------------------------------------------------
+
+class _HealthzHandler(BaseHTTPRequestHandler):
+    """テスト用の最小 healthz サーバー。各テストで status を切り替える。
+
+    `status_code` はクラス変数で共有される。test_*_500 のような mutate 後に
+    他テストへ leak すると並列実行 (pytest-xdist) で flaky になるため、
+    `_reset_healthz_handler_state` autouse fixture で各テスト終了時に 200 へ戻す
+    (claude[bot] #3 review 対応)。
+    """
+    status_code = 200
+
+    def do_GET(self):  # noqa: N802
+        if self.path == "/healthz":
+            self.send_response(self.status_code)
+            self.end_headers()
+            self.wfile.write(b'{"status":"ok"}')
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def log_message(self, *_args, **_kwargs):
+        pass
+
+
+@pytest.fixture(autouse=True)
+def _reset_healthz_handler_state():
+    """各テスト後に `_HealthzHandler.status_code` を 200 に復元 (state leak 対策)。"""
+    yield
+    _HealthzHandler.status_code = 200
 
 
 # ----------------------------------------------------------------------------
@@ -64,6 +108,16 @@ class TestReadServerJson:
         info = mod._read_server_json(path)
         assert info == {"pid": 1234, "port": 8080, "url": "http://localhost:8080"}
 
+    def test_non_dict_json_returns_none(self, tmp_path):
+        """list / string / number 等 dict でない JSON → None (claude[bot] #4a 対応)。"""
+        mod = load_launch_module(tmp_path / "server.json")
+        for content in ('[1,2,3]', '"string"', '42', 'null'):
+            path = tmp_path / "non_dict.json"
+            path.write_text(content, encoding="utf-8")
+            assert mod._read_server_json(path) is None, (
+                f"non-dict JSON ({content!r}) が None 返却していない"
+            )
+
 
 # ----------------------------------------------------------------------------
 # _is_pid_alive
@@ -86,23 +140,6 @@ class TestIsPidAlive:
 # ----------------------------------------------------------------------------
 # _healthz_ok
 # ----------------------------------------------------------------------------
-
-class _HealthzHandler(BaseHTTPRequestHandler):
-    """テスト用の最小 healthz サーバー。各テストで status を切り替える。"""
-    status_code = 200
-
-    def do_GET(self):  # noqa: N802
-        if self.path == "/healthz":
-            self.send_response(self.status_code)
-            self.end_headers()
-            self.wfile.write(b'{"status":"ok"}')
-        else:
-            self.send_response(404)
-            self.end_headers()
-
-    def log_message(self, *_args, **_kwargs):
-        pass
-
 
 class TestHealthzOk:
     def test_returns_true_for_200(self, tmp_path):
@@ -159,7 +196,7 @@ class TestHealthzOk:
 
 
 # ----------------------------------------------------------------------------
-# _server_is_alive (server.json + pid + healthz の総合判定)
+# _server_is_alive — ピュア化版 (副作用なし、pid alive 時は healthz fail でも True)
 # ----------------------------------------------------------------------------
 
 class TestServerIsAlive:
@@ -173,30 +210,68 @@ class TestServerIsAlive:
         mod = load_launch_module(path)
         assert mod._server_is_alive() is False
 
-    def test_dead_pid_removes_stale_server_json_and_returns_false(self, tmp_path):
-        """ゾンビ pid file は launch_dashboard が削除する（AC: ゾンビ pid file を削除）。"""
+    def test_dead_pid_returns_false_without_side_effects(self, tmp_path):
+        """ピュア化 (claude[bot] #5): `_server_is_alive` は副作用を持たない。
+        ゾンビ削除は `_remove_stale_server_json` / `main()` に移譲。"""
         path = tmp_path / "server.json"
-        # 死んだ pid を埋め込む
         with subprocess.Popen([sys.executable, "-c", "pass"]) as proc:
             proc.wait()
         path.write_text(json.dumps({"pid": proc.pid, "port": 9999, "url": "http://127.0.0.1:9999"}), encoding="utf-8")
         mod = load_launch_module(path)
         assert mod._server_is_alive() is False
-        assert not path.exists(), "ゾンビ server.json が削除されていない"
+        assert path.exists(), "_server_is_alive が副作用 (unlink) を持っている — ピュア化原則に違反"
 
-    def test_alive_pid_but_healthz_fails_returns_false(self, tmp_path):
-        """pid は生きてるが healthz が無応答 → 復帰のために False を返す。"""
+    def test_alive_pid_with_persistent_healthz_failure_returns_true(self, tmp_path):
+        """Codex F2 / claude[bot] #1: pid alive + healthz 永久失敗 → **True** 返却 (spawn 抑止)。
+        サーバー起動中の race window で `write_server_json()` 後 `serve_forever()` 開始前に hook が
+        発火するケースで、pid alive だけ見て True を返すことで二重起動を防ぐ。デッドロック中サーバー
+        は ops 介入 (kill) で復旧する想定。"""
         path = tmp_path / "server.json"
-        # 自プロセス pid + 接続不可 url
+        # 自プロセス pid + 接続不可 url (healthz は絶対 fail)
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.bind(("127.0.0.1", 0))
             free_port = s.getsockname()[1]
         path.write_text(json.dumps({"pid": os.getpid(), "port": free_port, "url": f"http://127.0.0.1:{free_port}"}), encoding="utf-8")
         mod = load_launch_module(path)
-        assert mod._server_is_alive() is False
+        # 絶対 fail の healthz だがリトライ後も True 返却 (pid alive 経由)
+        assert mod._server_is_alive() is True
+
+    def test_alive_pid_with_eventual_healthz_success_returns_true(self, tmp_path):
+        """healthz リトライ動作確認: 1 回目 fail + 2 回目以降 success → True 返却。"""
+        path = tmp_path / "server.json"
+
+        class _CountingHealthzHandler(BaseHTTPRequestHandler):
+            attempts = 0
+
+            def do_GET(self):  # noqa: N802
+                _CountingHealthzHandler.attempts += 1
+                if _CountingHealthzHandler.attempts < 2:
+                    self.send_response(503)
+                else:
+                    self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b'{}')
+
+            def log_message(self, *_args, **_kwargs):
+                pass
+
+        _CountingHealthzHandler.attempts = 0
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _CountingHealthzHandler)
+        port = server.server_address[1]
+        t = threading.Thread(target=server.serve_forever, daemon=True)
+        t.start()
+        try:
+            path.write_text(json.dumps({"pid": os.getpid(), "port": port, "url": f"http://127.0.0.1:{port}"}), encoding="utf-8")
+            mod = load_launch_module(path)
+            assert mod._server_is_alive() is True
+            assert _CountingHealthzHandler.attempts >= 2, "healthz リトライが効いていない"
+        finally:
+            server.shutdown()
+            server.server_close()
+            t.join(timeout=2)
 
     def test_alive_pid_and_healthz_ok_returns_true(self, tmp_path):
-        """pid 生存 + healthz 200 → True (re-launch 不要)。"""
+        """pid 生存 + healthz 200 → True (re-launch 不要)。リトライ無しで即時。"""
         path = tmp_path / "server.json"
         _HealthzHandler.status_code = 200
         server = ThreadingHTTPServer(("127.0.0.1", 0), _HealthzHandler)
@@ -211,6 +286,42 @@ class TestServerIsAlive:
             server.shutdown()
             server.server_close()
             t.join(timeout=2)
+
+
+# ----------------------------------------------------------------------------
+# _remove_stale_server_json — 切り出された zombie cleanup (claude[bot] #5 対応)
+# ----------------------------------------------------------------------------
+
+class TestRemoveStaleServerJson:
+    def test_dead_pid_unlinks_and_returns_true(self, tmp_path):
+        path = tmp_path / "server.json"
+        with subprocess.Popen([sys.executable, "-c", "pass"]) as proc:
+            proc.wait()
+        path.write_text(json.dumps({"pid": proc.pid, "port": 9999, "url": "http://x"}), encoding="utf-8")
+        mod = load_launch_module(path)
+        assert mod._remove_stale_server_json() is True
+        assert not path.exists()
+
+    def test_alive_pid_keeps_file(self, tmp_path):
+        """alive pid は誤って削除しない (server.json は信頼できる状態)。"""
+        path = tmp_path / "server.json"
+        path.write_text(json.dumps({"pid": os.getpid(), "port": 9999, "url": "http://x"}), encoding="utf-8")
+        mod = load_launch_module(path)
+        assert mod._remove_stale_server_json() is False
+        assert path.exists(), "alive pid のファイルを誤って削除してしまった"
+
+    def test_missing_file_is_noop(self, tmp_path):
+        """不在ファイル → 何もしない (False, 例外も投げない)。"""
+        mod = load_launch_module(tmp_path / "server.json")
+        assert mod._remove_stale_server_json() is False
+
+    def test_broken_json_is_noop(self, tmp_path):
+        """壊れた JSON は削除せず spawn 後の atomic replace に任せる (race 回避)。"""
+        path = tmp_path / "server.json"
+        path.write_text("{broken", encoding="utf-8")
+        mod = load_launch_module(path)
+        assert mod._remove_stale_server_json() is False
+        assert path.exists()
 
 
 # ----------------------------------------------------------------------------
@@ -255,7 +366,8 @@ class TestMainSpawnDecision:
         assert rc == 0
         popen.assert_called_once()
 
-    def test_healthz_failure_spawns(self, tmp_path):
+    def test_healthz_failure_does_not_spawn_when_pid_alive(self, tmp_path):
+        """Codex F2 / claude[bot] #1: pid alive + healthz fail → spawn しない (二重起動防止)。"""
         path = tmp_path / "server.json"
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.bind(("127.0.0.1", 0))
@@ -265,7 +377,7 @@ class TestMainSpawnDecision:
         with mock.patch.object(mod.subprocess, "Popen") as popen:
             rc = mod.main()
         assert rc == 0
-        popen.assert_called_once()
+        popen.assert_not_called()
 
     def test_spawn_oserror_silent_exit_zero(self, tmp_path):
         """Popen が OSError → exit 0 (Claude Code をブロックしない)。"""
@@ -280,6 +392,23 @@ class TestMainSpawnDecision:
         with mock.patch.object(mod, "_server_is_alive", side_effect=RuntimeError("boom")):
             rc = mod.main()
         assert rc == 0
+
+
+class TestMainSweepsZombieBeforeSpawn:
+    """main() は dead pid 経路で `_remove_stale_server_json` を呼んでから spawn する
+    (claude[bot] #5: 副作用を main() に集約)。"""
+
+    def test_dead_pid_path_unlinks_before_spawn(self, tmp_path):
+        path = tmp_path / "server.json"
+        with subprocess.Popen([sys.executable, "-c", "pass"]) as proc:
+            proc.wait()
+        path.write_text(json.dumps({"pid": proc.pid, "port": 9999, "url": "http://127.0.0.1:9999"}), encoding="utf-8")
+        mod = load_launch_module(path)
+        with mock.patch.object(mod.subprocess, "Popen") as popen:
+            rc = mod.main()
+        assert rc == 0
+        popen.assert_called_once()
+        assert not path.exists(), "main() が dead pid 経路で server.json を削除していない"
 
 
 # ----------------------------------------------------------------------------
@@ -397,10 +526,20 @@ class TestEndToEndLaunch:
             except (OSError, ProcessLookupError):
                 pass
             # 終了待ち（DASHBOARD_IDLE_SECONDS=5 で勝手にも消えるが念のため）
-            deadline = time.time() + 5.0
+            deadline = time.time() + 3.0
             while time.time() < deadline:
                 try:
                     os.kill(spawned_pid, 0)
                 except (OSError, ProcessLookupError):
                     break
                 time.sleep(0.05)
+            # SIGTERM を無視するプロセスへの fallback (claude[bot] #4b 対応)
+            try:
+                os.kill(spawned_pid, 0)
+            except (OSError, ProcessLookupError):
+                pass  # 既に死亡済み
+            else:
+                try:
+                    os.kill(spawned_pid, 9)  # SIGKILL
+                except (OSError, ProcessLookupError):
+                    pass
