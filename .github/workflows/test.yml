@@ -9,7 +9,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # macOS は CI matrix から除外: 開発者のローカル環境が macOS のため日常的に
+        # カバーされており、GitHub Actions の macOS arm64 runner は mDNSResponder
+        # 起因で `HTTPServer.server_bind` 内の `getfqdn` が hang する固有問題があり、
+        # production code を runner 都合で歪めるよりはここで切る (Issue #24 / PR #31)。
+        os: [ubuntu-latest, windows-latest]
         python-version: ["3.11"]
     runs-on: ${{ matrix.os }}
     steps:

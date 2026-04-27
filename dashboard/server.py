@@ -4,7 +4,6 @@ import os
 import select
 import signal
 import socket
-import socketserver
 import sys
 import threading
 import time
@@ -577,19 +576,6 @@ class DashboardServer(ThreadingHTTPServer):
     # Win は default False にして OS の自然解放に任せる。
     allow_reuse_address = sys.platform != "win32"
 
-    def server_bind(self):
-        # Issue #24 PR#31 macOS CI fix: `HTTPServer.server_bind` の default 実装は
-        # `server_name` を `socket.getfqdn(host)` で解決するが、これは reverse DNS
-        # lookup を起こし GitHub Actions の macOS arm64 runner で hang する
-        # (debug round 2 trace で `[server-trace] main: server bound port=N` が
-        # 出ない = bind 後の getfqdn でブロックすることを確認)。
-        # `TCPServer.server_bind` だけを直接呼んで socket の bind/getsockname を実行し、
-        # `server_name` には host 文字列をそのまま入れる (UI/URL 表示には影響なし)。
-        socketserver.TCPServer.server_bind(self)
-        host, port = self.server_address[:2]
-        self.server_name = host
-        self.server_port = port
-
     def __init__(self, server_address, RequestHandlerClass, *,
                  idle_seconds: float = 0.0,
                  poll_interval: float = 0.0,
@@ -678,11 +664,9 @@ def create_server(
     port: int = 0,
     idle_seconds: float = 0.0,
     handler_cls=None,
-    # Issue #24 PR#31 macOS CI fix: GitHub Actions の macOS arm64 runner で
-    # `localhost` の `getaddrinfo` 解決が mDNSResponder の IPv6/IPv4 dual-stack
-    # 起因で hang する既知問題があり、`server_bind` がブロックする (子サーバーが
-    # `[server-trace] main: enter` 後 `server bound port=N` まで進めず、
-    # server.json も書けない)。IPv4 loopback を直接指定して名前解決を skip。
+    # IPv4 loopback を直接指定し `getaddrinfo("localhost", ...)` を skip する。
+    # `localhost` 解決は IPv6/IPv4 dual-stack の mDNSResponder 起因で遅延・hang する
+    # 環境 (例: GitHub Actions macOS arm64 runner) があり、bind が無限ブロックする。
     # `run()` の URL は `http://localhost:N` のままで OK (loopback 同一)。
     host: str = "127.0.0.1",
     poll_interval: float = 0.0,
