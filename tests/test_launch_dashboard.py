@@ -477,6 +477,38 @@ class TestPerformance:
 # 結合スモーク — 実スクリプトを subprocess で起動し fork-and-detach を検証
 # ----------------------------------------------------------------------------
 
+class TestHooksJsonRegistration:
+    """Issue #26: `launch_dashboard.py` が plan v4 で指示された 4 hook すべてに登録されていること。
+
+    SessionStart / UserPromptExpansion / UserPromptSubmit / PostToolUse の 4 経路で
+    べき等 launcher が並列発火するのが Issue #14 plan v4 の AC。
+    過去 Phase C PR (#25) で UserPromptExpansion が登録漏れしていたのを Issue #26 で修正。
+    """
+
+    @staticmethod
+    def _load_hooks_json():
+        path = Path(__file__).parent.parent / "hooks" / "hooks.json"
+        return json.loads(path.read_text(encoding="utf-8"))["hooks"]
+
+    @pytest.mark.parametrize(
+        "event",
+        ["SessionStart", "UserPromptExpansion", "UserPromptSubmit", "PostToolUse"],
+    )
+    def test_launch_dashboard_registered_on_event(self, event):
+        """指定 event の hook entries に launch_dashboard.py を呼ぶ command が含まれる。"""
+        hooks = self._load_hooks_json()
+        assert event in hooks, f"{event} が hooks.json に存在しない"
+        commands = [
+            h["command"]
+            for entry in hooks[event]
+            for h in entry["hooks"]
+            if h.get("type") == "command"
+        ]
+        assert any("launch_dashboard.py" in cmd for cmd in commands), (
+            f"{event} に launch_dashboard.py が登録されていない (commands: {commands})"
+        )
+
+
 class TestEndToEndLaunch:
     def test_script_spawns_real_dashboard_server(self, tmp_path):
         """実スクリプト起動: server.json 不在 → fork-and-detach で dashboard/server.py が起動し、

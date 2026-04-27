@@ -71,6 +71,14 @@
             "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/record_skill.py"
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/launch_dashboard.py"
+          }
+        ]
       }
     ],
     "SubagentStart": [

@@ -1,7 +1,8 @@
 Manually launch the claude-transcript-analyzer dashboard server (idempotent).
 
 > **v0.3 以降の通常運用ではこのコマンドは不要**: `hooks/launch_dashboard.py` が
-> SessionStart / UserPromptSubmit / PostToolUse hook で**べき等に自動起動**する。
+> SessionStart / UserPromptExpansion / UserPromptSubmit / PostToolUse hook で
+> **べき等に自動起動**する。
 > このスラッシュコマンドは、明示的に手動で立ち上げたい場合の併存パスとして残す。
 
 ```bash
