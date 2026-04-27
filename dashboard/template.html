@@ -96,6 +96,50 @@
   .header .meta .k { display: inline-block; min-width: 78px; color: var(--ink-faint); }
   .header .meta .v { color: var(--ink-soft); font-family: var(--ff-mono); }
 
+  /* ---------- live connection badge ---------- */
+  .conn-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 10px;
+    margin-bottom: 6px;
+    font-family: var(--ff-mono);
+    font-size: 11px;
+    border-radius: var(--r-pill);
+    border: 1px solid var(--line);
+    background: var(--bg-panel);
+    color: var(--ink-faint);
+    transition: color 180ms ease, border-color 180ms ease, background 180ms ease;
+  }
+  .conn-status::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    box-shadow: 0 0 0 0 currentColor;
+  }
+  .conn-status[data-state="online"] {
+    color: var(--mint);
+    border-color: var(--mint-soft);
+  }
+  .conn-status[data-state="online"]::before {
+    animation: conn-pulse 1.6s ease-out infinite;
+  }
+  .conn-status[data-state="reconnect"] {
+    color: var(--peach);
+    border-color: var(--peach-soft);
+  }
+  .conn-status[data-state="offline"] {
+    color: var(--coral);
+    border-color: var(--coral-soft);
+  }
+  @keyframes conn-pulse {
+    0%   { box-shadow: 0 0 0 0 currentColor; opacity: 1; }
+    70%  { box-shadow: 0 0 0 6px transparent; opacity: 0.85; }
+    100% { box-shadow: 0 0 0 0 transparent; opacity: 1; }
+  }
+
   /* ---------- KPI ---------- */
   .kpi-row {
     display: grid;
@@ -495,6 +539,7 @@
         </div>
       </div>
       <div class="meta">
+        <div><span class="conn-status" id="connStatus" data-state="reconnect" role="status" aria-live="polite">○ 接続準備中</span></div>
         <div><span class="k">最終更新</span><span class="v" id="lastRx">—</span></div>
         <div><span class="k">セッション</span><span class="v" id="sessVal">—</span></div>
       </div>
@@ -593,11 +638,27 @@
   function fmtN(n){ return Number(n).toLocaleString('en-US'); }
   function pad(s,n){ s=String(s); return s.length>=n?s:('0'.repeat(n-s.length)+s); }
 
+  // ============================================================
+  //  Live connection badge (Phase B)
+  // ============================================================
+  const STATUS_LABEL = {
+    online:    '● 接続中',
+    reconnect: '○ 再接続中',
+    offline:   '× 停止中',
+  };
+  function setConnStatus(state) {
+    const el = document.getElementById('connStatus');
+    if (!el) return;
+    el.dataset.state = state;
+    el.textContent = STATUS_LABEL[state] || '';
+  }
+
+  async function loadAndRender() {
   let data;
   try {
     data = (typeof window.__DATA__ !== 'undefined')
       ? window.__DATA__
-      : await (await fetch('/api/data')).json();
+      : await (await fetch('/api/data', { cache: 'no-store' })).json();
   } catch (e) {
     console.error('データの読み込みに失敗しました:', e);
     return;
@@ -787,6 +848,41 @@
     '</div>';
   }).join('');
   document.getElementById('projSub').textContent = projs.length + ' projects · Σ ' + fmtN(projTotal);
+  } // end loadAndRender
+
+  // ---- 初回描画 + EventSource (live refresh) ----
+  await loadAndRender();
+  if (typeof window.__DATA__ === 'undefined' && typeof EventSource !== 'undefined') {
+    setConnStatus('reconnect');
+    let offlineTimer = null;
+    let firstError = null;
+    const OFFLINE_AFTER_MS = 30000;
+    const es = new EventSource('/events');
+    es.addEventListener('open', () => {
+      setConnStatus('online');
+      firstError = null;
+      if (offlineTimer) { clearTimeout(offlineTimer); offlineTimer = null; }
+    });
+    es.addEventListener('error', () => {
+      // EventSource は readyState=CONNECTING 中に自動再接続を試みる
+      if (es.readyState === EventSource.CONNECTING) {
+        setConnStatus('reconnect');
+        if (firstError === null) firstError = Date.now();
+        if (!offlineTimer) {
+          const remaining = Math.max(0, OFFLINE_AFTER_MS - (Date.now() - firstError));
+          offlineTimer = setTimeout(() => setConnStatus('offline'), remaining);
+        }
+      } else {
+        setConnStatus('offline');
+      }
+    });
+    es.addEventListener('message', (ev) => {
+      // payload は "refresh" のみだが拡張余地として弁別
+      if (typeof ev.data === 'string' && ev.data.indexOf('refresh') !== -1) {
+        loadAndRender().catch(err => console.error('refresh 失敗', err));
+      }
+    });
+  }
 
   // ============================================================
   //  Help popover behavior
