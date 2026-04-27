@@ -594,20 +594,24 @@ class TestStateMarker:
         result = archive_module._read_state(state_file)
         assert result == {}
 
-    def test_state_skip_logic_when_already_archived(self, archive_module, tmp_path):
-        """state に 2025-09 まで archive 済みと記録 → 2025-08 / 2025-09 は再 archive されない."""
+    def test_backfill_old_month_after_state_advanced(self, archive_module, tmp_path):
+        """codex P1: state に 2025-09 まで archive 済みと記録された後、`rescan --append`
+        相当で 2025-08 の event が再 append されたら、次回 archive で正しく archive される。
+
+        run_archive は state.last_archived_month を skip フィルタとして使わない
+        (LOCK_EX で並列直列化 + _merge_with_existing_archive で既存尊重 dedup)。
+        backfill された古い月も retention 超過なら必ず archive 対象になる。"""
         data_file = tmp_path / "usage.jsonl"
         archive_dir = tmp_path / "archive"
-        # state 既存
         state_file = tmp_path / "state.json"
         state_file.write_text(json.dumps({
             "last_run_at": "2026-04-01T00:00:00+00:00",
             "last_archived_month": "2025-09",
         }))
 
-        old = _make_event("skill_tool", _utc(2025, 8, 15), tool_use_id="t_aug")
+        backfilled = _make_event("skill_tool", _utc(2025, 8, 15), tool_use_id="t_backfill")
         recent = _make_event("skill_tool", _utc(2026, 4, 20), tool_use_id="t_recent")
-        _write_hot_tier(data_file, [old, recent])
+        _write_hot_tier(data_file, [backfilled, recent])
 
         paths = archive_module.ArchivePaths(
             data_file=data_file,
@@ -616,9 +620,42 @@ class TestStateMarker:
             lock_file=tmp_path / "usage.jsonl.lock",
         )
         result = archive_module.run_archive(_utc(2026, 4, 27), paths, retention_days=180)
-        assert result.archived_months == []
-        # hot tier 保留: state スキップで partition も行われない (= 全部 hot に残る)
-        assert len(_read_hot_tier(data_file)) == 2
+
+        assert "2025-08" in result.archived_months
+        assert _read_archive(archive_dir, "2025-08") == [backfilled]
+        assert _read_hot_tier(data_file) == [recent]
+
+    def test_state_last_archived_does_not_block_target_months(self, archive_module, tmp_path):
+        """state.last_archived_month は target_months 計算に影響しない。
+
+        backfill 経路の正しさを保証するため、state があっても retention で決まる
+        target_months が縮小されないことを直接 pin する。"""
+        data_file = tmp_path / "usage.jsonl"
+        state_file = tmp_path / "state.json"
+        state_file.write_text(json.dumps({
+            "last_run_at": "2026-04-01T00:00:00+00:00",
+            "last_archived_month": "2025-12",
+        }))
+
+        # cutoff (now=2026-04-27 / retention=180) = 2025-10-29
+        # 2025-08, 2025-09 は月末が cutoff より前 → archive 対象。
+        # 2025-12 は cutoff より後 → archive 対象外 (state でも block されない)。
+        old_aug = _make_event("skill_tool", _utc(2025, 8, 15), tool_use_id="t_a")
+        old_sep = _make_event("skill_tool", _utc(2025, 9, 15), tool_use_id="t_s")
+        recent = _make_event("skill_tool", _utc(2026, 4, 20), tool_use_id="t_recent")
+        _write_hot_tier(data_file, [old_aug, old_sep, recent])
+
+        paths = archive_module.ArchivePaths(
+            data_file=data_file,
+            archive_dir=tmp_path / "archive",
+            state_file=state_file,
+            lock_file=tmp_path / "usage.jsonl.lock",
+        )
+        result = archive_module.run_archive(_utc(2026, 4, 27), paths, retention_days=180)
+
+        # 2025-08 と 2025-09 はどちらも cutoff より前なので archive される
+        # (state.last_archived_month=2025-12 はもう block しない)
+        assert sorted(result.archived_months) == ["2025-08", "2025-09"]
 
 
 # ---------------------------------------------------------------------------

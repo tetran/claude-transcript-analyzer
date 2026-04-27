@@ -64,11 +64,8 @@ def _parse_month_string(s: str) -> Optional[tuple[int, int]]:
         return None
 
 
-def _read_state_last_archived(state_file: Path) -> Optional[tuple[int, int]]:
-    """state file から ``last_archived_month`` を ``(year, month)`` で取得。
-
-    不在 / 壊れた JSON / 期待外型 / 月文字列不正 → ``None`` (= 「未実行扱い」)。
-    """
+def _read_state_dict(state_file: Path) -> Optional[dict]:
+    """state file を dict として読む。不在 / 壊れた JSON / 非 dict → None。"""
     if not state_file.exists():
         return None
     try:
@@ -77,10 +74,39 @@ def _read_state_last_archived(state_file: Path) -> Optional[tuple[int, int]]:
         return None
     if not isinstance(raw, dict):
         return None
-    last = raw.get("last_archived_month")
+    return raw
+
+
+def _read_state_last_archived(state_file: Path) -> Optional[tuple[int, int]]:
+    """state file から ``last_archived_month`` を ``(year, month)`` で取得。
+
+    不在 / 壊れた JSON / 期待外型 / 月文字列不正 → ``None`` (= 「未実行扱い」)。
+    """
+    state = _read_state_dict(state_file)
+    if state is None:
+        return None
+    last = state.get("last_archived_month")
     if not isinstance(last, str):
         return None
     return _parse_month_string(last)
+
+
+def _read_state_last_run_month(state_file: Path) -> Optional[tuple[int, int]]:
+    """state file の ``last_run_at`` を UTC YearMonth で返す。不在 / 不正 → None。"""
+    state = _read_state_dict(state_file)
+    if state is None:
+        return None
+    raw = state.get("last_run_at")
+    if not isinstance(raw, str):
+        return None
+    try:
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        return None
+    dt_utc = dt.astimezone(timezone.utc)
+    return (dt_utc.year, dt_utc.month)
 
 
 def _needs_archive(state_file: Path, now: datetime) -> bool:
@@ -88,16 +114,25 @@ def _needs_archive(state_file: Path, now: datetime) -> bool:
 
     - state 不在 / 壊れ / 不正 → True (未実行扱いで spawn)
     - last_archived_month >= 前月 (UTC) → False (skip)
-    - last_archived_month < 前月 → True (古いので spawn)
+    - last_archived_month < 前月 → True (古いので spawn / backfill 想定)
+    - last_archived_month 欠落 + last_run_at が当月 → False (codex P2: 対象なし状態の毎回 spawn 防止)
+    - last_archived_month 欠落 + last_run_at が前月以前 / 不在 → True (月跨ぎ retry)
     """
-    last = _read_state_last_archived(state_file)
-    if last is None:
+    state = _read_state_dict(state_file)
+    if state is None:
         return True
-    last_year, last_month = last
 
     prev_y, prev_m = _previous_month(now.year, now.month)
-    # last >= 前月 なら skip
-    return (last_year, last_month) < (prev_y, prev_m)
+    last_archived = _read_state_last_archived(state_file)
+    if last_archived is not None:
+        return last_archived < (prev_y, prev_m)
+
+    # last_archived_month 不在 → archive 対象なし状態が続いている可能性。
+    # last_run_at が当月内なら同セッションで既に判定済みなので skip。
+    last_run_ym = _read_state_last_run_month(state_file)
+    if last_run_ym is not None and last_run_ym == (now.year, now.month):
+        return False
+    return True
 
 
 def _spawn_archive_job() -> Optional[object]:

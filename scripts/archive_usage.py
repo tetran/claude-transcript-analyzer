@@ -423,14 +423,16 @@ def run_archive(
         now, retention_days, available_months
     )
 
+    # NOTE (codex P1 / Issue #30): state.last_archived_month を target_months の
+    # skip フィルタとしては **使わない**。理由:
+    # 1. LOCK_EX で archive job が直列化されているため、再 run でも結果は idempotent
+    # 2. 既存 archive との dedup は _merge_with_existing_archive (line equality fast
+    #    path → 構造的 fingerprint → 既存尊重) が担い、衝突は構造的に解消される
+    # 3. state 経由でフィルタすると `rescan_transcripts.py --append` 等の backfill
+    #    で過去月が hot tier に再出現したとき、永続的に archive されない bug になる
+    # state は launch_archive 側の skip 判定 (= spawn 不要判定) と監査ログだけに用いる。
     state = _read_state(paths.state_file)
     last_archived_str = state.get("last_archived_month")
-    if last_archived_str:
-        try:
-            last_ym = YearMonth.from_string(last_archived_str)
-            target_months = {ym for ym in target_months if ym > last_ym}
-        except ValueError:
-            last_archived_str = None  # 壊れた値 → 無視
 
     if not target_months:
         _write_state(paths.state_file, now.isoformat(), last_archived_str)
@@ -456,11 +458,19 @@ def run_archive(
     hot_lines = [line for _ev, line in hot_remainder] + broken_lines
     _atomic_rewrite_hot(paths.data_file, hot_lines)
 
-    new_last_str = (
-        str(max(archive_buckets.keys()))
-        if archive_buckets
-        else last_archived_str
-    )
+    # state は **これまでの最大値** と「今回 archive した最大値」の max を採用する
+    # (backfill 経路で古い月を archive しても last_archived_month を逆行させない)。
+    candidate = max(archive_buckets.keys()) if archive_buckets else None
+    new_last_str = last_archived_str
+    if candidate is not None:
+        if last_archived_str:
+            try:
+                prev_ym = YearMonth.from_string(last_archived_str)
+                new_last_str = str(max(prev_ym, candidate))
+            except ValueError:
+                new_last_str = str(candidate)
+        else:
+            new_last_str = str(candidate)
     _write_state(paths.state_file, now.isoformat(), new_last_str)
 
     return ArchiveResult(

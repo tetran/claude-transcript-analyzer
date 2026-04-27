@@ -94,6 +94,44 @@ class TestNeedsArchive:
         state_file.write_text(json.dumps({"last_archived_month": "2026-12"}))
         assert launch_archive_module._needs_archive(state_file, _utc(2027, 1, 15)) is False
 
+    def test_no_archived_month_but_run_in_current_month_skips(self, launch_archive_module, tmp_path):
+        """codex P2: archive 対象なしで run 終了 (last_archived_month 未設定) のあと、
+        同月内に再 SessionStart → last_run_at が当月なので skip (毎セッション spawn 防止)."""
+        state_file = tmp_path / ".archive_state.json"
+        state_file.write_text(json.dumps({
+            "last_run_at": "2026-04-15T10:00:00+00:00",
+            # last_archived_month は意図的に欠落
+        }))
+        assert launch_archive_module._needs_archive(state_file, _utc(2026, 4, 27)) is False
+
+    def test_no_archived_month_with_old_run_means_needs_archive(self, launch_archive_module, tmp_path):
+        """last_archived_month 不在 + last_run_at が前月以前 → 月跨ぎなので spawn (定期 retry)."""
+        state_file = tmp_path / ".archive_state.json"
+        state_file.write_text(json.dumps({
+            "last_run_at": "2026-03-15T10:00:00+00:00",
+            # last_archived_month 欠落
+        }))
+        assert launch_archive_module._needs_archive(state_file, _utc(2026, 4, 15)) is True
+
+    def test_old_archived_month_overrides_recent_last_run_at(self, launch_archive_module, tmp_path):
+        """last_archived_month が古い (= backfill 想定) なら last_run_at が当月でも spawn.
+
+        run_archive 側 (codex P1 修正) が backfill された古い event を archive するため、
+        launcher は last_archived_month が古いままなら必ず spawn 経路に倒す."""
+        state_file = tmp_path / ".archive_state.json"
+        state_file.write_text(json.dumps({
+            "last_run_at": "2026-04-15T10:00:00+00:00",
+            "last_archived_month": "2026-01",
+        }))
+        # last_archived_month=2026-01 < 前月 (2026-03) → spawn
+        assert launch_archive_module._needs_archive(state_file, _utc(2026, 4, 15)) is True
+
+    def test_no_state_file_means_needs_archive_even_with_run_at(self, launch_archive_module, tmp_path):
+        """state 不在のときは last_run_at の検査も走らない (data 未初期化扱い)."""
+        state_file = tmp_path / ".archive_state.json"
+        # state file 不在
+        assert launch_archive_module._needs_archive(state_file, _utc(2026, 4, 15)) is True
+
 
 # ---------------------------------------------------------------------------
 # TestPerformance: 既起動経路 (= spawn 不要判定) は < 100ms
