@@ -110,3 +110,36 @@ class TestHooksJson:
         commands = self._collect_commands(data)
         assert any("verify_session.py" in cmd for cmd in commands)
 
+    def test_launch_archive_referenced_on_session_start(self):
+        """Issue #30 Phase C: launch_archive.py が SessionStart に登録されとる。"""
+        data = json.loads(self.hooks_json_path.read_text(encoding="utf-8"))
+        session_start = data["hooks"]["SessionStart"]
+        commands = []
+        for entry in session_start:
+            for hook in entry.get("hooks", []):
+                if hook.get("type") == "command":
+                    commands.append(hook["command"])
+        assert any("launch_archive.py" in cmd for cmd in commands)
+
+
+class TestPhase30Files:
+    """Issue #30 で追加された主要ファイルの存在確認。"""
+
+    def test_archive_usage_script_exists(self):
+        assert (PROJECT_ROOT / "scripts" / "archive_usage.py").exists()
+
+    def test_launch_archive_hook_exists(self):
+        assert (PROJECT_ROOT / "hooks" / "launch_archive.py").exists()
+
+    def test_append_helper_exists(self):
+        assert (PROJECT_ROOT / "hooks" / "_append.py").exists()
+
+    def test_launcher_common_exists(self):
+        assert (PROJECT_ROOT / "hooks" / "_launcher_common.py").exists()
+
+    def test_archive_loader_exists(self):
+        assert (PROJECT_ROOT / "reports" / "_archive_loader.py").exists()
+
+    def test_usage_archive_command_exists(self):
+        assert (PROJECT_ROOT / "commands" / "usage-archive.md").exists()
+

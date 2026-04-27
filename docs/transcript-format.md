@@ -294,3 +294,59 @@ Hook スクリプトは標準入力で JSON を受け取る。共通フィール
 | `load_reason` | string | `session_start` / `glob_match` 等 |
 | `globs` / `trigger_file_path` / `parent_file_path` | any | オプションのコンテキスト情報 |
 
+---
+
+## Archive 互換性のための schema 進化規約 (Issue #30)
+
+`scripts/archive_usage.py` は 180 日超の event を月単位 `.jsonl.gz` に gzip
+圧縮して `~/.claude/transcript-analyzer/archive/YYYY-MM.jsonl.gz` に移す。
+archive は **immutable** (一度書いた内容は追記される際に新フォーマット表現で
+上書きされない) として扱われるため、event schema が時間方向に進化しても
+古い archive を読めるよう、以下の規約を守る:
+
+- ✅ **新フィールド追加 OK** — reader は `dict.get(key, default)` で欠損吸収する
+- ✅ **値域追加 OK** — 例: `notification_type` の `permission` ↔ `permission_prompt`
+  の同一視吸収パターン (`_PERMISSION_NOTIFICATION_TYPES`) を継続
+- ❌ **フィールド rename / 削除は archive 互換性を壊す** — どうしても必要なら
+  旧名も permanent に reader 側でケアする (新旧両方を読み続ける)
+- ❌ **同名フィールドの意味変更は archive 互換性を壊す** — 同上
+
+### 構造的 fingerprint と secondary_key dispatch
+
+archive job は同じ event の重複登録を避けるため、以下の三段 fingerprint で
+dedup する。fingerprint 衝突時は **既存 archive 側を採用** (immutability)
+することで、schema 進化後の新フォーマット表現で古い archive を上書きしない。
+
+| Tier | 適用条件 | Fingerprint key |
+|------|---------|----------------|
+| 1 | `tool_use_id` がある event 系 | `("t1", event_type, session_id, timestamp, tool_use_id)` |
+| 2 | event_type が dispatch table にある (下記) | `("t2", event_type, session_id, timestamp, *secondary_values)` |
+| 3 | tier 1/2 のいずれにも該当しない | `("t3", sha1(json.dumps(event, sort_keys=True)))` |
+
+#### Tier 2 の secondary_key dispatch
+
+| event_type | secondary key |
+|-----------|---------------|
+| `notification` | `notification_type` |
+| `session_start` | `source`, `model` |
+| `session_end` | `reason` |
+| `compact_start` / `compact_end` | `trigger` |
+| `instructions_loaded` | `file_path` |
+| `subagent_lifecycle_start` | `subagent_type` |
+| `subagent_stop` | `subagent_id` |
+| `user_slash_command` | `skill`, `source` (旧 schema 欠落時は `"expansion"` で吸収) |
+| `skill_tool` | `skill` (tier 1 が tool_use_id 欠落時の fallback) |
+| `subagent_start` | `subagent_type` (tier 1 が tool_use_id 欠落時の fallback) |
+
+新しい event_type を追加する際は **dispatch table に追記**することで
+tier 3 sha1 fallback の常時計算コストを避けられる。dispatch table は
+`scripts/archive_usage.py:_TIER2_DISPATCH` に集約。
+
+### `scripts/rescan_transcripts.py` との運用注意
+
+`rescan_transcripts.py --append` で 180 日超の event を再 append すると、
+次回 archive job 実行時にまた archive へ移される (idempotent / immutability で
+重複登録は起きない)。**rescan 直後に手動で `/usage-archive` を実行すると
+hot tier がすぐ整理される** が、自動連動は意図的にしていない (rescan は
+手動運用ツールという位置付け)。
+
