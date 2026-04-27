@@ -48,17 +48,6 @@ from server_registry import remove_server_json as _registry_remove_server_json
 _DEFAULT_SERVER_JSON_PATH = Path.home() / ".claude" / "transcript-analyzer" / "server.json"
 SERVER_JSON_PATH = Path(os.environ.get("DASHBOARD_SERVER_JSON", str(_DEFAULT_SERVER_JSON_PATH)))
 
-
-def _trace(msg: str) -> None:
-    """Issue #24 PR#31 macOS CI debug: `_LAUNCH_DASHBOARD_DEBUG_TRACE=1` で
-    launcher の各ステップ到達点を stderr に出力。subprocess.run の result.stderr
-    から CI ログで見える。死因取得後に撤去予定。"""
-    if os.environ.get("_LAUNCH_DASHBOARD_DEBUG_TRACE"):
-        try:
-            print(f"[trace] {msg}", file=sys.stderr, flush=True)
-        except OSError:
-            pass
-
 # Issue #14 AC: healthz チェックのタイムアウト 200ms
 HEALTHZ_TIMEOUT_SECONDS = 0.2
 
@@ -263,50 +252,28 @@ def _spawn_server() -> None:
     共通:
     - `stdin/stdout/stderr=DEVNULL`: 親 hook の pipe を引き継がない
     - `close_fds=True`: 余計な fd を継承しない
-
-    Issue #24 PR#31 macOS CI debug: 環境変数 `_LAUNCH_DASHBOARD_CHILD_LOG` が
-    指定されたとき、子の stdout/stderr を当該 file に redirect する。
-    macOS CI で子サーバーが server.json を書けない原因 (silent crash) を取るための
-    一時経路。production では未設定、テスト/CI でのみ有効。
     """
-    _trace(f"_spawn_server: enter, script={_SERVER_SCRIPT}, exists={_SERVER_SCRIPT.exists()}")
     if not _SERVER_SCRIPT.exists():
-        _trace("_spawn_server: script does not exist, returning")
         return
-    debug_log = os.environ.get("_LAUNCH_DASHBOARD_CHILD_LOG")
     kwargs: dict = {
         "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
         "close_fds": True,
     }
-    if debug_log:
-        log_path = Path(debug_log)
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        # buffering=0 で子の output を即座に file に flush し、テスト側で
-        # assertion fail 直後に読めるようにする。fd は child に継承後 close されるため
-        # parent 側で close する責務はない (subprocess 側で close される)。
-        log_fd = open(log_path, "wb", buffering=0)  # pylint: disable=consider-using-with
-        kwargs["stdout"] = log_fd
-        kwargs["stderr"] = subprocess.STDOUT  # stderr → stdout に統合
-        _trace(f"_spawn_server: child log -> {log_path}")
-    else:
-        kwargs["stdout"] = subprocess.DEVNULL
-        kwargs["stderr"] = subprocess.DEVNULL
     if sys.platform == "win32":
         kwargs["creationflags"] = (
             _WIN_DETACHED_PROCESS | _WIN_CREATE_NEW_PROCESS_GROUP
         )
     else:
         kwargs["start_new_session"] = True
-    _trace(f"_spawn_server: about to Popen, sys.executable={sys.executable}")
     try:
-        proc = subprocess.Popen(  # pylint: disable=consider-using-with
+        subprocess.Popen(  # pylint: disable=consider-using-with
             [sys.executable, str(_SERVER_SCRIPT)],
             **kwargs,
         )
-        _trace(f"_spawn_server: Popen ok pid={proc.pid}")
-    except OSError as exc:
+    except OSError:
         # PermissionError / FileNotFoundError / fork limit 等。silent fail。
-        _trace(f"_spawn_server: Popen OSError {exc!r}")
         return
 
 
@@ -319,19 +286,14 @@ def main() -> int:
         _remove_stale_server_json()  # 明示的な zombie cleanup
         _spawn_server()              # fork-and-detach
     """
-    _trace(f"main: enter, SERVER_JSON_PATH={SERVER_JSON_PATH}")
     try:
         if _server_is_alive():
-            _trace("main: server already alive, returning")
             return 0
-        _trace("main: not alive, removing stale + spawning")
         _remove_stale_server_json()
         _spawn_server()
-        _trace("main: spawn completed")
-    except Exception as exc:  # pylint: disable=broad-except
+    except Exception:  # pylint: disable=broad-except
         # どんな想定外例外でも Claude Code をブロックしない (Issue #14 AC)
-        _trace(f"main: caught exception {exc!r}")
-    _trace("main: returning 0")
+        pass
     return 0
 
 

@@ -546,10 +546,6 @@ class TestEndToEndLaunch:
         server.json が現れる。子サーバーは cleanup でちゃんと止める。"""
         server_json = tmp_path / "server.json"
         usage_jsonl = tmp_path / "usage.jsonl"
-        # Issue #24 PR#31 macOS CI debug: 子サーバーが silent crash する経路を取るため、
-        # launcher の `_LAUNCH_DASHBOARD_CHILD_LOG` 経路で子の stdout/stderr を file へ。
-        # 失敗時に pytest.fail に含めて CI ログから死因を見える化する (debug 完了後撤去)。
-        child_log = tmp_path / "child.log"
         env = os.environ.copy()
         env["DASHBOARD_SERVER_JSON"] = str(server_json)
         env["USAGE_JSONL"] = str(usage_jsonl)
@@ -558,8 +554,6 @@ class TestEndToEndLaunch:
         # server.json 書き込み直後に shutdown が動いてテストが捕まえられないことがある。
         # 30s に伸ばして CI flaky を解消 (Issue #24)。
         env["DASHBOARD_IDLE_SECONDS"] = "30"
-        env["_LAUNCH_DASHBOARD_CHILD_LOG"] = str(child_log)
-        env["_LAUNCH_DASHBOARD_DEBUG_TRACE"] = "1"  # macOS CI 死因取得用
         # 子サーバーが起動準備に時間がかかる場合があるので poll_interval は長めでも可
         result = subprocess.run(
             [sys.executable, str(_LAUNCH_PATH)],
@@ -571,10 +565,9 @@ class TestEndToEndLaunch:
         )
         assert result.returncode == 0, f"launcher exit code: {result.returncode}, stderr: {result.stderr}"
 
-        # 子サーバーが server.json を書くまで待つ。
-        # CI macOS arm64 は Python の cold import + socket bind + write がトータルで
-        # 10s を超えることが観測されたため (Issue #24 PR#31 macos-latest fail)、
-        # 30s に伸ばす。ローカルでは 1s 未満で完了するので待ちオーバーヘッドは出ない。
+        # 子サーバーが server.json を書くまで待つ。CI macOS arm64 は Python の
+        # cold import + socket bind + write がトータルで 10s を超えることがある
+        # ため 30s に伸ばす (Issue #24 PR#31)。ローカルでは 1s 未満で完了する。
         deadline = time.time() + 30.0
         while time.time() < deadline:
             if server_json.exists():
@@ -585,22 +578,7 @@ class TestEndToEndLaunch:
                 except json.JSONDecodeError:
                     pass
             time.sleep(0.05)
-        if not server_json.exists():
-            # macOS CI で死因取得用: 子サーバーの stdout/stderr を pytest.fail に流す
-            child_log_text = (
-                child_log.read_text(encoding="utf-8", errors="replace")
-                if child_log.exists()
-                else "<child.log was not created>"
-            )
-            pytest.fail(
-                "子サーバーが server.json を書いていない\n"
-                f"---- child stdout+stderr ({len(child_log_text)} bytes) ----\n"
-                f"{child_log_text}\n"
-                f"---- launcher stdout ----\n"
-                f"{result.stdout}\n"
-                f"---- launcher stderr ----\n"
-                f"{result.stderr}\n"
-            )
+        assert server_json.exists(), "子サーバーが server.json を書いていない"
         info = json.loads(server_json.read_text(encoding="utf-8"))
         spawned_pid = info["pid"]
 
