@@ -20,8 +20,9 @@ PR #25 レビュー対応 (Codex F1/F2 + claude[bot] #1〜#5) で以下が変更
   リトライ後も fail でも **True 返却** (起動中 race window で多重起動を発生させないため)
 - `_HealthzHandler.status_code` は autouse fixture で test 終了時に default に戻す
 """
-# pylint: disable=line-too-long
+# pylint: disable=line-too-long,too-many-lines
 import importlib.util
+import io
 import json
 import os
 import socket
@@ -611,3 +612,525 @@ class TestEndToEndLaunch:
                     os.kill(spawned_pid, 9)  # SIGKILL
                 except (OSError, ProcessLookupError):
                     pass
+
+
+# ============================================================================
+# Issue #34: systemMessage 出力テスト
+# ============================================================================
+# `launch_dashboard.py` が hook output の `{"systemMessage": "📊 Dashboard: <url>"}` を
+# stdout に 1 行出力する条件:
+#   (a) サーバー新規 spawn 成功時 (4 hook いずれでも)
+#   (b) 既起動 + hook_event_name=SessionStart のとき
+# それ以外は silent (毎ターン発火する hook で会話を埋めない)。
+# ============================================================================
+
+_SYSTEM_MESSAGE_PREFIX = "📊 Dashboard: "
+_SUPPORTED_EVENTS = ("SessionStart", "UserPromptExpansion", "UserPromptSubmit", "PostToolUse")
+
+
+def _stdin_with_event(event_name):
+    """`{"hook_event_name": <event_name>}` を流す stdin StringIO。None なら空 stdin。"""
+    if event_name is None:
+        return io.StringIO("")
+    return io.StringIO(json.dumps({"hook_event_name": event_name}))
+
+
+def _stdin_raw(raw):
+    return io.StringIO(raw)
+
+
+def _assert_dashboard_message(captured, expected_url):
+    """capsys.readouterr() の (out, err) が systemMessage 1 行 + stderr 空であることを assert。"""
+    out = captured.out
+    assert captured.err == "", f"stderr に何か出ている: {captured.err!r}"
+    line = out.strip()
+    assert line, f"stdout が空: {out!r}"
+    # 単一行 (末尾改行 1 つだけ許容)
+    assert out.count("\n") <= 1, f"stdout が複数行: {out!r}"
+    payload = json.loads(line)  # strict JSON
+    assert isinstance(payload, dict), f"payload が dict でない: {payload!r}"
+    msg = payload.get("systemMessage")
+    assert isinstance(msg, str), f"systemMessage が str でない: {payload!r}"
+    assert msg.startswith(_SYSTEM_MESSAGE_PREFIX), f"prefix 不一致: {msg!r}"
+    assert msg == f"{_SYSTEM_MESSAGE_PREFIX}{expected_url}"
+
+
+def _assert_silent(captured):
+    assert captured.out == "", f"silent path で stdout に出力された: {captured.out!r}"
+    assert captured.err == "", f"silent path で stderr に出力された: {captured.err!r}"
+
+
+# ----------------------------------------------------------------------------
+# _read_hook_event_name — stdin parser
+# ----------------------------------------------------------------------------
+
+class TestReadHookEventName:
+    """Issue #34: stdin から hook_event_name を読み、未知値 / parse 失敗は None。"""
+
+    def test_empty_stdin_returns_none(self, tmp_path):
+        mod = load_launch_module(tmp_path / "server.json")
+        with mock.patch.object(mod.sys, "stdin", io.StringIO("")):
+            assert mod._read_hook_event_name() is None
+
+    def test_invalid_json_returns_none(self, tmp_path):
+        mod = load_launch_module(tmp_path / "server.json")
+        with mock.patch.object(mod.sys, "stdin", io.StringIO("not json {{{")):
+            assert mod._read_hook_event_name() is None
+
+    def test_non_dict_returns_none(self, tmp_path):
+        mod = load_launch_module(tmp_path / "server.json")
+        with mock.patch.object(mod.sys, "stdin", io.StringIO('[1,2,3]')):
+            assert mod._read_hook_event_name() is None
+
+    def test_missing_field_returns_none(self, tmp_path):
+        mod = load_launch_module(tmp_path / "server.json")
+        with mock.patch.object(mod.sys, "stdin", io.StringIO('{"foo":"bar"}')):
+            assert mod._read_hook_event_name() is None
+
+    def test_unknown_event_returns_none(self, tmp_path):
+        """未知の hook 名は silent path に倒れる (表記揺れ防御)。"""
+        mod = load_launch_module(tmp_path / "server.json")
+        with mock.patch.object(mod.sys, "stdin", io.StringIO('{"hook_event_name":"Bogus"}')):
+            assert mod._read_hook_event_name() is None
+
+    def test_non_string_value_returns_none(self, tmp_path):
+        mod = load_launch_module(tmp_path / "server.json")
+        with mock.patch.object(mod.sys, "stdin", io.StringIO('{"hook_event_name": 42}')):
+            assert mod._read_hook_event_name() is None
+
+    @pytest.mark.parametrize("event", _SUPPORTED_EVENTS)
+    def test_known_events_return_value(self, tmp_path, event):
+        mod = load_launch_module(tmp_path / "server.json")
+        with mock.patch.object(mod.sys, "stdin", io.StringIO(json.dumps({"hook_event_name": event}))):
+            assert mod._read_hook_event_name() == event
+
+    def test_whitespace_around_value_is_stripped(self, tmp_path):
+        """前後 whitespace が混入しても strip して受け入れる (defensive)。"""
+        mod = load_launch_module(tmp_path / "server.json")
+        with mock.patch.object(mod.sys, "stdin", io.StringIO('{"hook_event_name": "  SessionStart  "}')):
+            assert mod._read_hook_event_name() == "SessionStart"
+
+    def test_large_payload_with_event_at_head_stays_under_budget(self, tmp_path):
+        """codex P1 対応: hook_event_name が先頭にある 1MB payload は fast path で完了する。
+        regex peek は先頭 _HOOK_PEEK_BYTES (4KB) だけ読むので、payload が長くても影響なし。"""
+        mod = load_launch_module(tmp_path / "server.json")
+        # hook_event_name を先頭に置き、後ろに 1MB のダミー prompt を append
+        big_value = "x" * (1024 * 1024)
+        payload = '{"hook_event_name":"UserPromptSubmit","prompt":"' + big_value + '"}'
+        with mock.patch.object(mod.sys, "stdin", io.StringIO(payload)):
+            t0 = time.perf_counter()
+            result = mod._read_hook_event_name()
+            elapsed = time.perf_counter() - t0
+        assert result == "UserPromptSubmit"
+        # CI 環境のばらつきも踏まえて 100ms に緩めて flaky を回避 (codex 再レビュー反映)
+        assert elapsed < 0.1, f"large payload で _read_hook_event_name が遅い: {elapsed:.3f}s"
+
+    def test_fast_path_does_not_consume_full_stdin(self, tmp_path):
+        """fast path (先頭 4KB に hook_event_name がある) では残り stdin を読まない。
+
+        fallback parse 経路は 4KB 以内に見つからなかった場合のみ起動する設計。
+        """
+        mod = load_launch_module(tmp_path / "server.json")
+        peek = mod._HOOK_PEEK_BYTES
+        payload = '{"hook_event_name":"SessionStart","extra":"' + ('y' * 100) + '"}'
+        big = io.StringIO(payload + ('z' * 100000))  # 100KB 余分
+        with mock.patch.object(mod.sys, "stdin", big):
+            assert mod._read_hook_event_name() == "SessionStart"
+        # fast path のため残りは消費されない (peek 4KB のみ)
+        assert big.tell() <= peek, f"fast path で stdin を {peek} bytes 超読み込んでいる: tell={big.tell()}"
+
+    def test_fallback_full_parse_when_event_after_4kb(self, tmp_path):
+        """codex Finding A 対応: hook_event_name が 4KB 以降にある場合、fallback で
+        full json.loads を実行して値を取得する。PostToolUse の tool_response が
+        大きいケース等の regress を防ぐ。"""
+        mod = load_launch_module(tmp_path / "server.json")
+        # 先頭 5KB を tool_response で埋め、後ろに hook_event_name を配置
+        big = "x" * (5 * 1024)
+        payload = '{"tool_response":"' + big + '","hook_event_name":"PostToolUse"}'
+        with mock.patch.object(mod.sys, "stdin", io.StringIO(payload)):
+            assert mod._read_hook_event_name() == "PostToolUse"
+
+    def test_fallback_returns_none_for_invalid_full_payload(self, tmp_path):
+        """fallback parse でも JSON が壊れているケースは None を返す (silent fallback)。"""
+        mod = load_launch_module(tmp_path / "server.json")
+        # 先頭 5KB は valid な値で埋め、後ろに壊れた tail
+        big = "x" * (5 * 1024)
+        payload = '{"tool_response":"' + big + '","broken_tail'
+        with mock.patch.object(mod.sys, "stdin", io.StringIO(payload)):
+            assert mod._read_hook_event_name() is None
+
+
+# ----------------------------------------------------------------------------
+# _wait_for_self_server_json_url — Proposal 1 (pid 一致確認)
+# ----------------------------------------------------------------------------
+
+class TestWaitForSelfServerJsonUrl:
+    """Proposal 1: poll 中は `info.pid == self_pid` で stale json を拒否する。"""
+
+    def test_returns_url_when_pid_matches(self, tmp_path):
+        mod = load_launch_module(tmp_path / "server.json")
+        path = tmp_path / "server.json"
+        path.write_text(json.dumps({"pid": 12345, "port": 9999, "url": "http://x:9999"}), encoding="utf-8")
+        assert mod._wait_for_self_server_json_url(12345) == "http://x:9999"
+
+    def test_returns_none_when_pid_mismatches(self, tmp_path):
+        """別プロセスの server.json は誤って読まない (stale json 拒否)。"""
+        mod = load_launch_module(tmp_path / "server.json")
+        path = tmp_path / "server.json"
+        path.write_text(json.dumps({"pid": 99999, "port": 9999, "url": "http://stale:9999"}), encoding="utf-8")
+        # poll の上限を短く potatch して budget を超えないようにする
+        with mock.patch.object(mod, "SPAWN_WAIT_TIMEOUT_SECONDS", 0.05), \
+             mock.patch.object(mod, "SPAWN_WAIT_INTERVAL_SECONDS", 0.01):
+            assert mod._wait_for_self_server_json_url(12345) is None
+
+    def test_returns_none_when_no_json(self, tmp_path):
+        mod = load_launch_module(tmp_path / "server.json")
+        with mock.patch.object(mod, "SPAWN_WAIT_TIMEOUT_SECONDS", 0.05), \
+             mock.patch.object(mod, "SPAWN_WAIT_INTERVAL_SECONDS", 0.01):
+            assert mod._wait_for_self_server_json_url(12345) is None
+
+    def test_returns_url_after_late_arrival(self, tmp_path):
+        """poll 開始後に server.json が現れるケース (race window 吸収)。"""
+        mod = load_launch_module(tmp_path / "server.json")
+        path = tmp_path / "server.json"
+        target_pid = 23456
+
+        def write_json_after_delay():
+            time.sleep(0.05)
+            path.write_text(json.dumps({"pid": target_pid, "port": 9999, "url": "http://late:9999"}), encoding="utf-8")
+
+        t = threading.Thread(target=write_json_after_delay, daemon=True)
+        t.start()
+        try:
+            with mock.patch.object(mod, "SPAWN_WAIT_TIMEOUT_SECONDS", 0.5), \
+                 mock.patch.object(mod, "SPAWN_WAIT_INTERVAL_SECONDS", 0.01):
+                result = mod._wait_for_self_server_json_url(target_pid)
+            assert result == "http://late:9999"
+        finally:
+            t.join(timeout=2)
+
+
+# ----------------------------------------------------------------------------
+# main() レベル: systemMessage 出力経路 (Issue #34 AC 中心)
+# ----------------------------------------------------------------------------
+
+class TestSystemMessageOutput:
+    """Issue #34 AC: spawn / alive と hook_event_name の組み合わせで出力判定。
+
+    spawn 経路 (4 hook 全て) → 出力あり / 既起動 + SessionStart → 出力あり /
+    既起動 + 他 hook → silent / stdin 不正 → silent。
+    """
+
+    @staticmethod
+    def _fake_spawn_writing(path, pid, url):
+        """`_spawn_server` の side_effect: 子が server.json を書く挙動を fake。"""
+        def _spawn():
+            path.write_text(json.dumps({"pid": pid, "port": 12345, "url": url}), encoding="utf-8")
+            return mock.Mock(pid=pid)
+        return _spawn
+
+    @pytest.mark.parametrize("event", _SUPPORTED_EVENTS)
+    def test_spawn_path_emits_system_message_for_all_hooks(self, tmp_path, capsys, event):
+        """spawn 成功 → 4 hook いずれでも systemMessage 出力。"""
+        path = tmp_path / "server.json"
+        mod = load_launch_module(path)
+        url = "http://127.0.0.1:54321"
+        with mock.patch.object(mod.sys, "stdin", _stdin_with_event(event)), \
+             mock.patch.object(mod, "_spawn_server", side_effect=self._fake_spawn_writing(path, 12345, url)):
+            rc = mod.main()
+        assert rc == 0
+        _assert_dashboard_message(capsys.readouterr(), url)
+
+    def test_alive_session_start_emits_system_message(self, tmp_path, capsys):
+        """既起動 + SessionStart → 再表示ポリシーで systemMessage 出力。"""
+        path = tmp_path / "server.json"
+        _HealthzHandler.status_code = 200
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _HealthzHandler)
+        port = server.server_address[1]
+        t = threading.Thread(target=server.serve_forever, daemon=True)
+        t.start()
+        try:
+            url = f"http://127.0.0.1:{port}"
+            path.write_text(json.dumps({"pid": os.getpid(), "port": port, "url": url}), encoding="utf-8")
+            mod = load_launch_module(path)
+            with mock.patch.object(mod.sys, "stdin", _stdin_with_event("SessionStart")):
+                rc = mod.main()
+            assert rc == 0
+            _assert_dashboard_message(capsys.readouterr(), url)
+        finally:
+            server.shutdown()
+            server.server_close()
+            t.join(timeout=2)
+
+    def test_alive_session_start_is_silent_when_healthz_fails(self, tmp_path, capsys):
+        """codex P2 対応: `_server_is_alive` は pid alive + healthz fail でも True を返す。
+        この状態で SessionStart 通知を出すと「応答しないエンドポイントの URL」を伝えてしまうため、
+        emit 直前に追加 healthz を打って 200 のときだけ通知する。"""
+        path = tmp_path / "server.json"
+        # pid 自分自身 (alive) + healthz は接続不可 url
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("127.0.0.1", 0))
+            free_port = s.getsockname()[1]
+        url = f"http://127.0.0.1:{free_port}"
+        path.write_text(json.dumps({"pid": os.getpid(), "port": free_port, "url": url}), encoding="utf-8")
+        mod = load_launch_module(path)
+        with mock.patch.object(mod.sys, "stdin", _stdin_with_event("SessionStart")):
+            rc = mod.main()
+        assert rc == 0
+        # healthz fail なので通知しないこと
+        _assert_silent(capsys.readouterr())
+
+    @pytest.mark.parametrize("event", ["UserPromptExpansion", "UserPromptSubmit", "PostToolUse"])
+    def test_alive_non_session_start_is_silent(self, tmp_path, capsys, event):
+        """既起動 + SessionStart 以外 → silent (会話画面を埋めない)。"""
+        path = tmp_path / "server.json"
+        _HealthzHandler.status_code = 200
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _HealthzHandler)
+        port = server.server_address[1]
+        t = threading.Thread(target=server.serve_forever, daemon=True)
+        t.start()
+        try:
+            url = f"http://127.0.0.1:{port}"
+            path.write_text(json.dumps({"pid": os.getpid(), "port": port, "url": url}), encoding="utf-8")
+            mod = load_launch_module(path)
+            with mock.patch.object(mod.sys, "stdin", _stdin_with_event(event)):
+                rc = mod.main()
+            assert rc == 0
+            _assert_silent(capsys.readouterr())
+        finally:
+            server.shutdown()
+            server.server_close()
+            t.join(timeout=2)
+
+    def test_empty_stdin_silent(self, tmp_path, capsys):
+        """stdin 空 (hook 経由でない直叩き) → silent fallback。"""
+        mod = load_launch_module(tmp_path / "server.json")
+        with mock.patch.object(mod.sys, "stdin", io.StringIO("")), \
+             mock.patch.object(mod, "_spawn_server", return_value=mock.Mock(pid=99999)):
+            rc = mod.main()
+        assert rc == 0
+        _assert_silent(capsys.readouterr())
+
+    def test_invalid_json_stdin_silent(self, tmp_path, capsys):
+        mod = load_launch_module(tmp_path / "server.json")
+        with mock.patch.object(mod.sys, "stdin", io.StringIO("not json {{{")), \
+             mock.patch.object(mod, "_spawn_server", return_value=mock.Mock(pid=99999)):
+            rc = mod.main()
+        assert rc == 0
+        _assert_silent(capsys.readouterr())
+
+    def test_missing_hook_event_name_silent(self, tmp_path, capsys):
+        mod = load_launch_module(tmp_path / "server.json")
+        with mock.patch.object(mod.sys, "stdin", io.StringIO('{"foo":"bar"}')), \
+             mock.patch.object(mod, "_spawn_server", return_value=mock.Mock(pid=99999)):
+            rc = mod.main()
+        assert rc == 0
+        _assert_silent(capsys.readouterr())
+
+    def test_unknown_hook_event_name_silent(self, tmp_path, capsys):
+        """`hook_event_name=Bogus` のような未知値 → silent (set membership 防御)。"""
+        mod = load_launch_module(tmp_path / "server.json")
+        with mock.patch.object(mod.sys, "stdin", io.StringIO('{"hook_event_name":"Bogus"}')), \
+             mock.patch.object(mod, "_spawn_server", return_value=mock.Mock(pid=99999)):
+            rc = mod.main()
+        assert rc == 0
+        _assert_silent(capsys.readouterr())
+
+    def test_spawn_race_server_json_absent_silent(self, tmp_path, capsys):
+        """spawn 後 poll 上限まで server.json が出ない → silent fallback (次回 hook で復活)。"""
+        path = tmp_path / "server.json"
+        mod = load_launch_module(path)
+        # _spawn_server は Popen を返すが server.json は書かれないまま
+        with mock.patch.object(mod.sys, "stdin", _stdin_with_event("SessionStart")), \
+             mock.patch.object(mod, "_spawn_server", return_value=mock.Mock(pid=99999)), \
+             mock.patch.object(mod, "SPAWN_WAIT_TIMEOUT_SECONDS", 0.05), \
+             mock.patch.object(mod, "SPAWN_WAIT_INTERVAL_SECONDS", 0.01):
+            rc = mod.main()
+        assert rc == 0
+        _assert_silent(capsys.readouterr())
+
+    def test_spawn_oserror_no_system_message_and_no_poll(self, tmp_path, capsys):
+        """Popen が OSError → `_spawn_server` が None 返却 → poll を呼ばずに silent (Proposal 1)。"""
+        mod = load_launch_module(tmp_path / "server.json")
+        # _spawn_server が None を返す = Popen 失敗
+        wait_mock = mock.Mock()
+        with mock.patch.object(mod.sys, "stdin", _stdin_with_event("SessionStart")), \
+             mock.patch.object(mod, "_spawn_server", return_value=None), \
+             mock.patch.object(mod, "_wait_for_self_server_json_url", wait_mock):
+            rc = mod.main()
+        assert rc == 0
+        _assert_silent(capsys.readouterr())
+        wait_mock.assert_not_called()  # poll を呼ばないこと
+
+    def test_spawn_rejects_stale_pid_server_json(self, tmp_path, capsys):
+        """spawn 直前に他 pid の有効 server.json が残っているケースで、自分の子の json
+        と pid 一致しないため URL を採用しない (Proposal 1)。"""
+        path = tmp_path / "server.json"
+        mod = load_launch_module(path)
+        # 古い (alive 別 pid) server.json を残す
+        path.write_text(json.dumps({"pid": 88888, "port": 80, "url": "http://stale:80"}), encoding="utf-8")
+        # _spawn_server は別の pid を持つ Popen を返すが、子は server.json を書かないまま
+        with mock.patch.object(mod.sys, "stdin", _stdin_with_event("SessionStart")), \
+             mock.patch.object(mod, "_spawn_server", return_value=mock.Mock(pid=12345)), \
+             mock.patch.object(mod, "SPAWN_WAIT_TIMEOUT_SECONDS", 0.05), \
+             mock.patch.object(mod, "SPAWN_WAIT_INTERVAL_SECONDS", 0.01):
+            rc = mod.main()
+        assert rc == 0
+        _assert_silent(capsys.readouterr())
+
+    def test_unexpected_exception_no_system_message(self, tmp_path, capsys):
+        """内部例外でも systemMessage 出力なし、exit 0 維持。"""
+        mod = load_launch_module(tmp_path / "server.json")
+        with mock.patch.object(mod.sys, "stdin", _stdin_with_event("SessionStart")), \
+             mock.patch.object(mod, "_server_is_alive", side_effect=RuntimeError("boom")):
+            rc = mod.main()
+        assert rc == 0
+        _assert_silent(capsys.readouterr())
+
+
+# ----------------------------------------------------------------------------
+# stdout 構造制約 (Proposal 5)
+# ----------------------------------------------------------------------------
+
+class TestSystemMessageStructure:
+    """Proposal 5: 出力ありケースで stdout 1 行 + strict JSON + prefix + stderr 空を pin。
+
+    hook output protocol は format-fragile (Claude Code parser は厳密)。
+    デバッグ print 混入 / BOM / trailing whitespace への regression を構造的に防ぐ。
+    """
+
+    def test_emit_output_is_strict_single_line_json(self, tmp_path, capsys):
+        path = tmp_path / "server.json"
+        mod = load_launch_module(path)
+        url = "http://127.0.0.1:11111"
+
+        def fake_spawn():
+            path.write_text(json.dumps({"pid": 12345, "port": 11111, "url": url}), encoding="utf-8")
+            return mock.Mock(pid=12345)
+
+        with mock.patch.object(mod.sys, "stdin", _stdin_with_event("SessionStart")), \
+             mock.patch.object(mod, "_spawn_server", side_effect=fake_spawn):
+            mod.main()
+
+        captured = capsys.readouterr()
+        # 構造制約
+        assert captured.err == "", f"stderr に何か出ている: {captured.err!r}"
+        # 1 行 (末尾改行の有無のみ違う)
+        assert captured.out.count("\n") <= 1, f"複数行出力: {captured.out!r}"
+        # strict JSON parse 可能
+        parsed = json.loads(captured.out.strip())
+        assert isinstance(parsed, dict)
+        # prefix 検証
+        assert parsed["systemMessage"].startswith("📊 Dashboard: http")
+
+
+# ----------------------------------------------------------------------------
+# spawn 経路 budget (Proposal 2)
+# ----------------------------------------------------------------------------
+
+class TestSpawnPathBudget:
+    """Proposal 2: spawn 経路の budget を constants で固定し、テストで pin。
+
+    PostToolUse 経由で偶発的に spawn が走るケース (`_server_is_alive`=False の異常時)
+    でも `SPAWN_WAIT_TIMEOUT_SECONDS + 50ms slack` 以内に main() が返ることを保証。
+    """
+
+    def test_constants_exposed_as_module_attributes(self, tmp_path):
+        """budget 定数が module attribute として export されていること (テストから参照可能)。"""
+        mod = load_launch_module(tmp_path / "server.json")
+        assert isinstance(mod.SPAWN_WAIT_TIMEOUT_SECONDS, float)
+        assert isinstance(mod.SPAWN_WAIT_INTERVAL_SECONDS, float)
+        assert mod.SPAWN_WAIT_TIMEOUT_SECONDS > 0
+        assert mod.SPAWN_WAIT_INTERVAL_SECONDS > 0
+        assert mod.SPAWN_WAIT_INTERVAL_SECONDS < mod.SPAWN_WAIT_TIMEOUT_SECONDS
+
+    def test_spawn_wait_budget_under_300ms(self, tmp_path):
+        """spawn 後 server.json が来ない場合でも main() 全体が 300ms 以内に返る。"""
+        path = tmp_path / "server.json"
+        mod = load_launch_module(path)
+        # 子が server.json を書かないシナリオ (Popen は成功するが json は来ない)
+        with mock.patch.object(mod.sys, "stdin", _stdin_with_event("SessionStart")), \
+             mock.patch.object(mod, "_spawn_server", return_value=mock.Mock(pid=99999)):
+            t0 = time.perf_counter()
+            mod.main()
+            elapsed = time.perf_counter() - t0
+        # SPAWN_WAIT_TIMEOUT_SECONDS = 0.25 + slack 50ms = 300ms
+        budget = mod.SPAWN_WAIT_TIMEOUT_SECONDS + 0.05
+        assert elapsed < budget, f"spawn 経路が {budget*1000:.0f}ms 超過: {elapsed:.3f}s"
+
+
+# ----------------------------------------------------------------------------
+# alive 経路 budget — 4 hook 名でパラメトリック化 (Issue #34 拡張)
+# ----------------------------------------------------------------------------
+
+class TestAlivePathBudgetPerHook:
+    """既起動経路 < 100ms を 4 hook 名すべてで pin。systemMessage 出力経路 (SessionStart) も含む。
+
+    既存 `TestPerformance.test_alive_path_under_100ms` は stdin 流していなかったので、
+    本クラスで `hook_event_name` ありの実機シナリオを 4 通り pin する。
+    """
+
+    @pytest.mark.parametrize("event", _SUPPORTED_EVENTS)
+    def test_alive_path_under_100ms_per_event(self, tmp_path, event):
+        path = tmp_path / "server.json"
+        _HealthzHandler.status_code = 200
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _HealthzHandler)
+        port = server.server_address[1]
+        t = threading.Thread(target=server.serve_forever, daemon=True)
+        t.start()
+        try:
+            path.write_text(json.dumps({"pid": os.getpid(), "port": port, "url": f"http://127.0.0.1:{port}"}), encoding="utf-8")
+            mod = load_launch_module(path)
+            with mock.patch.object(mod.sys, "stdin", _stdin_with_event(event)):
+                t0 = time.perf_counter()
+                mod.main()
+                elapsed = time.perf_counter() - t0
+            assert elapsed < 0.1, f"alive 経路 ({event}) が 100ms 超過: {elapsed:.3f}s"
+        finally:
+            server.shutdown()
+            server.server_close()
+            t.join(timeout=2)
+
+
+# ----------------------------------------------------------------------------
+# opt-in debug hook (Proposal 3)
+# ----------------------------------------------------------------------------
+
+class TestDebugHookEventLogging:
+    """Proposal 3: `DASHBOARD_DEBUG_HOOK_EVENT` env が truthy のとき hook_event_name の
+    実値を `~/.claude/transcript-analyzer/hook_event_debug.jsonl` (or env で指定された path)
+    に append。env 未設定時は完全 no-op (本番経路に副作用ゼロ)。
+    """
+
+    def test_no_debug_log_when_env_not_set(self, tmp_path, monkeypatch):
+        mod = load_launch_module(tmp_path / "server.json")
+        log_path = tmp_path / "debug.jsonl"
+        monkeypatch.delenv("DASHBOARD_DEBUG_HOOK_EVENT", raising=False)
+        monkeypatch.setenv("DASHBOARD_DEBUG_HOOK_EVENT_PATH", str(log_path))
+        with mock.patch.object(mod.sys, "stdin", _stdin_with_event("SessionStart")):
+            mod._read_hook_event_name()
+        assert not log_path.exists()
+
+    def test_debug_log_appended_when_env_truthy(self, tmp_path, monkeypatch):
+        mod = load_launch_module(tmp_path / "server.json")
+        log_path = tmp_path / "debug.jsonl"
+        monkeypatch.setenv("DASHBOARD_DEBUG_HOOK_EVENT", "1")
+        monkeypatch.setenv("DASHBOARD_DEBUG_HOOK_EVENT_PATH", str(log_path))
+        with mock.patch.object(mod.sys, "stdin", io.StringIO('{"hook_event_name":"WeirdValue"}')):
+            mod._read_hook_event_name()
+        assert log_path.exists(), "DASHBOARD_DEBUG_HOOK_EVENT=1 で debug log が書かれない"
+        line = log_path.read_text(encoding="utf-8").strip().splitlines()[-1]
+        rec = json.loads(line)
+        assert rec.get("hook_event_name") == "WeirdValue"
+
+    def test_debug_log_failure_does_not_raise(self, tmp_path, monkeypatch):
+        """debug 経路の I/O 失敗で hook_event_name 経路を壊さない (本番への副作用なし)。"""
+        mod = load_launch_module(tmp_path / "server.json")
+        # 書けない path を指定 (ディレクトリ扱い)
+        bad_path = tmp_path / "subdir"
+        bad_path.mkdir()
+        monkeypatch.setenv("DASHBOARD_DEBUG_HOOK_EVENT", "1")
+        monkeypatch.setenv("DASHBOARD_DEBUG_HOOK_EVENT_PATH", str(bad_path))  # is a dir, not a file
+        with mock.patch.object(mod.sys, "stdin", _stdin_with_event("SessionStart")):
+            # 例外が漏れず、hook_event_name は通常通り取れる
+            assert mod._read_hook_event_name() == "SessionStart"
