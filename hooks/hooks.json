@@ -17,6 +17,14 @@
             "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/record_subagent.py"
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/launch_dashboard.py"
+          }
+        ]
       }
     ],
     "PostToolUseFailure": [
@@ -45,6 +53,14 @@
             "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/record_skill.py"
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/launch_dashboard.py"
+          }
+        ]
       }
     ],
     "UserPromptExpansion": [
@@ -53,6 +69,14 @@
           {
             "type": "command",
             "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/record_skill.py"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/launch_dashboard.py"
           }
         ]
       }
@@ -83,6 +107,14 @@
           {
             "type": "command",
             "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/record_session.py"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/launch_dashboard.py"
           }
         ]
       }

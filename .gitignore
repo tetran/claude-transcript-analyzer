@@ -12,3 +12,6 @@ data/usage.jsonl
 
 # macOS
 .DS_Store
+
+# Claude Code local settings (not shared)
+.claude/

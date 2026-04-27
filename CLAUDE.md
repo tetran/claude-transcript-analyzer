@@ -29,16 +29,88 @@ Claude Code の動作
   │
   │  ── 整合性チェック ─────────────────────────────
   │  Stop                             →  hooks/verify_session.py  (transcript ↔ usage 照合)
+  │
+  │  ── ダッシュボード自動起動 ───────────────────────
+  │  SessionStart                     →  hooks/launch_dashboard.py  (べき等 launcher)
+  │  UserPromptExpansion              →  hooks/launch_dashboard.py
+  │  UserPromptSubmit                 →  hooks/launch_dashboard.py
+  │  PostToolUse                      →  hooks/launch_dashboard.py
   ↓
 data/usage.jsonl          ← append-only イベントログ（単一ファイルに集約）
   │
   ├── reports/summary.py     →  ターミナル集計レポート
   ├── reports/export_html.py →  スタンドアロン HTML レポート
-  └── dashboard/server.py    →  ブラウザダッシュボード（http://localhost:8080）
+  └── dashboard/server.py    →  ブラウザダッシュボード（自動起動・空きポート bind）
 ```
 
 実体保存先は `~/.claude/transcript-analyzer/usage.jsonl`（プラグイン更新で消えない位置）。
 テスト用途では `USAGE_JSONL` / `HEALTH_ALERTS_JSONL` 環境変数で差し替えできる。
+
+## ライブダッシュボードの運用仕様 (v0.3, Issue #14)
+
+ダッシュボードは Claude Code セッションと一体化したライブビュー。手動コマンドは不要。
+
+### 起動条件
+
+`hooks/launch_dashboard.py` が以下の Hook で発火し、`server.json` を見て **べき等に**
+起動判定する（既起動なら何もしない、未起動なら fork-and-detach で起動）：
+
+| Hook | 役割 |
+|------|------|
+| `SessionStart` | Claude Code 起動の瞬間にダッシュボードも立ち上げる |
+| `UserPromptExpansion` | slash command 経路の主観測点で発火 → 即時復活 |
+| `UserPromptSubmit` | idle 後にユーザーが操作再開 → 自動復活（expansion fallback としても兼用） |
+| `PostToolUse` | 道中の死活サイダーガード（任意のツール使用後にも復活窓を持つ） |
+
+launcher は **常に < 100ms で exit 0**（Claude Code をブロックしない）。
+
+### URL 確認方法
+
+サーバー起動時に `~/.claude/transcript-analyzer/server.json` に `{pid, port, url, started_at}`
+が atomic に書かれる。手動起動時は stderr にも `Dashboard available: http://localhost:<port>`
+を 1 行出力する。
+
+```bash
+# URL を取得
+cat ~/.claude/transcript-analyzer/server.json
+```
+
+### 停止条件
+
+- **idle 自動停止**: 最後の HTTP リクエストから `DASHBOARD_IDLE_SECONDS`（デフォルト 600 秒 = 10 分）経過で graceful shutdown
+  - SSE 接続中は idle カウンタが進まないため、ブラウザ開きっぱなしでは停止しない
+- **手動停止**: `kill <pid>`（pid は server.json から取得）。SIGTERM / SIGINT で graceful shutdown
+- 停止時に server.json は **compare-and-delete** で自動削除（多重インスタンス保護）
+
+idle 停止後にユーザーが Claude Code 操作を再開すると、UserPromptExpansion /
+UserPromptSubmit / PostToolUse hook が launch_dashboard を起動し直して **自動復活**
+する（同 or 別ポート）。
+
+### 環境変数
+
+| 変数 | デフォルト | 意味 |
+|------|-----------|------|
+| `DASHBOARD_PORT` | `0`（OS 任せ） | 具体ポート指定時はそのポートで bind |
+| `DASHBOARD_IDLE_SECONDS` | `600` | idle 停止の閾値秒。`0` で停止無効化 |
+| `DASHBOARD_POLL_INTERVAL` | `1.0` | usage.jsonl 変更検知の polling 周期 (秒)。`0` で監視無効 |
+| `DASHBOARD_SERVER_JSON` | `~/.claude/transcript-analyzer/server.json` | server.json のパス |
+
+### 手動起動・停止
+
+通常は hook 経由の自動起動で十分だが、手動でも起動可能：
+
+```bash
+# 手動起動 (launcher 経由でべき等 — 既起動なら何もしない)
+python3 ${CLAUDE_PLUGIN_ROOT}/hooks/launch_dashboard.py
+# /usage-dashboard スラッシュコマンドも同じ経路
+
+# fg debug 用に直叩きする場合は事前に既起動確認 (二重起動防止)
+cat ~/.claude/transcript-analyzer/server.json  # 既起動なら kill してから
+python3 dashboard/server.py
+
+# 手動停止
+kill $(jq -r .pid ~/.claude/transcript-analyzer/server.json)
+```
 
 ## ファイル構成
 
@@ -55,7 +127,9 @@ claude-transcript-analyzer/
 │   │                         # SubagentStart / SubagentStop 処理
 │   ├── record_session.py     # SessionStart/End, PreCompact/PostCompact,
 │   │                         # Notification, InstructionsLoaded 処理
-│   └── verify_session.py     # Stop hook: transcript vs usage 照合・異常検知
+│   ├── verify_session.py     # Stop hook: transcript vs usage 照合・異常検知
+│   └── launch_dashboard.py   # SessionStart / UserPromptExpansion / UserPromptSubmit /
+│                             # PostToolUse: ダッシュボードを fork-and-detach でべき等起動
 ├── commands/                 # スラッシュコマンド定義
 │   ├── usage-dashboard.md
 │   ├── usage-export-html.md

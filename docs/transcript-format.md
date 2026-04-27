@@ -209,6 +209,14 @@ Hook スクリプトは標準入力で JSON を受け取る。共通フィール
 これにより expansion→submit の二重発火は 1 件にまとめつつ、expansion が来ない経路での submit 連打は両方記録される。
 
 > **既知の制約 (mixed-mode dedup)**: 1 回目が expansion+submit ペアで発火し、2 回目が submit のみ（expansion 落ち）で発火する mixed-mode シナリオでは、2 回目の submit が直前の expansion を見て dedup されてしまい undercount になる。append-only ログで「ペア消費」状態を持てない構造的制約。実機の Claude Code は通常両方発火するため実害は限定的。
+>
+> **structural limit と implementation choice の区別**: 上記の undercount は **structural limit**（schema 変更なしには直せない構造的制約）であって implementation の選び方ミスではない。append-only ログ + write-time dedup の組み合わせは「skip した record は downstream から見えない / skip 自体も検出できない」という一方通行を不可避に伴う。
+>
+> **構造的に正しい代替案 (どちらも schema 変更を伴うため次バージョンスコープ)**:
+> - **(a) record + mark**: skip せずに全 record を残し、`superseded_by_<event>` 等のマーカーフィールドで downstream filter する。コスト：1 record あたり 1 フィールド増。利得：dedup の判断を後段に移譲できて recoverable
+> - **(b) skip イベント自体を残す**: `dedup_skipped` イベントを毎回 emit しておき、count metric が「実発火 + skip」として完全に保存される
+>
+> **設計時の判断ルール**: write-time dedup を入れる前に「downstream の任意の count metric が 5% skip されたら何が壊れるか」を必ず先に問う。「count metric が壊れる」が答えなら write-time dedup を採用せず record + mark に倒す。schema 変更は rescan_transcripts / dashboard / exporter まで波及するため、**現 PR で fix せず次バージョンスコープに defer する**判断も併せて取る（後からの schema 変更コストの方が、確定的な undercount 1 ケースより高い）。
 
 ### `SubagentStart` / `SubagentStop`
 
@@ -234,6 +242,13 @@ Hook スクリプトは標準入力で JSON を受け取る。共通フィール
 > 各 invocation の代表イベント (start を優先、無ければ lifecycle) 1 件だけを反映する。
 > これで lifecycle-only invocation も headline に現れ、`subagent_ranking` と数字が必ず一致する。
 > 詳細は `CLAUDE.md` の同名セクションを参照。
+>
+> **設計教訓 — frozenset(event_types) フィルタは dedup を担えない**:
+> 過去に `subagent_ranking` と `total_events` で件数が食い違った（PR #12 codex review round 9-10 P2）。原因は前者が `aggregate_subagent_metrics` の invocation 同定経由、後者が `frozenset(event_types) ⊂ {whitelist}` の生イベントフィルタ経由で、後者に dedup 知識が無かった。`frozenset(event_types)` フィルタは **「include / exclude」しか表現できず dedup semantics を持てない** — 同じイベントログから 2 つ以上の view を出していて片方が dedup する場合、もう一方も同じ helper を経由させなければ silent な UI inconsistency が出る。
+>
+> **DRY 圧の発生源**: `aggregate_*_metrics()` がドメインに既にあるなら、ヘッドライン / total 系のメトリクスは **必ずそれ経由** で計算する。convention で揃える、ではなく shared helper を passing through することで構造的に揃える。
+>
+> **回帰防止テスト**: 同一 fixture に対して `headline_count == ranking_count` を assert する **cross-aggregator invariant test** を、dual-hook の各 flake モード（start-only / lifecycle-only / both-merged-within-1s / both-disjoint）について書く。per-aggregator の単体テストは pass しても cross が壊れているケースを catch する形。
 
 ### `SessionStart` / `SessionEnd`
 

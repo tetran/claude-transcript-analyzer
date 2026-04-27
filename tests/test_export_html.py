@@ -83,15 +83,29 @@ class TestHtmlTemplateFallback:
     def test_template_has_dynamic_fallback_fetch(self):
         """動的ダッシュボードとしても機能するよう fetch フォールバックが残っていることを確認。"""
         m = self._import()
-        assert "fetch('/api/data')" in m._HTML_TEMPLATE
+        assert "fetch('/api/data'" in m._HTML_TEMPLATE
 
     def test_template_prefers_window_data_over_fetch(self):
         """window.__DATA__ が fetch より先に参照されることを確認。"""
         m = self._import()
         tmpl = m._HTML_TEMPLATE
         window_data_pos = tmpl.index("window.__DATA__")
-        fetch_pos = tmpl.index("fetch('/api/data')")
+        fetch_pos = tmpl.index("fetch('/api/data'")
         assert window_data_pos < fetch_pos
+
+    def test_template_uses_static_badge_for_window_data(self):
+        """codex Finding 1 回帰: 静的 export では接続バッジを 'static' state に固定する。
+
+        修正前は EventSource 結線が `window.__DATA__` 経路で丸ごとスキップされ、
+        初期 'reconnect' 表示のまま固まっていた。
+        """
+        m = self._import()
+        tmpl = m._HTML_TEMPLATE
+        # static 用 CSS が定義されている
+        assert '[data-state="static"]' in tmpl
+        # static 用ラベルと setConnStatus('static') 呼び出しが入っている
+        assert "static:" in tmpl
+        assert "setConnStatus('static')" in tmpl
 
 
 # ---------------------------------------------------------------------------
@@ -221,4 +235,67 @@ class TestRenderStaticHtmlSecurity:
         # </script> がエスケープされとること
         assert "</script>" not in embedded_json
         assert r"<\/script>" in embedded_json
+
+    def test_other_close_tags_in_data_are_escaped(self):
+        """`</style>` 等 `</script>` 以外の close-tag シーケンスもエスケープされる。
+
+        claude[bot] PR#27 review #1 対応: HTML5 script-data-state パーサーは
+        `</` で始まる任意の tag-like sequence で `<script>` 解析を破ろうとしうる。
+        project 名 (cwd 由来 = ユーザー由来) に偶然そういう文字列が混入したケース
+        への防御。
+        """
+        m = self._import()
+        data = {"project": "weird</style>name"}
+        html = m.render_static_html(data)
+        marker = "window.__DATA__ = "
+        idx = html.index(marker) + len(marker)
+        end = html.index(";</script>", idx)
+        embedded_json = html[idx:end]
+        assert "</style>" not in embedded_json, "`</style>` がエスケープされていない"
+        assert r"<\/style>" in embedded_json
+
+    def test_html_comment_opener_in_data_round_trips_safely(self):
+        """`<!--` 単体は escape されずそのままラウンドトリップする。
+
+        `</` 全般 escape で script-data-escaped state から `</script>` で抜ける経路が
+        既に塞がれているため、`<!--` 自体を escape する必要はない。
+        逆に `<\\!--` のような無効 JSON escape を入れると `JSON.parse` がエラーで
+        白画面化するバグになる (claude[bot] 再レビュー指摘)。
+        """
+        m = self._import()
+        data = {"project": "weird<!--name"}
+        html = m.render_static_html(data)
+        marker = "window.__DATA__ = "
+        idx = html.index(marker) + len(marker)
+        end = html.index(";</script>", idx)
+        embedded_json = html[idx:end]
+        # `<!--` はそのまま通る (escape されない)
+        assert "<!--" in embedded_json
+        # それでも json.loads でラウンドトリップして元値に戻る (= JSON.parse も成功)
+        parsed = json.loads(embedded_json)
+        assert parsed["project"] == "weird<!--name"
+
+    def test_data_round_trip_through_escaping_preserves_meaning(self):
+        """エスケープしても JSON.parse 互換: `<\\/script>` は `</script>` として読み戻る。
+
+        ブラウザは <script> の中で `<\\/script>` を「JSON 文字列としての /script」
+        と解釈し、JSON.parse 後の値は元の `</script>` 文字列に戻る。
+        `<!--` を含む値も `</` 経由の escape を介さず JSON.parse がそのまま通せる
+        ことを併せて確認 (claude[bot] 再レビューのテストギャップ補完)。
+        """
+        m = self._import()
+        data = {"skill_ranking": [
+            {"name": "</script>"},
+            {"name": "</style>"},
+            {"name": "<!--comment-->"},
+        ]}
+        html = m.render_static_html(data)
+        marker = "window.__DATA__ = "
+        idx = html.index(marker) + len(marker)
+        end = html.index(";</script>", idx)
+        # JS の \/ は JSON parser から見ると単なる / なので json.loads でラウンドトリップ可能
+        parsed = json.loads(html[idx:end])
+        assert parsed["skill_ranking"][0]["name"] == "</script>"
+        assert parsed["skill_ranking"][1]["name"] == "</style>"
+        assert parsed["skill_ranking"][2]["name"] == "<!--comment-->"
 

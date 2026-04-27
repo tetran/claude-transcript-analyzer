@@ -11,14 +11,16 @@ Claude Code Hooks を使ってリアルタイムにイベントを収集し、`d
 
 ```
 Claude Code の動作
-  │  PostToolUse(Skill)  →  hooks/record_skill.py
-  │  UserPromptSubmit    →  hooks/record_skill.py
-  │  PostToolUse(Task)   →  hooks/record_subagent.py
+  │  PostToolUse(Skill)         →  hooks/record_skill.py
+  │  UserPromptSubmit           →  hooks/record_skill.py
+  │  PostToolUse(Task)          →  hooks/record_subagent.py
+  │  SessionStart / UserPromptExpansion / UserPromptSubmit / PostToolUse
+  │                             →  hooks/launch_dashboard.py  (べき等 launcher)
   ↓
 data/usage.jsonl          ← append-only イベントログ（単一ファイルに集約）
   │
   ├── reports/summary.py  →  ターミナル集計レポート
-  └── dashboard/server.py →  ブラウザダッシュボード（http://localhost:8080）
+  └── dashboard/server.py →  ブラウザダッシュボード（自動起動・空きポート bind）
 ```
 
 ## ファイル構成
