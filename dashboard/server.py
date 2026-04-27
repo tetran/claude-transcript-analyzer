@@ -294,18 +294,22 @@ class DashboardServer(ThreadingHTTPServer):
 
     def _start_watchdog(self) -> None:
         check_interval = max(0.05, min(self.idle_seconds / 2.0, 1.0))
-
-        def loop():
-            while not self._stop_event.wait(check_interval):
-                if self.idle_for() > self.idle_seconds:
-                    # shutdown は serve_forever が exit するまでブロックするので別スレで叩く
-                    threading.Thread(target=super(DashboardServer, self).shutdown, daemon=True).start()
-                    return
-
         self._watchdog_thread = threading.Thread(
-            target=loop, daemon=True, name="DashboardIdleWatchdog"
+            target=self._watchdog_loop,
+            args=(check_interval,),
+            daemon=True,
+            name="DashboardIdleWatchdog",
         )
         self._watchdog_thread.start()
+
+    def _watchdog_loop(self, check_interval: float) -> None:
+        # method スコープで定義しないと `super()` の zero-arg 形式が成立しない
+        # (inner function だと __class__ closure はあっても self の暗黙参照が解けず RuntimeError)。
+        while not self._stop_event.wait(check_interval):
+            if self.idle_for() > self.idle_seconds:
+                # shutdown は serve_forever が exit するまでブロックするので別スレで叩く
+                threading.Thread(target=super().shutdown, daemon=True).start()
+                return
 
     def shutdown(self) -> None:
         # 外部 / 内部いずれの shutdown 経路でも watchdog ループを止める
@@ -391,7 +395,7 @@ def run(
     write_server_json(server_json_path, info)
 
     if install_signals:
-        def _signal_shutdown(signum, frame):  # pragma: no cover - signal path
+        def _signal_shutdown(_signum, _frame):  # pragma: no cover - signal path
             threading.Thread(target=server.shutdown, daemon=True).start()
         try:
             signal.signal(signal.SIGTERM, _signal_shutdown)
