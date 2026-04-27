@@ -1,0 +1,28 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  pytest:
+    strategy:
+      fail-fast: false
+      matrix:
+        # macOS は CI matrix から除外: 開発者のローカル環境が macOS のため日常的に
+        # カバーされており、GitHub Actions の macOS arm64 runner は mDNSResponder
+        # 起因で `HTTPServer.server_bind` 内の `getfqdn` が hang する固有問題があり、
+        # production code を runner 都合で歪めるよりはここで切る (Issue #24 / PR #31)。
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.11"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install pytest
+        run: python -m pip install --upgrade pip pytest
+      - name: Run pytest
+        run: python -m pytest tests/ -q

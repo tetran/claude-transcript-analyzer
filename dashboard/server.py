@@ -13,8 +13,22 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Callable, Optional
 
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from subagent_metrics import aggregate_subagent_metrics, usage_invocation_events
+# Issue #24 PR#31 codex P2: server.json の lock + compare-and-delete primitives は
+# `server_registry` に切り出して `hooks/launch_dashboard.py` の cleanup パスと
+# 共有する。本モジュール内では従来 API 名で再 export し、既存テスト
+# (mod._file_lock / mod.write_server_json / mod.remove_server_json 等) との互換を保つ。
+# 内部実装の monkeypatch (例: `_lock_fd` の差し替え) は本モジュールではなく
+# `server_registry` に対して行う必要がある (binding は ref ではなく値コピーのため)。
+import server_registry  # pylint: disable=wrong-import-position
+
+_file_lock = server_registry._file_lock
+_lock_path_for = server_registry._lock_path_for
+_pid_matches = server_registry._pid_matches
+write_server_json = server_registry.write_server_json
+remove_server_json = server_registry.remove_server_json
 
 _DEFAULT_PATH = Path.home() / ".claude" / "transcript-analyzer" / "usage.jsonl"
 DATA_FILE = Path(os.environ.get("USAGE_JSONL", str(_DEFAULT_PATH)))
@@ -378,6 +392,10 @@ class _FileWatcher:
             st = self.path.stat()
         except (FileNotFoundError, OSError):
             return None
+        if sys.platform == "win32":
+            # Issue #24 N2: Win NTFS では st_ino が 0 / 不安定で signature 比較が
+            # 壊れることがある。size + mtime_ns のみで実用上の検出精度は十分。
+            return (st.st_size, st.st_mtime_ns)
         return (st.st_ino, st.st_size, st.st_mtime_ns)
 
 
@@ -553,7 +571,10 @@ class DashboardServer(ThreadingHTTPServer):
     """
 
     daemon_threads = True
-    allow_reuse_address = True
+    # Issue #24 N1: Win で True にすると SO_REUSEADDR の Win 仕様差で別プロセスに
+    # ポートを横取りされる懸念がある。POSIX のみ True (TIME_WAIT 中の再利用許可)、
+    # Win は default False にして OS の自然解放に任せる。
+    allow_reuse_address = sys.platform != "win32"
 
     def __init__(self, server_address, RequestHandlerClass, *,
                  idle_seconds: float = 0.0,
@@ -643,7 +664,11 @@ def create_server(
     port: int = 0,
     idle_seconds: float = 0.0,
     handler_cls=None,
-    host: str = "localhost",
+    # IPv4 loopback を直接指定し `getaddrinfo("localhost", ...)` を skip する。
+    # `localhost` 解決は IPv6/IPv4 dual-stack の mDNSResponder 起因で遅延・hang する
+    # 環境 (例: GitHub Actions macOS arm64 runner) があり、bind が無限ブロックする。
+    # `run()` の URL は `http://localhost:N` のままで OK (loopback 同一)。
+    host: str = "127.0.0.1",
     poll_interval: float = 0.0,
     usage_jsonl_path: Optional[Path] = None,
     sse_keepalive: float = 15.0,
@@ -662,45 +687,6 @@ def create_server(
         usage_jsonl_path=usage_jsonl_path if usage_jsonl_path is not None else DATA_FILE,
         sse_keepalive=sse_keepalive,
     )
-
-
-def write_server_json(path: Path, info: dict) -> None:
-    """`{pid, port, url, started_at}` を atomic に書く（tmp + os.replace）。"""
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + f".{os.getpid()}.tmp")
-    tmp.write_text(json.dumps(info, ensure_ascii=False), encoding="utf-8")
-    os.replace(tmp, path)
-
-
-def remove_server_json(path: Path, expected_pid: Optional[int] = None) -> bool:
-    """server.json をべき等に削除する。返り値は実際に削除したか。
-
-    `expected_pid` を渡したときは compare-and-delete: ファイル中の `pid` が一致する場合
-    のみ削除する。多重インスタンスで他プロセスが上書きしたレジストリを誤って消さないため。
-    壊れた JSON / 不在ファイル / pid 不一致はいずれも `False` を返して安全側に倒す。
-    """
-    path = Path(path)
-    if expected_pid is not None:
-        try:
-            content = path.read_text(encoding="utf-8")
-        except FileNotFoundError:
-            return False
-        except OSError:
-            return False
-        try:
-            info = json.loads(content)
-        except json.JSONDecodeError:
-            return False
-        if info.get("pid") != expected_pid:
-            return False
-    try:
-        path.unlink()
-        return True
-    except OSError:
-        # FileNotFoundError / PermissionError / read-only fs 等。run() の finally から
-        # 例外が漏れるとプロセス終了時のエラーログを汚すため、cleanup は best-effort 扱い。
-        return False
 
 
 def run(

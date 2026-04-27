@@ -417,14 +417,41 @@ class TestMainSweepsZombieBeforeSpawn:
 
 class TestSpawnArguments:
     def test_popen_uses_start_new_session(self, tmp_path):
-        """fork-and-detach: start_new_session=True で親 PG/SID から切り離す。
-        親プロセス（hook 経由 = Claude Code）終了後も子サーバー生存のため必須。"""
+        """fork-and-detach (POSIX): start_new_session=True で親 PG/SID から切り離す。
+        親プロセス（hook 経由 = Claude Code）終了後も子サーバー生存のため必須。
+        Windows では start_new_session が no-op なので別経路 (creationflags) を使う。"""
         mod = load_launch_module(tmp_path / "server.json")
-        with mock.patch.object(mod.subprocess, "Popen") as popen:
+        with mock.patch.object(mod.sys, "platform", "linux"), \
+             mock.patch.object(mod.subprocess, "Popen") as popen:
             rc = mod.main()
         assert rc == 0
         kwargs = popen.call_args.kwargs
         assert kwargs.get("start_new_session") is True
+        assert "creationflags" not in kwargs
+
+    def test_popen_uses_creationflags_on_windows(self, tmp_path):
+        """fork-and-detach (Win): DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP で
+        親プロセス終了後も子サーバー生存。POSIX の start_new_session 相当 (Issue #24)。
+
+        定数値は MSDN ドキュメント通りハードコード:
+          DETACHED_PROCESS         = 0x00000008
+          CREATE_NEW_PROCESS_GROUP = 0x00000200
+        POSIX では subprocess モジュールに DETACHED_PROCESS が存在しないため、
+        ハードコード値で比較する (実装側も getattr fallback を使う想定)。
+        """
+        mod = load_launch_module(tmp_path / "server.json")
+        with mock.patch.object(mod.sys, "platform", "win32"), \
+             mock.patch.object(mod.subprocess, "Popen") as popen:
+            rc = mod.main()
+        assert rc == 0
+        kwargs = popen.call_args.kwargs
+        # Windows では start_new_session を渡さない
+        assert "start_new_session" not in kwargs
+        cf = kwargs.get("creationflags", 0)
+        assert cf & 0x00000008, f"DETACHED_PROCESS (0x8) が含まれていない: cf={cf:#x}"
+        assert cf & 0x00000200, (
+            f"CREATE_NEW_PROCESS_GROUP (0x200) が含まれていない: cf={cf:#x}"
+        )
 
     def test_popen_redirects_stdio_to_devnull(self, tmp_path):
         """親 hook の pipe を引き継がない。Claude Code の stdout/stderr を汚さない。"""
@@ -509,6 +536,10 @@ class TestHooksJsonRegistration:
         )
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="os.kill semantics differ on Windows; spawn 経路は test_popen_uses_creationflags_on_windows で構造検証",
+)
 class TestEndToEndLaunch:
     def test_script_spawns_real_dashboard_server(self, tmp_path):
         """実スクリプト起動: server.json 不在 → fork-and-detach で dashboard/server.py が起動し、
@@ -519,7 +550,10 @@ class TestEndToEndLaunch:
         env["DASHBOARD_SERVER_JSON"] = str(server_json)
         env["USAGE_JSONL"] = str(usage_jsonl)
         env["DASHBOARD_PORT"] = "0"  # 空きポート
-        env["DASHBOARD_IDLE_SECONDS"] = "5"  # テスト後に自動消滅
+        # CI runner (特に macOS arm64) では起動オーバーヘッドが大きく、5s idle だと
+        # server.json 書き込み直後に shutdown が動いてテストが捕まえられないことがある。
+        # 30s に伸ばして CI flaky を解消 (Issue #24)。
+        env["DASHBOARD_IDLE_SECONDS"] = "30"
         # 子サーバーが起動準備に時間がかかる場合があるので poll_interval は長めでも可
         result = subprocess.run(
             [sys.executable, str(_LAUNCH_PATH)],
@@ -531,8 +565,10 @@ class TestEndToEndLaunch:
         )
         assert result.returncode == 0, f"launcher exit code: {result.returncode}, stderr: {result.stderr}"
 
-        # 子サーバーが server.json を書くまで待つ
-        deadline = time.time() + 5.0
+        # 子サーバーが server.json を書くまで待つ。CI macOS arm64 は Python の
+        # cold import + socket bind + write がトータルで 10s を超えることがある
+        # ため 30s に伸ばす (Issue #24 PR#31)。ローカルでは 1s 未満で完了する。
+        deadline = time.time() + 30.0
         while time.time() < deadline:
             if server_json.exists():
                 try:

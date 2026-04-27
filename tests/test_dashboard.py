@@ -33,7 +33,7 @@ def load_dashboard_module(usage_jsonl: Path, alerts_jsonl: Path | None = None):
 
 def write_events(path: Path, events: list[dict]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w") as f:
+    with path.open("w", encoding="utf-8") as f:
         for ev in events:
             f.write(json.dumps(ev) + "\n")
 
@@ -204,7 +204,7 @@ class TestBuildDashboardData:
             "missing_count": 3,
             "missing_types": ["subagent_start"],
         }
-        alerts_file.write_text(json.dumps(alert) + "\n")
+        alerts_file.write_text(json.dumps(alert) + "\n", encoding="utf-8")
 
         mod = load_dashboard_module(tmp_path / "nonexistent.jsonl",
                                     alerts_jsonl=alerts_file)
@@ -223,7 +223,7 @@ class TestBuildDashboardData:
              "missing_types": ["subagent_start"]}
             for i in range(1, 61)  # 60件書く
         ]
-        alerts_file.write_text("\n".join(json.dumps(a) for a in alerts) + "\n")
+        alerts_file.write_text("\n".join(json.dumps(a) for a in alerts) + "\n", encoding="utf-8")
 
         mod = load_dashboard_module(tmp_path / "nonexistent.jsonl",
                                     alerts_jsonl=alerts_file)

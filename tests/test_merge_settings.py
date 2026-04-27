@@ -23,6 +23,11 @@ def run_merge_with_home(home: Path, repo_dir: Path) -> subprocess.CompletedProce
     import os
     env = os.environ.copy()
     env["HOME"] = str(home)
+    # Windows の `os.path.expanduser('~')` (= `Path.home()`) は Python 3.8 以降
+    # `HOME` を見ず `USERPROFILE` のみを参照するため、Windows でも tmp_path に
+    # リダイレクトされるよう同時に上書きする。POSIX では USERPROFILE は無視されるので
+    # 両 OS で同じヘルパを使える (Issue #24)。
+    env["USERPROFILE"] = str(home)
     return subprocess.run(
         [sys.executable, str(SCRIPT), str(repo_dir)],
         capture_output=True,
@@ -33,7 +38,7 @@ def run_merge_with_home(home: Path, repo_dir: Path) -> subprocess.CompletedProce
 
 def read_settings(home: Path) -> dict:
     settings_file = home / ".claude" / "settings.json"
-    return json.loads(settings_file.read_text())
+    return json.loads(settings_file.read_text(encoding="utf-8"))
 
 
 class TestMergeSettings:
@@ -42,7 +47,7 @@ class TestMergeSettings:
         claude_dir = tmp_path / ".claude"
         claude_dir.mkdir()
         settings_file = claude_dir / "settings.json"
-        settings_file.write_text("{}")
+        settings_file.write_text("{}", encoding="utf-8")
 
         result = run_merge_with_home(tmp_path, REPO_DIR)
         assert result.returncode == 0, result.stderr
@@ -55,7 +60,7 @@ class TestMergeSettings:
     def test_post_tool_use_has_skill_and_task_matchers(self, tmp_path):
         claude_dir = tmp_path / ".claude"
         claude_dir.mkdir()
-        (claude_dir / "settings.json").write_text("{}")
+        (claude_dir / "settings.json").write_text("{}", encoding="utf-8")
 
         run_merge_with_home(tmp_path, REPO_DIR)
         settings = read_settings(tmp_path)
@@ -68,7 +73,7 @@ class TestMergeSettings:
     def test_hook_commands_contain_repo_dir(self, tmp_path):
         claude_dir = tmp_path / ".claude"
         claude_dir.mkdir()
-        (claude_dir / "settings.json").write_text("{}")
+        (claude_dir / "settings.json").write_text("{}", encoding="utf-8")
 
         run_merge_with_home(tmp_path, REPO_DIR)
         settings = read_settings(tmp_path)
@@ -88,7 +93,7 @@ class TestMergeSettings:
                 ]
             }
         }
-        (claude_dir / "settings.json").write_text(json.dumps(existing))
+        (claude_dir / "settings.json").write_text(json.dumps(existing), encoding="utf-8")
 
         run_merge_with_home(tmp_path, REPO_DIR)
         settings = read_settings(tmp_path)
@@ -102,19 +107,19 @@ class TestMergeSettings:
     def test_backup_file_is_created(self, tmp_path):
         claude_dir = tmp_path / ".claude"
         claude_dir.mkdir()
-        (claude_dir / "settings.json").write_text('{"existing": true}')
+        (claude_dir / "settings.json").write_text('{"existing": true}', encoding="utf-8")
 
         run_merge_with_home(tmp_path, REPO_DIR)
 
         backup = claude_dir / "settings.json.bak"
         assert backup.exists()
-        backup_data = json.loads(backup.read_text())
+        backup_data = json.loads(backup.read_text(encoding="utf-8"))
         assert backup_data.get("existing") is True
 
     def test_idempotent_when_run_twice(self, tmp_path):
         claude_dir = tmp_path / ".claude"
         claude_dir.mkdir()
-        (claude_dir / "settings.json").write_text("{}")
+        (claude_dir / "settings.json").write_text("{}", encoding="utf-8")
 
         run_merge_with_home(tmp_path, REPO_DIR)
         run_merge_with_home(tmp_path, REPO_DIR)
@@ -136,7 +141,7 @@ class TestMergeSettings:
     def test_stop_hook_added(self, tmp_path):
         claude_dir = tmp_path / ".claude"
         claude_dir.mkdir()
-        (claude_dir / "settings.json").write_text("{}")
+        (claude_dir / "settings.json").write_text("{}", encoding="utf-8")
 
         run_merge_with_home(tmp_path, REPO_DIR)
         settings = read_settings(tmp_path)
@@ -153,7 +158,7 @@ class TestMergeSettings:
     def test_stop_hook_idempotent(self, tmp_path):
         claude_dir = tmp_path / ".claude"
         claude_dir.mkdir()
-        (claude_dir / "settings.json").write_text("{}")
+        (claude_dir / "settings.json").write_text("{}", encoding="utf-8")
 
         run_merge_with_home(tmp_path, REPO_DIR)
         run_merge_with_home(tmp_path, REPO_DIR)
@@ -179,7 +184,7 @@ class TestMergeSettings:
                 ]
             }
         }
-        (claude_dir / "settings.json").write_text(json.dumps(existing))
+        (claude_dir / "settings.json").write_text(json.dumps(existing), encoding="utf-8")
 
         run_merge_with_home(tmp_path, REPO_DIR)
         settings = read_settings(tmp_path)
@@ -208,7 +213,7 @@ class TestMergeSettings:
                 ]
             }
         }
-        (claude_dir / "settings.json").write_text(json.dumps(existing))
+        (claude_dir / "settings.json").write_text(json.dumps(existing), encoding="utf-8")
 
         result = run_merge_with_home(tmp_path, REPO_DIR)
         assert result.returncode == 0

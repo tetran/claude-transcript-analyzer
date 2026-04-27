@@ -25,7 +25,7 @@ def load_summary_module(usage_jsonl: Path):
 
 def write_events(path: Path, events: list[dict]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w") as f:
+    with path.open("w", encoding="utf-8") as f:
         for ev in events:
             f.write(json.dumps(ev) + "\n")
 

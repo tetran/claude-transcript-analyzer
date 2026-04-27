@@ -151,9 +151,10 @@ def scan_all(transcripts_dir: Path) -> list[dict]:
 
 
 def write_events(events: list[dict], output_path: Path, append: bool = False) -> None:
+    # newline="\n" 固定で Windows text mode の \r\n 変換を抑止 (Issue #24)。
     output_path.parent.mkdir(parents=True, exist_ok=True)
     mode = "a" if append else "w"
-    with output_path.open(mode, encoding="utf-8") as f:
+    with output_path.open(mode, encoding="utf-8", newline="\n") as f:
         for ev in events:
             f.write(json.dumps(ev, ensure_ascii=False) + "\n")
 
@@ -178,7 +179,11 @@ def main() -> None:
         "--transcripts-dir",
         type=Path,
         default=default_transcripts_dir,
-        help="Directory to scan for transcripts (default: ~/.claude/projects)",
+        help=(
+            "Directory to scan for transcripts "
+            "(default: ~/.claude/projects on POSIX, "
+            "%%USERPROFILE%%\\.claude\\projects on Windows)"
+        ),
     )
     args = parser.parse_args()
 

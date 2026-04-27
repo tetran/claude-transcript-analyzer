@@ -24,7 +24,37 @@ def read_events(path: str) -> list[dict]:
     p = Path(path)
     if not p.exists():
         return []
-    return [json.loads(line) for line in p.read_text().splitlines() if line.strip()]
+    return [
+        json.loads(line)
+        for line in p.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+def read_event_bytes(path: str) -> bytes:
+    """raw bytes で読み出し (Windows での \\r\\n 混在検証用)。"""
+    return Path(path).read_bytes()
+
+
+class TestNewlineHandling:
+    """Issue #24: usage.jsonl の append が `\\n` 固定で書かれること。
+    Windows text mode のデフォルトでは `\\n` → `\\r\\n` 変換されるが、
+    `_append_event` は `newline='\\n'` 指定で抑止する。POSIX では現状でも `\\r` は
+    入らないため pass、Win CI で初めて failing → 修正で pass を保証。"""
+
+    def test_appended_event_contains_no_carriage_return(self, tmp_path):
+        usage_file = str(tmp_path / "usage.jsonl")
+        stdin = {
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Skill",
+            "tool_input": {"skill": "x", "args": ""},
+            "session_id": "s",
+            "cwd": "/Users/x/p",
+        }
+        result = run_script(stdin, usage_file)
+        assert result.returncode == 0
+        raw = read_event_bytes(usage_file)
+        assert b"\r" not in raw, f"CR found in jsonl: {raw!r}"
 
 
 class TestPostToolUseSkill:

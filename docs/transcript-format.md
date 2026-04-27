@@ -8,14 +8,25 @@
 ~/.claude/projects/<project-dir>/<session-id>.jsonl
 ```
 
+Windows では `%USERPROFILE%\.claude\projects\<project-dir>\<session-id>.jsonl` (Claude Code 本体の `HOME` 解決と同じ規約)。
+
 ### `<project-dir>` の命名規則
 
-プロジェクトの絶対パスを `/` → `-` に変換したもの（先頭の `-` はそのまま残る）。
+プロジェクトの絶対パスを正規化したもの。Claude Code 本体は **`/`, `\`, `:`, `.` をすべて `-`** に変換する (Issue #24 で実機 `ls ~/.claude/projects/` で確認済み)。先頭の `-` はそのまま残る。
 
 ```
-/Users/foo/myapp        →  -Users-foo-myapp
-/Users/kkoichi/Developer/personal/chirper  →  -Users-kkoichi-Developer-personal-chirper
+POSIX:
+  /Users/foo/myapp                          →  -Users-foo-myapp
+  /Users/kkoichi/Developer/personal/chirper →  -Users-kkoichi-Developer-personal-chirper
+  /Users/foo/.worktrees/issue-1             →  -Users-foo--worktrees-issue-1   (dot 入り)
+  /Users/foo/my.app/sub                     →  -Users-foo-my-app-sub          (dot 入り)
+
+Windows:
+  C:\Users\foo\myapp                        →  C--Users-foo-myapp
+  C:\Users\foo\.config\app                  →  C--Users-foo--config-app
 ```
+
+このエンコード規則は `hooks/verify_session.py:_encode_cwd()` に集約されている。
 
 ### `<session-id>`
 

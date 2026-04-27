@@ -8,13 +8,19 @@ server.json lifecycle / idle watchdog / /healthz / run() 統合) を切り出し
 import json
 import os
 import socketserver
+import sys
 import threading
 import time
 import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
-from test_dashboard import load_dashboard_module  # noqa: F401  (re-exported helper)
+# Issue #24 PR#31 codex P2: lock/compare-and-delete primitives は `server_registry` に
+# 切り出された。`mod._lock_fd` を monkeypatch しても `server_registry._file_lock`
+# 内の参照は変わらないため、内部実装テストは `server_registry` を直接 monkeypatch する。
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from test_dashboard import load_dashboard_module  # noqa: F401, E402  (re-exported helper)
+import server_registry  # noqa: E402
 
 
 def _start_server_in_thread(server) -> threading.Thread:
@@ -193,7 +199,7 @@ class TestServerJsonLifecycle:
         """expected_pid が一致するとき削除する。"""
         mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
         target = tmp_path / "server.json"
-        target.write_text(json.dumps({"pid": 4242, "port": 1, "url": "u", "started_at": "t"}))
+        target.write_text(json.dumps({"pid": 4242, "port": 1, "url": "u", "started_at": "t"}), encoding="utf-8")
         removed = mod.remove_server_json(target, expected_pid=4242)
         assert removed is True
         assert not target.exists()
@@ -202,18 +208,18 @@ class TestServerJsonLifecycle:
         """別プロセスが上書きした server.json を消さない（多重インスタンス保護）。"""
         mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
         target = tmp_path / "server.json"
-        target.write_text(json.dumps({"pid": 9999, "port": 1, "url": "u", "started_at": "t"}))
+        target.write_text(json.dumps({"pid": 9999, "port": 1, "url": "u", "started_at": "t"}), encoding="utf-8")
         removed = mod.remove_server_json(target, expected_pid=4242)
         assert removed is False
         assert target.exists()
         # 中身は元のまま
-        assert json.loads(target.read_text())["pid"] == 9999
+        assert json.loads(target.read_text(encoding="utf-8"))["pid"] == 9999
 
     def test_remove_server_json_compare_and_delete_handles_invalid_json(self, tmp_path):
         """壊れた JSON のときは消さない（誰かが書き換え中の可能性）。"""
         mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
         target = tmp_path / "server.json"
-        target.write_text("not valid json")
+        target.write_text("not valid json", encoding="utf-8")
         removed = mod.remove_server_json(target, expected_pid=4242)
         assert removed is False
         assert target.exists()
@@ -377,3 +383,200 @@ class TestRunIntegration:
             t.join(timeout=2.0)
         # serve_forever が exit した後、server.json は削除されている
         assert not target.exists()
+
+
+class TestPlatformSpecificServerConfig:
+    """Issue #24 N1/N2: Windows 互換のためのプラットフォーム別設定。"""
+
+    def test_allow_reuse_address_disabled_on_windows(self, tmp_path):
+        """Windows で allow_reuse_address=True にすると別プロセスがポート横取りできる
+        (SO_REUSEADDR の Win 仕様差)。POSIX のみ True、Win では False に倒す。"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        if sys.platform == "win32":
+            assert mod.DashboardServer.allow_reuse_address is False
+        else:
+            assert mod.DashboardServer.allow_reuse_address is True
+
+    def test_file_watcher_signature_excludes_inode_on_windows(self, tmp_path):
+        """Windows NTFS では st_ino が 0 / 不安定なので、signature から除外する。
+        POSIX は (inode, size, mtime_ns)、Win は (size, mtime_ns) のみ。"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        target = tmp_path / "watched.jsonl"
+        target.write_text("hello", encoding="utf-8")
+
+        watcher = mod._FileWatcher(path=target, interval=0.0)
+        sig = watcher._signature()
+        assert sig is not None
+
+        if sys.platform == "win32":
+            assert len(sig) == 2  # (size, mtime_ns)
+        else:
+            assert len(sig) == 3  # (inode, size, mtime_ns)
+            assert sig[0] == target.stat().st_ino
+
+
+class TestServerJsonCrossProcessLock:
+    """Issue #24: TOCTOU race 解消。write/remove を別ファイル lock 経由で逐次化。
+
+    現状の compare-and-delete は read → pid 比較 → unlink の 4 ステップが
+    非アトミックで、A が pid を読んだ後 B が atomic write で上書きすると、
+    A の unlink が B のレジストリ (pid 不一致) を誤削除する race が残る。
+    `_file_lock` で write/remove を 1 critical section に閉じ込めて解消する。
+    """
+
+    def test_file_lock_yields_acquired_true_on_success(self, tmp_path):
+        """通常経路: lock 取得成功時は True を yield する。"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        with mod._file_lock(tmp_path / "x.lock") as acquired:
+            assert acquired is True
+
+    def test_file_lock_yields_acquired_false_when_lock_call_fails(self, tmp_path, monkeypatch):
+        """lock 取得に失敗したとき (Win: LK_NBLCK 即時 OSError / POSIX: flock OSError)、
+        yield False で呼び出し側に伝える。silent best-effort で続行はしない
+        (race 解消保証を緩めないため、安全側に倒す責務は呼び出し側へ)。"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+
+        def boom(_fd):
+            raise OSError("simulated lock failure")
+
+        monkeypatch.setattr(server_registry, "_lock_fd", boom)
+        with mod._file_lock(tmp_path / "x.lock") as acquired:
+            assert acquired is False
+
+    def test_windows_lock_fails_fast_when_contended(self, tmp_path):
+        """Issue #24 PR#31 claude[bot] review #1: Win 経路は LK_NBLCK で取得失敗時に
+        即時 OSError を上げる (LK_LOCK の ~10秒リトライではない)。launch_dashboard の
+        < 100ms exit budget を Win 競合時にも維持するための回帰ガード。
+
+        他 fd で lock を握った状態で `_lock_fd` を呼び、即時 (< 1秒) に OSError が
+        上がることを確認する。POSIX (fcntl.flock) はブロックするため skip。"""
+        if sys.platform != "win32":
+            import pytest  # pylint: disable=import-outside-toplevel
+            pytest.skip("Windows 専用: LK_NBLCK の non-blocking 挙動")
+        import msvcrt  # pylint: disable=import-error,import-outside-toplevel
+        lock_path = tmp_path / "x.lock"
+        # 他 fd で先に LK_NBLCK で握る (writer 役)
+        holder_fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT)
+        try:
+            msvcrt.locking(holder_fd, msvcrt.LK_NBLCK, 1)
+            try:
+                # contender 役: _lock_fd は同じ byte range を取りに行って即 OSError
+                contender_fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT)
+                try:
+                    start = time.monotonic()
+                    raised = False
+                    try:
+                        server_registry._lock_fd(contender_fd)
+                    except OSError:
+                        raised = True
+                    elapsed = time.monotonic() - start
+                    assert raised, "_lock_fd は競合時に OSError を上げる必要がある"
+                    assert elapsed < 1.0, (
+                        f"_lock_fd が non-blocking でない (elapsed={elapsed:.3f}s)。"
+                        "LK_LOCK にデグレードしている可能性"
+                    )
+                finally:
+                    os.close(contender_fd)
+            finally:
+                msvcrt.locking(holder_fd, msvcrt.LK_UNLCK, 1)
+        finally:
+            os.close(holder_fd)
+
+    def test_lock_file_co_located_with_server_json(self, tmp_path):
+        """`<server.json>.lock` ファイルが同じ親 dir に作られる (cleanup は best-effort)。"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        target = tmp_path / "server.json"
+        mod.write_server_json(target, {"pid": 1, "port": 1, "url": "u", "started_at": "t"})
+        # 命名規約: server.json + ".lock" suffix
+        lock = tmp_path / "server.json.lock"
+        assert lock.exists(), f"lock ファイルが存在しない (期待パス: {lock})"
+
+    def test_remove_server_json_returns_false_when_lock_unavailable(self, tmp_path, monkeypatch):
+        """lock 取得失敗時、remove は何もせず False を返してファイルを残す (安全側)。"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        target = tmp_path / "server.json"
+        target.write_text(
+            json.dumps({"pid": 4242, "port": 1, "url": "u", "started_at": "t"}),
+            encoding="utf-8",
+        )
+
+        def boom(_fd):
+            raise OSError("simulated lock failure")
+
+        monkeypatch.setattr(server_registry, "_lock_fd", boom)
+        removed = mod.remove_server_json(target, expected_pid=4242)
+        assert removed is False
+        # ファイルは残る (削除を諦めた)
+        assert target.exists()
+
+    def test_concurrent_write_and_remove_are_serialized(self, tmp_path):
+        """write_server_json と remove_server_json を Barrier で同時起動。
+        lock があれば必ず逐次化され、最終 state は決定論的:
+          - write が後に走った → ファイル存在 + B の pid
+          - remove が後に走った → ファイル不在
+        race があると read 中の A が B の atomic write 直後の内容を「中途半端に」
+        読み取って例外を投げる、または unlink で B のファイルを誤削除する。"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        target = tmp_path / "server.json"
+        target.write_text(
+            json.dumps({"pid": 1, "port": 1, "url": "u", "started_at": "t"}),
+            encoding="utf-8",
+        )
+
+        barrier = threading.Barrier(2)
+        errors: list[BaseException] = []
+
+        def remove_fn():
+            try:
+                barrier.wait(timeout=2.0)
+                mod.remove_server_json(target, expected_pid=1)
+            except BaseException as exc:  # pylint: disable=broad-except
+                errors.append(exc)
+
+        def write_fn():
+            try:
+                barrier.wait(timeout=2.0)
+                mod.write_server_json(
+                    target,
+                    {"pid": 2, "port": 2, "url": "u2", "started_at": "t2"},
+                )
+            except BaseException as exc:  # pylint: disable=broad-except
+                errors.append(exc)
+
+        t1 = threading.Thread(target=remove_fn)
+        t2 = threading.Thread(target=write_fn)
+        t1.start()
+        t2.start()
+        t1.join(timeout=3.0)
+        t2.join(timeout=3.0)
+
+        assert errors == [], f"並行実行中に例外: {errors!r}"
+        # 最終 state: 存在するなら必ず B の pid (中間状態の混在ファイル不可)
+        if target.exists():
+            info = json.loads(target.read_text(encoding="utf-8"))
+            assert info["pid"] == 2, (
+                f"race 検出: 中間状態のファイルが残っている pid={info.get('pid')}"
+            )
+
+    def test_remove_holds_lock_during_compare_and_delete(self, tmp_path, monkeypatch):
+        """compare-and-delete の read → pid 比較 → unlink が `_file_lock` 内で
+        完結している (構造テスト)。lock を取らずに read+unlink すると
+        TOCTOU race が再発するため、lock acquire 経路を必ず通ることを保証。"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        target = tmp_path / "server.json"
+        target.write_text(
+            json.dumps({"pid": 4242, "port": 1, "url": "u", "started_at": "t"}),
+            encoding="utf-8",
+        )
+
+        lock_acquired_calls: list = []
+        original_lock_fd = server_registry._lock_fd
+
+        def spy_lock_fd(fd):
+            lock_acquired_calls.append(fd)
+            return original_lock_fd(fd)
+
+        monkeypatch.setattr(server_registry, "_lock_fd", spy_lock_fd)
+        removed = mod.remove_server_json(target, expected_pid=4242)
+        assert removed is True
+        assert len(lock_acquired_calls) >= 1, "remove_server_json が lock を取得していない"
