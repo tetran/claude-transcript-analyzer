@@ -28,15 +28,50 @@ jobs:
           '@ | Out-File -Encoding utf8 -FilePath spike.py
           Get-Content spike.py
 
-      - name: Probe A — pwsh direct .py invocation
+      - name: Diagnose — PATHEXT, launcher, python availability
         shell: pwsh
         run: |
-          $r = '{"tool_name":"Spike","tool_input":{}}' | & ".\spike.py"
-          if ($LASTEXITCODE -ne 0) { Write-Error "pwsh direct .py failed: $LASTEXITCODE"; exit 1 }
-          Write-Host "Probe A passed"
+          Write-Host "=== PATHEXT ==="
+          Write-Host $env:PATHEXT
+          Write-Host "=== Get-Command python / python3 / py ==="
+          Get-Command python  -ErrorAction SilentlyContinue | Format-List Name, Source
+          Get-Command python3 -ErrorAction SilentlyContinue | Format-List Name, Source
+          Get-Command py      -ErrorAction SilentlyContinue | Format-List Name, Source
+          Write-Host "=== where.exe (cmd-style) ==="
+          where.exe python  2>$null
+          where.exe python3 2>$null
+          where.exe py      2>$null
+          Write-Host "=== py.exe launcher --list ==="
+          py --list 2>$null
+          py -3 --version 2>$null
+
+      - name: Probe A — pwsh direct .py invocation
+        shell: pwsh
+        continue-on-error: true
+        id: probe-a
+        run: |
+          Write-Host "Attempt 1: & '.\spike.py'"
+          '{"tool_name":"Spike","tool_input":{}}' | & ".\spike.py"
+          $code1 = $LASTEXITCODE
+          Write-Host "Attempt 1 LASTEXITCODE=$code1"
+
+          Write-Host "Attempt 2: & 'spike.py' (PATHEXT lookup)"
+          '{"tool_name":"Spike","tool_input":{}}' | & "spike.py"
+          $code2 = $LASTEXITCODE
+          Write-Host "Attempt 2 LASTEXITCODE=$code2"
+
+          if ($code1 -eq 0 -or $code2 -eq 0) {
+            Write-Host "Probe A passed (at least one attempt succeeded)"
+            exit 0
+          } else {
+            Write-Host "Probe A failed (both attempts non-zero)"
+            exit 1
+          }
 
       - name: Probe B — cmd.exe direct .py invocation
         shell: cmd
+        continue-on-error: true
+        id: probe-b
         run: |
           echo {"tool_name":"Spike","tool_input":{}} | spike.py
           if errorlevel 1 (echo cmd.exe direct .py failed & exit /b 1)
@@ -44,25 +79,24 @@ jobs:
 
       - name: Probe C — bash (Git Bash) direct .py invocation
         shell: bash
+        continue-on-error: true
+        id: probe-c
         run: |
           chmod +x spike.py || true
           echo '{"tool_name":"Spike","tool_input":{}}' | ./spike.py
           if [ $? -ne 0 ]; then echo "bash direct .py failed"; exit 1; fi
           echo "Probe C passed"
 
-      - name: Probe D — py.exe launcher detection
+      - name: Probe summary
         shell: pwsh
         run: |
-          py --list
-          py -3 --version
-
-      - name: Probe E — python (no python3) availability
-        shell: pwsh
-        run: |
-          # Confirm what `python` and `python3` resolve to on Windows runner
-          Get-Command python -ErrorAction SilentlyContinue | Format-List
-          Get-Command python3 -ErrorAction SilentlyContinue | Format-List
-          Get-Command py -ErrorAction SilentlyContinue | Format-List
+          $a = "${{ steps.probe-a.outcome }}"
+          $b = "${{ steps.probe-b.outcome }}"
+          $c = "${{ steps.probe-c.outcome }}"
+          Write-Host "=== Probe outcomes ==="
+          Write-Host "  A (pwsh):    $a"
+          Write-Host "  B (cmd.exe): $b"
+          Write-Host "  C (bash):    $c"
 
   posix-control:
     runs-on: ${{ matrix.os }}
