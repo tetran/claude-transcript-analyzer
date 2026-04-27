@@ -113,22 +113,28 @@ def _needs_archive(state_file: Path, now: datetime) -> bool:
     """state を読み、archive job 起動が必要かを判定する。
 
     - state 不在 / 壊れ / 不正 → True (未実行扱いで spawn)
-    - last_archived_month >= 前月 (UTC) → False (skip)
-    - last_archived_month < 前月 → True (古いので spawn / backfill 想定)
-    - last_archived_month 欠落 + last_run_at が当月 → False (codex P2: 対象なし状態の毎回 spawn 防止)
-    - last_archived_month 欠落 + last_run_at が前月以前 / 不在 → True (月跨ぎ retry)
+    - last_archived_month >= 前月 (UTC) → False (skip / 通常運用)
+    - last_run_at が当月内 → False (codex P2: 月初の no-op 実行 / 対象なし状態が
+      温存されたとき同月内で毎セッション spawn する bug を防ぐ)
+    - last_archived_month < 前月 + last_run_at が前月以前 → True (月跨ぎ retry)
+    - last_archived_month 欠落 + last_run_at が前月以前 / 不在 → True (新規 / retry)
+
+    backfill (`rescan_transcripts.py --append` で過去月を再 append) 用途は
+    手動 `/usage-archive` で実行する運用 (CLAUDE.md 参照)。同月内の launcher
+    経路は state.last_run_at で短絡される。
     """
     state = _read_state_dict(state_file)
     if state is None:
         return True
 
-    prev_y, prev_m = _previous_month(now.year, now.month)
     last_archived = _read_state_last_archived(state_file)
     if last_archived is not None:
-        return last_archived < (prev_y, prev_m)
+        prev_y, prev_m = _previous_month(now.year, now.month)
+        if last_archived >= (prev_y, prev_m):
+            return False
 
-    # last_archived_month 不在 → archive 対象なし状態が続いている可能性。
-    # last_run_at が当月内なら同セッションで既に判定済みなので skip。
+    # last_archived_month 不在 / 古い → さらに last_run_at の同月チェックで
+    # 「今月内に既に archive_usage を走らせた (対象なし or backfill 完了)」を吸収する。
     last_run_ym = _read_state_last_run_month(state_file)
     if last_run_ym is not None and last_run_ym == (now.year, now.month):
         return False
@@ -136,7 +142,14 @@ def _needs_archive(state_file: Path, now: datetime) -> bool:
 
 
 def _spawn_archive_job() -> Optional[object]:
-    """archive_usage.py を fork-and-detach で起動。失敗時 None。"""
+    """archive_usage.py を fork-and-detach で起動。失敗時 None。
+
+    codex P2: Windows では archive_usage.py が POSIX fcntl 不在で state を書かずに
+    即 exit するため、spawn し続けると永久 spawn ループ (毎セッション detached
+    child を払うが archive は永遠に走らない) になる。launcher 側で構造的に skip。
+    """
+    if sys.platform == "win32":
+        return None
     if not _ARCHIVE_USAGE_SCRIPT.exists():
         return None
     return spawn_detached(

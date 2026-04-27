@@ -113,17 +113,28 @@ class TestNeedsArchive:
         }))
         assert launch_archive_module._needs_archive(state_file, _utc(2026, 4, 15)) is True
 
-    def test_old_archived_month_overrides_recent_last_run_at(self, launch_archive_module, tmp_path):
-        """last_archived_month が古い (= backfill 想定) なら last_run_at が当月でも spawn.
+    def test_old_archived_with_run_in_current_month_skips(self, launch_archive_module, tmp_path):
+        """codex P2: last_archived_month < 前月 でも last_run_at が当月なら skip する。
 
-        run_archive 側 (codex P1 修正) が backfill された古い event を archive するため、
-        launcher は last_archived_month が古いままなら必ず spawn 経路に倒す."""
+        月初に archive_usage が走って対象なしで終わると last_archived_month は前回値の
+        まま温存されるため、これを spawn トリガーにすると毎 SessionStart で archive
+        process が起動する bug になる。last_run_at の同月 short-circuit で防ぐ。
+        backfill 用途は手動 `/usage-archive` で実行するという CLAUDE.md の運用に揃える."""
         state_file = tmp_path / ".archive_state.json"
         state_file.write_text(json.dumps({
             "last_run_at": "2026-04-15T10:00:00+00:00",
             "last_archived_month": "2026-01",
         }))
-        # last_archived_month=2026-01 < 前月 (2026-03) → spawn
+        # last_archived_month=2026-01 < 前月 (2026-03) だが last_run_at=2026-04 → skip
+        assert launch_archive_module._needs_archive(state_file, _utc(2026, 4, 27)) is False
+
+    def test_old_archived_with_run_in_previous_month_means_needs_archive(self, launch_archive_module, tmp_path):
+        """last_archived_month < 前月 + last_run_at が前月以前 → 月跨ぎ retry で spawn."""
+        state_file = tmp_path / ".archive_state.json"
+        state_file.write_text(json.dumps({
+            "last_run_at": "2026-03-15T10:00:00+00:00",
+            "last_archived_month": "2026-01",
+        }))
         assert launch_archive_module._needs_archive(state_file, _utc(2026, 4, 15)) is True
 
     def test_no_state_file_means_needs_archive_even_with_run_at(self, launch_archive_module, tmp_path):
@@ -201,6 +212,13 @@ class TestSpawnLogic:
         monkeypatch.setattr(launch_archive_module, "_spawn_archive_job", fake_spawn)
         launch_archive_module.main()
         assert called == []
+
+    def test_spawn_archive_job_skips_on_windows(self, launch_archive_module, monkeypatch):
+        """codex P2: archive_usage.py は POSIX fcntl 限定で state を書かずに exit する。
+        Windows で spawn し続けると永久 spawn ループになるため launcher 側で skip する."""
+        monkeypatch.setattr(launch_archive_module.sys, "platform", "win32")
+        result = launch_archive_module._spawn_archive_job()
+        assert result is None
 
 
 # ---------------------------------------------------------------------------

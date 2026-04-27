@@ -53,6 +53,17 @@ DEFAULT_RETENTION_DAYS = 180
 _DEFAULT_DATA_FILE = Path.home() / ".claude" / "transcript-analyzer" / "usage.jsonl"
 
 
+class ArchiveReadError(OSError):
+    """既存 archive ファイルの読み込みに失敗 (rewrite 不可 / silent 上書き禁止)。
+
+    呼び出し側 (run_archive) はこの例外を catch してその月を archive せず、
+    既存 archive ファイルは触らないまま event を hot tier に保留する。
+    silent に new_entries だけで rewrite すると `rescan_transcripts.py --append`
+    で hot tier に古い event が再出現したとき既存 archive の履歴を消失させる
+    silent data loss 経路になるため、必ず明示的な例外で halt させる (codex P1)。
+    """
+
+
 # ---------------------------------------------------------------------------
 # 値オブジェクト
 # ---------------------------------------------------------------------------
@@ -288,8 +299,12 @@ def _merge_with_existing_archive(
                 existing.append((ev, line))
                 existing_lines.add(line)
                 existing_fps.add(_structural_fingerprint(ev))
-    except OSError:
-        return list(new_entries)
+    except OSError as exc:
+        # codex P1: silent fallback で new_entries だけ rewrite すると既存 archive の
+        # 履歴を上書き消失させる。呼び出し側で明示的に halt できるよう例外を投げる。
+        raise ArchiveReadError(
+            f"failed to read existing archive {archive_path}: {exc}"
+        ) from exc
 
     merged = list(existing)
     for event, line in new_entries:
@@ -449,7 +464,14 @@ def run_archive(
     archived_count = 0
     for ym in sorted(archive_buckets.keys()):
         new_entries = archive_buckets[ym]
-        merged = _merge_with_existing_archive(ym, new_entries, paths.archive_dir)
+        try:
+            merged = _merge_with_existing_archive(ym, new_entries, paths.archive_dir)
+        except ArchiveReadError:
+            # codex P1: 既存 archive が読めない月は archive せず hot tier に保留。
+            # 既存 archive ファイル自体は触らず (silent 上書き消失を防ぐ)、
+            # 次回以降のジョブで人手修復後に正しく merge できる状態を維持する。
+            hot_remainder.extend(new_entries)
+            continue
         merged_lines = [line for _ev, line in merged]
         _atomic_write_gzip(paths.archive_dir / f"{ym}.jsonl.gz", merged_lines)
         archived_months.append(str(ym))

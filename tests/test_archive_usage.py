@@ -345,6 +345,22 @@ class TestArchiveMergeAndDedup:
         # immutability: 既存 (permission_mode 無し) を採用
         assert merged[0][0] == old_event
 
+    def test_corrupted_existing_archive_raises(self, archive_module, tmp_path):
+        """codex P1: 既存 archive が壊れて gzip.open が失敗したら例外送出。
+        silent に new_entries だけで rewrite して既存履歴を消すパスは取らない."""
+        archive_dir = tmp_path / "archive"
+        archive_dir.mkdir()
+        # 壊れた既存 .gz (gzip header なし)
+        (archive_dir / "2025-08.jsonl.gz").write_text("not a gzip file")
+
+        ev_new = _make_event("skill_tool", _utc(2025, 8, 1), tool_use_id="t_new")
+        with pytest.raises(archive_module.ArchiveReadError):
+            archive_module._merge_with_existing_archive(
+                archive_module.YearMonth(2025, 8),
+                [(ev_new, json.dumps(ev_new, ensure_ascii=False))],
+                archive_dir,
+            )
+
     def test_distinct_events_both_kept(self, archive_module, tmp_path):
         """fingerprint も line も違う event は両方残る."""
         archive_dir = tmp_path / "archive"
@@ -479,6 +495,41 @@ class TestRunArchiveIntegration:
         result = archive_module.run_archive(_utc(2026, 4, 27), paths, retention_days=180)
         assert result.archived_event_count == 0
         assert _read_hot_tier(data_file) == [recent]
+
+    def test_corrupted_existing_archive_keeps_events_in_hot_tier(self, archive_module, tmp_path):
+        """codex P1: 既存 archive が読めない月は archive せず hot tier に保留する。
+        既存 archive ファイルは触らずそのまま残す (silent 上書き消失を防ぐ)."""
+        data_file = tmp_path / "usage.jsonl"
+        archive_dir = tmp_path / "archive"
+        archive_dir.mkdir()
+        (archive_dir / "2025-08.jsonl.gz").write_text("corrupted not-a-gzip")
+
+        # 2025-08 は壊れた archive がある月、2025-09 は健全に archive される月
+        old_aug = _make_event("skill_tool", _utc(2025, 8, 15), tool_use_id="t_aug")
+        old_sep = _make_event("skill_tool", _utc(2025, 9, 15), tool_use_id="t_sep")
+        recent = _make_event("skill_tool", _utc(2026, 4, 20), tool_use_id="t_recent")
+        _write_hot_tier(data_file, [old_aug, old_sep, recent])
+
+        paths = archive_module.ArchivePaths(
+            data_file=data_file,
+            archive_dir=archive_dir,
+            state_file=tmp_path / "state.json",
+            lock_file=tmp_path / "usage.jsonl.lock",
+        )
+        result = archive_module.run_archive(_utc(2026, 4, 27), paths, retention_days=180)
+
+        # 2025-08 は archive されない (壊れた既存 archive を silent 上書きしない)
+        assert "2025-08" not in result.archived_months
+        # 2025-09 は健全に archive される
+        assert "2025-09" in result.archived_months
+        # 既存の壊れた archive は触らずそのまま残る
+        assert (archive_dir / "2025-08.jsonl.gz").read_text() == "corrupted not-a-gzip"
+        # 2025-08 の event は hot tier に保留 (data loss 回避)
+        hot = _read_hot_tier(data_file)
+        assert old_aug in hot
+        # 2025-09 の event と recent は archive 済み / hot remainder どちらに収まる
+        assert old_sep not in hot
+        assert recent in hot
 
     def test_broken_lines_kept_in_hot(self, archive_module, tmp_path):
         """parse error 行は hot tier に保留 (data loss 回避)."""
