@@ -227,6 +227,14 @@ def render_static_html(data: dict) -> str:
 _HTML_TEMPLATE = (Path(__file__).resolve().parent / "template.html").read_text(encoding="utf-8")
 
 
+# SSE handler の peer-disconnect チェック周期 (秒)。
+# `sse_keepalive` が長い (本番 15s) ときも、この周期で peer 検知を回すことで
+# ブラウザを閉じた直後に handler が抜け、idle watchdog が再開できる。
+# テストの場合 sse_keepalive をこの値より短くすれば peer check も追従する
+# (ループは min(keepalive, _SSE_PEER_CHECK_INTERVAL) 周期で回る)。
+_SSE_PEER_CHECK_INTERVAL = 1.0
+
+
 def _peer_disconnected(sock) -> bool:
     """`sock` の対向が FIN / RST を送って切断したかを non-blocking に判定する。
 
@@ -483,23 +491,32 @@ class DashboardHandler(BaseHTTPRequestHandler):
         touch = getattr(self.server, "touch", None)
         # SSE keepalive 周期 (秒)。テストでは短く、本番ではデフォ 15s。
         keepalive = getattr(self.server, "sse_keepalive", 15.0)
+        # peer check はこの値以下の周期で回す (codex Finding 2 対策)。
+        # keepalive がこれより短ければ keepalive 周期に揃える。
+        tick = min(keepalive, _SSE_PEER_CHECK_INTERVAL) if keepalive > 0 else _SSE_PEER_CHECK_INTERVAL
         sock = self.connection  # 切断 (FIN/RST) 検出用
+        last_keepalive = time.monotonic()
 
         try:
-            # サーバー停止 / クライアント切断まで long-poll
+            # サーバー停止 / クライアント切断まで long-poll。
+            # tick (≤1s) 周期で peer 切断を検知 → handler が抜けて unregister
+            # → idle watchdog が再開できる。keepalive 送信は経過時間ベース。
             while client.alive.is_set():
-                if stop_event is not None and stop_event.wait(keepalive):
+                if stop_event is not None and stop_event.wait(tick):
                     break
                 if stop_event is None:
-                    time.sleep(keepalive)
+                    time.sleep(tick)
                 if not client.alive.is_set():
                     break
                 if _peer_disconnected(sock):
                     break
-                if not client.send(b": keepalive\n\n"):
-                    break
-                if callable(touch):
-                    touch()
+                now = time.monotonic()
+                if now - last_keepalive >= keepalive:
+                    if not client.send(b": keepalive\n\n"):
+                        break
+                    last_keepalive = now
+                    if callable(touch):
+                        touch()
         finally:
             if callable(unregister):
                 unregister(client)

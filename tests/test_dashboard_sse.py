@@ -229,6 +229,39 @@ class TestSseIdleCounter:
             server.server_close()
             t.join(timeout=2.0)
 
+    def test_sse_disconnect_detected_within_one_second_at_default_keepalive(self, tmp_path):
+        """keepalive=15s の本番デフォルトでも切断検知は ~1s 以内に動く (codex Finding 2 回帰)。
+
+        旧実装は `stop_event.wait(keepalive)` でブロックしていたため keepalive=15s だと
+        ブラウザ切断後 最大 15s 間 idle カウンタが凍結し、`DASHBOARD_IDLE_SECONDS` < 15s
+        の設定が無効化されていた。peer check を 1s 周期に分離した修正の回帰テスト。
+        """
+        usage = tmp_path / "usage.jsonl"
+        usage.write_text("", encoding="utf-8")
+        mod = load_dashboard_module(usage)
+        # keepalive は本番デフォルト相当 (15.0)。idle 0.3s で切断 → 3s 以内に exit すべき
+        server = mod.create_server(
+            port=0, idle_seconds=0.3, poll_interval=0.0, sse_keepalive=15.0,
+        )
+        port = server.server_address[1]
+        t = _start_server_in_thread(server)
+        c = None
+        try:
+            c = _open_sse("127.0.0.1", port)
+            c.read_some(128, 1.0)
+            time.sleep(0.2)
+            c.disconnect()
+            c = None
+            # peer-check 1s + idle 0.3s + watchdog 周期 余裕で 3s 以内
+            t.join(timeout=3.0)
+            assert not t.is_alive(), (
+                "keepalive=15s のとき切断検知が 3s 以内に動くべき (Finding 2 回帰)"
+            )
+        finally:
+            if c is not None:
+                c.disconnect()
+            server.server_close()
+
     def test_sse_disconnect_lets_idle_shutdown_resume(self, tmp_path):
         """SSE クライアントが全て切断した後は idle 経過で graceful shutdown する。
 

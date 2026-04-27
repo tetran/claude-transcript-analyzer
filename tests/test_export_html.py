@@ -93,6 +93,20 @@ class TestHtmlTemplateFallback:
         fetch_pos = tmpl.index("fetch('/api/data'")
         assert window_data_pos < fetch_pos
 
+    def test_template_uses_static_badge_for_window_data(self):
+        """codex Finding 1 回帰: 静的 export では接続バッジを 'static' state に固定する。
+
+        修正前は EventSource 結線が `window.__DATA__` 経路で丸ごとスキップされ、
+        初期 'reconnect' 表示のまま固まっていた。
+        """
+        m = self._import()
+        tmpl = m._HTML_TEMPLATE
+        # static 用 CSS が定義されている
+        assert '[data-state="static"]' in tmpl
+        # static 用ラベルと setConnStatus('static') 呼び出しが入っている
+        assert "static:" in tmpl
+        assert "setConnStatus('static')" in tmpl
+
 
 # ---------------------------------------------------------------------------
 # reports/export_html.py の main() のテスト

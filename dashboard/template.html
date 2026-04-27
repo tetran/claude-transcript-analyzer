@@ -134,6 +134,13 @@
     color: var(--coral);
     border-color: var(--coral-soft);
   }
+  .conn-status[data-state="static"] {
+    color: var(--ink-faint);
+    border-color: var(--line);
+  }
+  .conn-status[data-state="static"]::before {
+    display: none;
+  }
   @keyframes conn-pulse {
     0%   { box-shadow: 0 0 0 0 currentColor; opacity: 1; }
     70%  { box-shadow: 0 0 0 6px transparent; opacity: 0.85; }
@@ -645,6 +652,7 @@
     online:    '● 接続中',
     reconnect: '○ 再接続中',
     offline:   '× 停止中',
+    static:    '— 静的レポート',
   };
   function setConnStatus(state) {
     const el = document.getElementById('connStatus');
@@ -852,7 +860,10 @@
 
   // ---- 初回描画 + EventSource (live refresh) ----
   await loadAndRender();
-  if (typeof window.__DATA__ === 'undefined' && typeof EventSource !== 'undefined') {
+  if (typeof window.__DATA__ !== 'undefined') {
+    // 静的 export 経路では EventSource を起動せず、バッジを「静的レポート」表示に固定
+    setConnStatus('static');
+  } else if (typeof EventSource !== 'undefined') {
     setConnStatus('reconnect');
     let offlineTimer = null;
     let firstError = null;
