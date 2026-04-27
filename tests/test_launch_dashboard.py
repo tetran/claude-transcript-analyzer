@@ -710,6 +710,32 @@ class TestReadHookEventName:
         with mock.patch.object(mod.sys, "stdin", io.StringIO('{"hook_event_name": "  SessionStart  "}')):
             assert mod._read_hook_event_name() == "SessionStart"
 
+    def test_large_payload_does_not_blow_up_budget(self, tmp_path):
+        """codex P1 対応: 1MB の payload でも O(payload-size 非依存) で完了する。
+        regex peek は先頭 _HOOK_PEEK_BYTES (4KB) だけ読むので、payload が長くても影響なし。"""
+        mod = load_launch_module(tmp_path / "server.json")
+        # hook_event_name を先頭に置き、後ろに 1MB のダミー prompt を append
+        big_value = "x" * (1024 * 1024)
+        payload = '{"hook_event_name":"UserPromptSubmit","prompt":"' + big_value + '"}'
+        with mock.patch.object(mod.sys, "stdin", io.StringIO(payload)):
+            t0 = time.perf_counter()
+            result = mod._read_hook_event_name()
+            elapsed = time.perf_counter() - t0
+        assert result == "UserPromptSubmit"
+        # 1MB を全て読まないため <50ms に収まるはず (regex も O(read 量))
+        assert elapsed < 0.05, f"large payload で _read_hook_event_name が遅い: {elapsed:.3f}s"
+
+    def test_peek_does_not_consume_full_stdin(self, tmp_path):
+        """codex P1 対応: 先頭 _HOOK_PEEK_BYTES を超えるサイズは読まないこと。"""
+        mod = load_launch_module(tmp_path / "server.json")
+        peek = mod._HOOK_PEEK_BYTES
+        # 1MB stdin
+        big = io.StringIO("x" * (1024 * 1024) + '"hook_event_name":"SessionStart"' + "}")
+        with mock.patch.object(mod.sys, "stdin", big):
+            mod._read_hook_event_name()
+        # peek 後 stdin の position は先頭 peek 分のみ進んでいる
+        assert big.tell() <= peek, f"stdin を {peek} bytes 超読み込んでいる: tell={big.tell()}"
+
 
 # ----------------------------------------------------------------------------
 # _wait_for_self_server_json_url — Proposal 1 (pid 一致確認)
@@ -812,6 +838,24 @@ class TestSystemMessageOutput:
             server.shutdown()
             server.server_close()
             t.join(timeout=2)
+
+    def test_alive_session_start_is_silent_when_healthz_fails(self, tmp_path, capsys):
+        """codex P2 対応: `_server_is_alive` は pid alive + healthz fail でも True を返す。
+        この状態で SessionStart 通知を出すと「応答しないエンドポイントの URL」を伝えてしまうため、
+        emit 直前に追加 healthz を打って 200 のときだけ通知する。"""
+        path = tmp_path / "server.json"
+        # pid 自分自身 (alive) + healthz は接続不可 url
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("127.0.0.1", 0))
+            free_port = s.getsockname()[1]
+        url = f"http://127.0.0.1:{free_port}"
+        path.write_text(json.dumps({"pid": os.getpid(), "port": free_port, "url": url}), encoding="utf-8")
+        mod = load_launch_module(path)
+        with mock.patch.object(mod.sys, "stdin", _stdin_with_event("SessionStart")):
+            rc = mod.main()
+        assert rc == 0
+        # healthz fail なので通知しないこと
+        _assert_silent(capsys.readouterr())
 
     @pytest.mark.parametrize("event", ["UserPromptExpansion", "UserPromptSubmit", "PostToolUse"])
     def test_alive_non_session_start_is_silent(self, tmp_path, capsys, event):
