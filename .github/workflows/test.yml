@@ -48,7 +48,8 @@ jobs:
           while command -v python >/dev/null 2>&1; do
             p="$(command -v python)"
             echo "Removing $p"
-            rm -f "$p"
+            # `/usr/bin/python` (python-is-python3 由来) は root 所有のため sudo が必要
+            sudo rm -f "$p"
             hash -r 2>/dev/null || true
           done
           if command -v python >/dev/null 2>&1; then
