@@ -13,6 +13,10 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _append import append_event  # noqa: E402
+
 _DEFAULT_PATH = Path.home() / ".claude" / "transcript-analyzer" / "usage.jsonl"
 DATA_FILE = Path(os.environ.get("USAGE_JSONL", str(_DEFAULT_PATH)))
 
@@ -30,14 +34,6 @@ def _project_from_cwd(cwd: str) -> str:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
-
-
-def _append_event(event: dict) -> None:
-    # newline="\n" 固定で Windows text mode の \r\n 変換を抑止 (Issue #24)。
-    # POSIX で書いた jsonl に Win から続けて書くと混在 EOL になりパース不能リスク。
-    DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with DATA_FILE.open("a", encoding="utf-8", newline="\n") as f:
-        f.write(json.dumps(event, ensure_ascii=False) + "\n")
 
 
 def _enrich_with_post_tool_use_meta(event: dict, data: dict) -> None:
@@ -79,7 +75,7 @@ def _handle_post_tool_use(data: dict) -> None:
         "timestamp": _now_iso(),
     }
     _enrich_with_post_tool_use_meta(event, data)
-    _append_event(event)
+    append_event(DATA_FILE, event)
 
 
 def _handle_post_tool_use_failure(data: dict) -> None:
@@ -95,7 +91,7 @@ def _handle_post_tool_use_failure(data: dict) -> None:
         "timestamp": _now_iso(),
     }
     _enrich_with_failure_meta(event, data)
-    _append_event(event)
+    append_event(DATA_FILE, event)
 
 
 _SLASH_COMMAND_RE = re.compile(r"^/[A-Za-z0-9][\w\-]*")
@@ -173,7 +169,7 @@ def _handle_user_prompt_expansion(data: dict) -> None:
         "session_id": data.get("session_id", ""),
         "timestamp": _now_iso(),
     }
-    _append_event(event)
+    append_event(DATA_FILE, event)
 
 
 def _handle_user_prompt_submit(data: dict) -> None:
@@ -201,7 +197,7 @@ def _handle_user_prompt_submit(data: dict) -> None:
         "session_id": session_id,
         "timestamp": _now_iso(),
     }
-    _append_event(event)
+    append_event(DATA_FILE, event)
 
 
 def main() -> None:

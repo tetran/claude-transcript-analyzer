@@ -19,6 +19,10 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _append import append_event  # noqa: E402
+
 _DEFAULT_PATH = Path.home() / ".claude" / "transcript-analyzer" / "usage.jsonl"
 DATA_FILE = Path(os.environ.get("USAGE_JSONL", str(_DEFAULT_PATH)))
 
@@ -29,13 +33,6 @@ def _project_from_cwd(cwd: str) -> str:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
-
-
-def _append_event(event: dict) -> None:
-    # newline="\n" 固定で Windows text mode の \r\n 変換を抑止 (Issue #24)。
-    DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with DATA_FILE.open("a", encoding="utf-8", newline="\n") as f:
-        f.write(json.dumps(event, ensure_ascii=False) + "\n")
 
 
 def _base_event(event_type: str, data: dict) -> dict:
@@ -53,31 +50,31 @@ def _handle_session_start(data: dict) -> None:
     event["model"] = data.get("model", "")
     if "agent_type" in data:
         event["agent_type"] = data["agent_type"]
-    _append_event(event)
+    append_event(DATA_FILE, event)
 
 
 def _handle_session_end(data: dict) -> None:
     event = _base_event("session_end", data)
     event["reason"] = data.get("reason", "")
-    _append_event(event)
+    append_event(DATA_FILE, event)
 
 
 def _handle_pre_compact(data: dict) -> None:
     event = _base_event("compact_start", data)
     event["trigger"] = data.get("trigger", "")
-    _append_event(event)
+    append_event(DATA_FILE, event)
 
 
 def _handle_post_compact(data: dict) -> None:
     event = _base_event("compact_end", data)
     event["trigger"] = data.get("trigger", "")
-    _append_event(event)
+    append_event(DATA_FILE, event)
 
 
 def _handle_notification(data: dict) -> None:
     event = _base_event("notification", data)
     event["notification_type"] = data.get("notification_type", "")
-    _append_event(event)
+    append_event(DATA_FILE, event)
 
 
 def _handle_instructions_loaded(data: dict) -> None:
@@ -88,7 +85,7 @@ def _handle_instructions_loaded(data: dict) -> None:
     for opt in ("globs", "trigger_file_path", "parent_file_path"):
         if opt in data:
             event[opt] = data[opt]
-    _append_event(event)
+    append_event(DATA_FILE, event)
 
 
 _HANDLERS = {
