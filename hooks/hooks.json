@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$(command -v python3 || command -v python) ${CLAUDE_PLUGIN_ROOT}/hooks/record_skill.py"
+            "command": "\"$(command -v python3 || command -v python)\" ${CLAUDE_PLUGIN_ROOT}/hooks/record_skill.py"
           }
         ]
       },
@@ -14,7 +14,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$(command -v python3 || command -v python) ${CLAUDE_PLUGIN_ROOT}/hooks/record_subagent.py"
+            "command": "\"$(command -v python3 || command -v python)\" ${CLAUDE_PLUGIN_ROOT}/hooks/record_subagent.py"
           }
         ]
       },
@@ -22,7 +22,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$(command -v python3 || command -v python) ${CLAUDE_PLUGIN_ROOT}/hooks/launch_dashboard.py"
+            "command": "\"$(command -v python3 || command -v python)\" ${CLAUDE_PLUGIN_ROOT}/hooks/launch_dashboard.py"
           }
         ]
       }
@@ -32,7 +32,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$(command -v python3 || command -v python) ${CLAUDE_PLUGIN_ROOT}/hooks/record_skill.py"
+            "command": "\"$(command -v python3 || command -v python)\" ${CLAUDE_PLUGIN_ROOT}/hooks/record_skill.py"
           }
         ]
       },
@@ -40,7 +40,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$(command -v python3 || command -v python) ${CLAUDE_PLUGIN_ROOT}/hooks/record_subagent.py"
+            "command": "\"$(command -v python3 || command -v python)\" ${CLAUDE_PLUGIN_ROOT}/hooks/record_subagent.py"
           }
         ]
       }
@@ -50,7 +50,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$(command -v python3 || command -v python) ${CLAUDE_PLUGIN_ROOT}/hooks/record_skill.py"
+            "command": "\"$(command -v python3 || command -v python)\" ${CLAUDE_PLUGIN_ROOT}/hooks/record_skill.py"
           }
         ]
       },
@@ -58,7 +58,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$(command -v python3 || command -v python) ${CLAUDE_PLUGIN_ROOT}/hooks/launch_dashboard.py"
+            "command": "\"$(command -v python3 || command -v python)\" ${CLAUDE_PLUGIN_ROOT}/hooks/launch_dashboard.py"
           }
         ]
       }
@@ -68,7 +68,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$(command -v python3 || command -v python) ${CLAUDE_PLUGIN_ROOT}/hooks/record_skill.py"
+            "command": "\"$(command -v python3 || command -v python)\" ${CLAUDE_PLUGIN_ROOT}/hooks/record_skill.py"
           }
         ]
       },
@@ -76,7 +76,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$(command -v python3 || command -v python) ${CLAUDE_PLUGIN_ROOT}/hooks/launch_dashboard.py"
+            "command": "\"$(command -v python3 || command -v python)\" ${CLAUDE_PLUGIN_ROOT}/hooks/launch_dashboard.py"
           }
         ]
       }
@@ -86,7 +86,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$(command -v python3 || command -v python) ${CLAUDE_PLUGIN_ROOT}/hooks/record_subagent.py"
+            "command": "\"$(command -v python3 || command -v python)\" ${CLAUDE_PLUGIN_ROOT}/hooks/record_subagent.py"
           }
         ]
       }
@@ -96,7 +96,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$(command -v python3 || command -v python) ${CLAUDE_PLUGIN_ROOT}/hooks/record_subagent.py"
+            "command": "\"$(command -v python3 || command -v python)\" ${CLAUDE_PLUGIN_ROOT}/hooks/record_subagent.py"
           }
         ]
       }
@@ -106,7 +106,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$(command -v python3 || command -v python) ${CLAUDE_PLUGIN_ROOT}/hooks/record_session.py"
+            "command": "\"$(command -v python3 || command -v python)\" ${CLAUDE_PLUGIN_ROOT}/hooks/record_session.py"
           }
         ]
       },
@@ -114,7 +114,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$(command -v python3 || command -v python) ${CLAUDE_PLUGIN_ROOT}/hooks/launch_dashboard.py"
+            "command": "\"$(command -v python3 || command -v python)\" ${CLAUDE_PLUGIN_ROOT}/hooks/launch_dashboard.py"
           }
         ]
       }
@@ -124,7 +124,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$(command -v python3 || command -v python) ${CLAUDE_PLUGIN_ROOT}/hooks/record_session.py"
+            "command": "\"$(command -v python3 || command -v python)\" ${CLAUDE_PLUGIN_ROOT}/hooks/record_session.py"
           }
         ]
       }
@@ -134,7 +134,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$(command -v python3 || command -v python) ${CLAUDE_PLUGIN_ROOT}/hooks/record_session.py"
+            "command": "\"$(command -v python3 || command -v python)\" ${CLAUDE_PLUGIN_ROOT}/hooks/record_session.py"
           }
         ]
       }
@@ -144,7 +144,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$(command -v python3 || command -v python) ${CLAUDE_PLUGIN_ROOT}/hooks/record_session.py"
+            "command": "\"$(command -v python3 || command -v python)\" ${CLAUDE_PLUGIN_ROOT}/hooks/record_session.py"
           }
         ]
       }
@@ -154,7 +154,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$(command -v python3 || command -v python) ${CLAUDE_PLUGIN_ROOT}/hooks/record_session.py"
+            "command": "\"$(command -v python3 || command -v python)\" ${CLAUDE_PLUGIN_ROOT}/hooks/record_session.py"
           }
         ]
       }
@@ -164,7 +164,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$(command -v python3 || command -v python) ${CLAUDE_PLUGIN_ROOT}/hooks/record_session.py"
+            "command": "\"$(command -v python3 || command -v python)\" ${CLAUDE_PLUGIN_ROOT}/hooks/record_session.py"
           }
         ]
       }
@@ -174,7 +174,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$(command -v python3 || command -v python) ${CLAUDE_PLUGIN_ROOT}/hooks/verify_session.py"
+            "command": "\"$(command -v python3 || command -v python)\" ${CLAUDE_PLUGIN_ROOT}/hooks/verify_session.py"
           }
         ]
       }

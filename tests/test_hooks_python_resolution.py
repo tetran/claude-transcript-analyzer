@@ -22,8 +22,12 @@ PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 # 採用案 J の正規 prefix。先頭一致でテスト。
-# `$(command -v python3 || command -v python) ` (末尾空白 1 つ含む)
-_LAUNCHER_PREFIX_RE = re.compile(r"^\$\(command -v python3 \|\| command -v python\) ")
+# `"$(command -v python3 || command -v python)" ` (double-quote で囲んで Windows の
+# スペース入りパス `C:\Program Files\Python311\python.exe` で word splitting
+# されないようにする。codex P1 対応)
+_LAUNCHER_PREFIX_RE = re.compile(
+    r'^"\$\(command -v python3 \|\| command -v python\)" '
+)
 
 # shebang
 _SHEBANG = "#!/usr/bin/env python3"

@@ -30,10 +30,10 @@ Claude Code のチャット内で以下を実行する：
 プラグインの hook と slash command は **bash の POSIX `command -v` fallback** で Python を解決する (Issue #33)：
 
 ```bash
-$(command -v python3 || command -v python) ${CLAUDE_PLUGIN_ROOT}/hooks/foo.py
+"$(command -v python3 || command -v python)" ${CLAUDE_PLUGIN_ROOT}/hooks/foo.py
 ```
 
-`python3` を優先し、無ければ `python` にフォールバックする。Claude Code hook の `command` フィールドは全 OS でデフォルト bash で実行されるため、この POSIX 構文が macOS / Linux / Windows のどれでも一律に動く。
+`python3` を優先し、無ければ `python` にフォールバックする。Claude Code hook の `command` フィールドは全 OS でデフォルト bash で実行されるため、この POSIX 構文が macOS / Linux / Windows のどれでも一律に動く。`$(...)` を double-quote で囲むのは、Windows で Python が `C:\Program Files\Python311\python.exe` のようにスペース入りパスにインストールされていても bash の word splitting で分割されないようにするため。
 
 | OS | 動作 |
 |----|------|
