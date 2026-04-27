@@ -1,4 +1,8 @@
-"""tests/test_dashboard.py — dashboard/server.py のテスト"""
+"""tests/test_dashboard.py — dashboard/server.py のテスト
+
+Phase A (Issue #19) のライブダッシュボード基盤テストは `test_dashboard_live.py` に切り出した。
+このファイルは v0.3 までの集計・レンダリング・HTTP エンドポイント既存テストを保持する。
+"""
 # pylint: disable=line-too-long
 import importlib.util
 import json
@@ -743,3 +747,4 @@ class TestGraphDataTooltip:
         template = mod._HTML_TEMPLATE
         # ranking 系（既存の `title=` 付き）はスコープ外。daily / proj に aria-label を付ける
         assert "aria-label" in template
+
