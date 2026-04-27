@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """hooks/record_session.py (Issue #9)
 
 セッション・コンテキスト・摩擦イベントを usage.jsonl に追記する。

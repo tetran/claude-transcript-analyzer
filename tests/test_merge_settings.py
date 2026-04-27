@@ -227,3 +227,79 @@ class TestMergeSettings:
             if isinstance(hook, dict)
         ]
         assert any("verify_session.py" in cmd for cmd in all_commands)
+
+    def test_legacy_python_stop_hook_is_migrated_not_duplicated(self, tmp_path):
+        """Issue #33 codex P3: 0.5.0 の旧形式 (`python /repo/.../verify_session.py`) を
+        持つ既存ユーザーが 0.5.1 にアップグレードしたとき、新形式
+        (`"$(command -v python3 || command -v python)" /repo/.../verify_session.py`)
+        が **追記** されて 2 重登録されるのではなく、既存 entry が新形式に
+        **置き換え** られて 1 件のままであることを検証する。
+        """
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        legacy_command = f"python {REPO_DIR}/hooks/verify_session.py"
+        existing = {
+            "hooks": {
+                "Stop": [
+                    {"hooks": [{"type": "command", "command": legacy_command}]},
+                ]
+            }
+        }
+        (claude_dir / "settings.json").write_text(json.dumps(existing), encoding="utf-8")
+
+        run_merge_with_home(tmp_path, REPO_DIR)
+        settings = read_settings(tmp_path)
+
+        verify_session_commands = [
+            hook["command"]
+            for entry in settings["hooks"]["Stop"]
+            if isinstance(entry, dict)
+            for hook in entry.get("hooks", [])
+            if isinstance(hook, dict)
+            and "verify_session.py" in hook.get("command", "")
+        ]
+        assert len(verify_session_commands) == 1, (
+            f"verify_session.py を呼ぶ Stop hook が 2 重登録された: {verify_session_commands!r}"
+        )
+        # 新形式 (quote 付き fallback) に置き換わっている
+        assert (
+            '"$(command -v python3 || command -v python)"'
+            in verify_session_commands[0]
+        ), f"新形式に置き換わってない: {verify_session_commands[0]!r}"
+        # 旧形式の `python ` 直書きは消えている
+        assert not verify_session_commands[0].startswith("python "), (
+            f"旧形式 `python ` 直書きが残っとる: {verify_session_commands[0]!r}"
+        )
+
+    def test_legacy_python3_stop_hook_is_also_migrated(self, tmp_path):
+        """`python3` 直書き形式 (PR #31 が部分的に残した可能性のある形式) からも
+        新形式 (`"$(...)" ...`) に置き換わることを検証する。
+        """
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        legacy_command = f"python3 {REPO_DIR}/hooks/verify_session.py"
+        existing = {
+            "hooks": {
+                "Stop": [
+                    {"hooks": [{"type": "command", "command": legacy_command}]},
+                ]
+            }
+        }
+        (claude_dir / "settings.json").write_text(json.dumps(existing), encoding="utf-8")
+
+        run_merge_with_home(tmp_path, REPO_DIR)
+        settings = read_settings(tmp_path)
+
+        verify_session_commands = [
+            hook["command"]
+            for entry in settings["hooks"]["Stop"]
+            if isinstance(entry, dict)
+            for hook in entry.get("hooks", [])
+            if isinstance(hook, dict)
+            and "verify_session.py" in hook.get("command", "")
+        ]
+        assert len(verify_session_commands) == 1
+        assert (
+            '"$(command -v python3 || command -v python)"'
+            in verify_session_commands[0]
+        )

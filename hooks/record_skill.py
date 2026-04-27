@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """hooks/record_skill.py
 
 PostToolUse(Skill) と UserPromptSubmit イベントを受け取り、

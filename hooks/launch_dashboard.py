@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """hooks/launch_dashboard.py — Issue #21 Phase C: ダッシュボードの自動起動 launcher
 
 Claude Code Hook (SessionStart / UserPromptSubmit / PostToolUse) から呼ばれ、

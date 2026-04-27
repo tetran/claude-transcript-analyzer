@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """hooks/verify_session.py
 
 Stop hook: セッション終了時にトランスクリプトと usage.jsonl を照合し、
