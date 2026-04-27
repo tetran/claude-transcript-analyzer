@@ -38,6 +38,13 @@ import urllib.request
 from pathlib import Path
 from typing import Optional
 
+# Issue #24 PR#31 codex P2: server.json の lock + compare-and-delete を server.py と
+# 共有するため、`server_registry` 経由で `remove_server_json` を呼ぶ。launch_dashboard が
+# プロジェクトルートを sys.path に持っていない経路でも動くよう明示的に追加 (Hook から
+# 直接 `python <abs path>/launch_dashboard.py` で起動されるため)。
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from server_registry import remove_server_json as _registry_remove_server_json
+
 _DEFAULT_SERVER_JSON_PATH = Path.home() / ".claude" / "transcript-analyzer" / "server.json"
 SERVER_JSON_PATH = Path(os.environ.get("DASHBOARD_SERVER_JSON", str(_DEFAULT_SERVER_JSON_PATH)))
 
@@ -79,6 +86,35 @@ def _read_server_json(path: Path) -> Optional[dict]:
 _WIN_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 _WIN_STILL_ACTIVE = 259
 
+# kernel32 の bound symbol キャッシュ。初回 `_win_kernel32()` 呼び出しで signature 設定 +
+# キャッシュ、以降の launch_dashboard 経路はキャッシュ参照のみで < 100ms budget を維持。
+_WIN_KERNEL32 = None
+
+
+def _win_kernel32():
+    """Windows kernel32 を取得し ctypes signatures を明示する (Issue #24 PR#31 codex P1)。
+
+    Win64 で `OpenProcess` の戻り値 HANDLE はポインタ幅 (64bit) だが、ctypes default の
+    `restype=c_int` (32bit signed) のままだと高位ビットが立った handle で truncate +
+    sign-extend が起き、`GetExitCodeProcess` / `CloseHandle` に誤った handle を渡す
+    可能性がある。`wintypes.HANDLE` で明示すれば正しく扱える。bound symbol を一度だけ
+    設定してキャッシュするので毎回 lookup が走らず launcher の起動 budget も安全。
+    """
+    global _WIN_KERNEL32  # pylint: disable=global-statement
+    if _WIN_KERNEL32 is not None:
+        return _WIN_KERNEL32
+    import ctypes  # pylint: disable=import-outside-toplevel
+    from ctypes import wintypes  # pylint: disable=import-outside-toplevel
+    k = ctypes.windll.kernel32  # type: ignore[attr-defined]
+    k.OpenProcess.restype = wintypes.HANDLE
+    k.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    k.GetExitCodeProcess.restype = wintypes.BOOL
+    k.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+    k.CloseHandle.restype = wintypes.BOOL
+    k.CloseHandle.argtypes = [wintypes.HANDLE]
+    _WIN_KERNEL32 = k
+    return _WIN_KERNEL32
+
 
 def _is_pid_alive_posix(pid: int) -> bool:
     """POSIX: `os.kill(pid, 0)` で存在確認。ESRCH → False、EPERM → True。"""
@@ -101,14 +137,15 @@ def _is_pid_alive_windows(pid: int) -> bool:
     GetExitCodeProcess の exit_code が STILL_ACTIVE (259) → 生存中 → True。
     """
     import ctypes  # pylint: disable=import-outside-toplevel
-    kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+    from ctypes import wintypes  # pylint: disable=import-outside-toplevel
+    kernel32 = _win_kernel32()
     handle = kernel32.OpenProcess(
         _WIN_PROCESS_QUERY_LIMITED_INFORMATION, False, pid
     )
     if not handle:
         return False
     try:
-        exit_code = ctypes.c_ulong()
+        exit_code = wintypes.DWORD()
         ok = kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code))
         return bool(ok) and exit_code.value == _WIN_STILL_ACTIVE
     finally:
@@ -177,6 +214,12 @@ def _remove_stale_server_json() -> bool:
     - alive pid → 何もしない (False)
     - dead pid → 削除 (True)
     - 不在 / 壊れた JSON / 非 dict → 何もしない (False)。spawn 後の atomic replace に任せる
+
+    Issue #24 PR#31 codex P2: 削除は `server_registry.remove_server_json` 経由で
+    `_file_lock` + compare-and-delete を経由する。事前 `_is_pid_alive` 判定後に
+    他プロセスが新 server.json を上書きしても、pid 不一致で削除を skip するため
+    安全。dashboard/server.py の write/remove と同じ lock を共有することで
+    multi-hook race window で TOCTOU race が再発しない。
     """
     info = _read_server_json(SERVER_JSON_PATH)
     if info is None:
@@ -186,11 +229,7 @@ def _remove_stale_server_json() -> bool:
         return False
     if _is_pid_alive(pid):
         return False
-    try:
-        SERVER_JSON_PATH.unlink()
-        return True
-    except OSError:
-        return False
+    return _registry_remove_server_json(SERVER_JSON_PATH, expected_pid=pid)
 
 
 # Windows fork-and-detach 用の CreateProcess flags (subprocess.* は Win 限定属性)。

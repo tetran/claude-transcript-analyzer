@@ -15,7 +15,12 @@ import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
-from test_dashboard import load_dashboard_module  # noqa: F401  (re-exported helper)
+# Issue #24 PR#31 codex P2: lock/compare-and-delete primitives は `server_registry` に
+# 切り出された。`mod._lock_fd` を monkeypatch しても `server_registry._file_lock`
+# 内の参照は変わらないため、内部実装テストは `server_registry` を直接 monkeypatch する。
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from test_dashboard import load_dashboard_module  # noqa: F401, E402  (re-exported helper)
+import server_registry  # noqa: E402
 
 
 def _start_server_in_thread(server) -> threading.Thread:
@@ -434,7 +439,7 @@ class TestServerJsonCrossProcessLock:
         def boom(_fd):
             raise OSError("simulated lock failure")
 
-        monkeypatch.setattr(mod, "_lock_fd", boom)
+        monkeypatch.setattr(server_registry, "_lock_fd", boom)
         with mod._file_lock(tmp_path / "x.lock") as acquired:
             assert acquired is False
 
@@ -459,7 +464,7 @@ class TestServerJsonCrossProcessLock:
         def boom(_fd):
             raise OSError("simulated lock failure")
 
-        monkeypatch.setattr(mod, "_lock_fd", boom)
+        monkeypatch.setattr(server_registry, "_lock_fd", boom)
         removed = mod.remove_server_json(target, expected_pid=4242)
         assert removed is False
         # ファイルは残る (削除を諦めた)
@@ -526,13 +531,13 @@ class TestServerJsonCrossProcessLock:
         )
 
         lock_acquired_calls: list = []
-        original_lock_fd = mod._lock_fd
+        original_lock_fd = server_registry._lock_fd
 
         def spy_lock_fd(fd):
             lock_acquired_calls.append(fd)
             return original_lock_fd(fd)
 
-        monkeypatch.setattr(mod, "_lock_fd", spy_lock_fd)
+        monkeypatch.setattr(server_registry, "_lock_fd", spy_lock_fd)
         removed = mod.remove_server_json(target, expected_pid=4242)
         assert removed is True
         assert len(lock_acquired_calls) >= 1, "remove_server_json が lock を取得していない"

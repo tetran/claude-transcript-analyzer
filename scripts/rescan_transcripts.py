@@ -179,7 +179,11 @@ def main() -> None:
         "--transcripts-dir",
         type=Path,
         default=default_transcripts_dir,
-        help="Directory to scan for transcripts (default: ~/.claude/projects)",
+        help=(
+            "Directory to scan for transcripts "
+            "(default: ~/.claude/projects on POSIX, "
+            "%%USERPROFILE%%\\.claude\\projects on Windows)"
+        ),
     )
     args = parser.parse_args()
 
