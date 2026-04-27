@@ -162,13 +162,10 @@ claude-transcript-analyzer/
 ├── subagent_metrics.py       # subagent 集計の共通ロジック (invocation 単位ペアリング)
 ├── scripts/
 │   └── rescan_transcripts.py # 過去トランスクリプトの遡及スキャン
-├── install/
-│   └── merge_settings.py     # settings.json マージ（べき等）
 ├── data/
 │   └── usage.jsonl           # append-only イベントログ（テスト時のみ。
 │                             # プラグイン稼働時は ~/.claude/transcript-analyzer/）
 ├── tests/
-├── install.sh                # 後方互換のセットアップスクリプト
 ├── docs/
 │   ├── transcript-format.md  # トランスクリプト形式 + Hook 入力 JSON スキーマ
 │   ├── specs/                # 仕様

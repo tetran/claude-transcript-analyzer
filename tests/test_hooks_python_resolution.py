@@ -10,8 +10,7 @@ Multi-OS Python ランチャ解決の回帰防止テスト。
 
 このテストは以下を assert する:
     1. hooks/hooks.json の全 hook command が正規 prefix で始まる
-    2. install/merge_settings.py._build_new_entries() / _stop_hook_command() 戻り値も同 prefix
-    3. hooks/*.py 5 ファイル全てが shebang `#!/usr/bin/env python3` で始まる
+    2. hooks/*.py 5 ファイル全てが shebang `#!/usr/bin/env python3` で始まる
 """
 import json
 import re
@@ -80,30 +79,6 @@ class TestHooksJsonPythonResolution:
             assert not cmd.startswith("python3 "), (
                 f"`python3 ` 直書きが残っとった (案 J prefix にすべき): {cmd!r}"
             )
-
-
-class TestMergeSettingsPythonResolution:
-    """install/merge_settings.py の出力 command 文字列も同 prefix を使う。"""
-
-    def test_build_new_entries_uses_command_v_fallback(self):
-        from install.merge_settings import _build_new_entries  # type: ignore
-
-        entries = _build_new_entries("/some/repo")
-        for hook_list in entries.values():
-            for entry in hook_list:
-                for hook in entry.get("hooks", []):
-                    cmd = hook.get("command", "")
-                    assert _LAUNCHER_PREFIX_RE.match(cmd), (
-                        f"_build_new_entries の command が prefix で始まっとらん: {cmd!r}"
-                    )
-
-    def test_stop_hook_command_uses_command_v_fallback(self):
-        from install.merge_settings import _stop_hook_command  # type: ignore
-
-        cmd = _stop_hook_command("/some/repo")
-        assert _LAUNCHER_PREFIX_RE.match(cmd), (
-            f"_stop_hook_command の戻り値が prefix で始まっとらん: {cmd!r}"
-        )
 
 
 class TestHookScriptsHaveShebang:
