@@ -664,7 +664,13 @@ def create_server(
     port: int = 0,
     idle_seconds: float = 0.0,
     handler_cls=None,
-    host: str = "localhost",
+    # Issue #24 PR#31 macOS CI fix: GitHub Actions の macOS arm64 runner で
+    # `localhost` の `getaddrinfo` 解決が mDNSResponder の IPv6/IPv4 dual-stack
+    # 起因で hang する既知問題があり、`server_bind` がブロックする (子サーバーが
+    # `[server-trace] main: enter` 後 `server bound port=N` まで進めず、
+    # server.json も書けない)。IPv4 loopback を直接指定して名前解決を skip。
+    # `run()` の URL は `http://localhost:N` のままで OK (loopback 同一)。
+    host: str = "127.0.0.1",
     poll_interval: float = 0.0,
     usage_jsonl_path: Optional[Path] = None,
     sse_keepalive: float = 15.0,
