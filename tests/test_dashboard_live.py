@@ -225,6 +225,24 @@ class TestServerJsonLifecycle:
         removed = mod.remove_server_json(target, expected_pid=4242)
         assert removed is False
 
+    def test_remove_server_json_swallows_unlink_oserror(self, tmp_path, monkeypatch):
+        """claude[bot] #1 回帰: unlink() で PermissionError などの OSError が起きても
+        例外を投げず False を返す。run() の finally で cleanup が壊れないことを保証。"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        target = tmp_path / "server.json"
+        target.write_text(
+            json.dumps({"pid": 4242, "port": 1, "url": "u", "started_at": "t"}),
+            encoding="utf-8",
+        )
+
+        def boom(_self):
+            raise PermissionError("read-only fs")
+
+        monkeypatch.setattr(Path, "unlink", boom)
+        # compare-and-delete でも no-args 削除でも、いずれも例外を投げず False を返す
+        assert mod.remove_server_json(target, expected_pid=4242) is False
+        assert mod.remove_server_json(target) is False
+
 
 class TestIdleWatchdog:
     """Phase A: idle 経過で graceful shutdown / 0 で無効化 / リクエストで idle カウンタ reset。"""
@@ -325,7 +343,8 @@ class TestRunIntegration:
         try:
             assert ready.wait(timeout=2.0)
             # 別インスタンス B が同じ path に自分の server.json を被せる
-            other_pid = os.getpid() + 1
+            # sentinel 値を使い「自プロセス以外の pid なら削除しない」ことを明示的に検証
+            other_pid = 999_999
             target.write_text(
                 json.dumps({"pid": other_pid, "port": 99999, "url": "http://x", "started_at": "t"}),
                 encoding="utf-8",

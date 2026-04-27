@@ -368,7 +368,9 @@ def remove_server_json(path: Path, expected_pid: Optional[int] = None) -> bool:
     try:
         path.unlink()
         return True
-    except FileNotFoundError:
+    except OSError:
+        # FileNotFoundError / PermissionError / read-only fs 等。run() の finally から
+        # 例外が漏れるとプロセス終了時のエラーログを汚すため、cleanup は best-effort 扱い。
         return False
 
 
