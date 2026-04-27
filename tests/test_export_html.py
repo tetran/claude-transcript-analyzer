@@ -236,3 +236,50 @@ class TestRenderStaticHtmlSecurity:
         assert "</script>" not in embedded_json
         assert r"<\/script>" in embedded_json
 
+    def test_other_close_tags_in_data_are_escaped(self):
+        """`</style>` 等 `</script>` 以外の close-tag シーケンスもエスケープされる。
+
+        claude[bot] PR#27 review #1 対応: HTML5 script-data-state パーサーは
+        `</` で始まる任意の tag-like sequence で `<script>` 解析を破ろうとしうる。
+        project 名 (cwd 由来 = ユーザー由来) に偶然そういう文字列が混入したケース
+        への防御。
+        """
+        m = self._import()
+        data = {"project": "weird</style>name"}
+        html = m.render_static_html(data)
+        marker = "window.__DATA__ = "
+        idx = html.index(marker) + len(marker)
+        end = html.index(";</script>", idx)
+        embedded_json = html[idx:end]
+        assert "</style>" not in embedded_json, "`</style>` がエスケープされていない"
+        assert r"<\/style>" in embedded_json
+
+    def test_html_comment_opener_in_data_is_escaped(self):
+        """`<!--` (HTML コメント opener) もエスケープされ <script> 解析を破らない。"""
+        m = self._import()
+        data = {"project": "weird<!--name"}
+        html = m.render_static_html(data)
+        marker = "window.__DATA__ = "
+        idx = html.index(marker) + len(marker)
+        end = html.index(";</script>", idx)
+        embedded_json = html[idx:end]
+        assert "<!--" not in embedded_json, "`<!--` がエスケープされていない"
+        assert r"<\!--" in embedded_json
+
+    def test_data_round_trip_through_escaping_preserves_meaning(self):
+        """エスケープしても JSON.parse 互換: `<\\/script>` は `</script>` として読み戻る。
+
+        ブラウザは <script> の中で `<\\/script>` を「JSON 文字列としての /script」
+        と解釈し、JSON.parse 後の値は元の `</script>` 文字列に戻る。
+        """
+        m = self._import()
+        data = {"skill_ranking": [{"name": "</script>"}, {"name": "</style>"}]}
+        html = m.render_static_html(data)
+        marker = "window.__DATA__ = "
+        idx = html.index(marker) + len(marker)
+        end = html.index(";</script>", idx)
+        # JS の \/ は JSON parser から見ると単なる / なので json.loads でラウンドトリップ可能
+        parsed = json.loads(html[idx:end])
+        assert parsed["skill_ranking"][0]["name"] == "</script>"
+        assert parsed["skill_ranking"][1]["name"] == "</style>"
+

@@ -218,8 +218,17 @@ def build_dashboard_data(events: list[dict]) -> dict:
 
 
 def render_static_html(data: dict) -> str:
-    """データをインライン埋め込みしたスタンドアロン HTML を返す。"""
-    json_str = json.dumps(data, ensure_ascii=False).replace("</script>", r"<\/script>")
+    """データをインライン埋め込みしたスタンドアロン HTML を返す。
+
+    `<script>` ブロック内の JSON literal は HTML script-data-state パーサーから見て
+    `</` で始まるシーケンス全般 (`</script>` だけでなく `</style>` 等も) と HTML
+    コメント開始 `<!--` を含むと、JSON 文字列リテラルの内側から `<script>` を
+    早期終了させられうる。project 名 (cwd 由来 = ユーザー由来) に偶然そういう文字列
+    が混入したケースで意図せず DOM が破られないよう、両方を `\\/` / `<\\!--` に
+    エスケープして出す (claude[bot] PR#27 review #1 対応)。
+    """
+    json_str = json.dumps(data, ensure_ascii=False)
+    json_str = json_str.replace("</", r"<\/").replace("<!--", r"<\!--")
     inline = f'<script>window.__DATA__ = {json_str};</script>\n'
     return _HTML_TEMPLATE.replace('</head>', inline + '</head>', 1)
 

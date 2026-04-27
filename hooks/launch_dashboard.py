@@ -15,7 +15,10 @@ Claude Code Hook (SessionStart / UserPromptSubmit / PostToolUse) から呼ばれ
 
 設計上の不変条件:
 - どんな例外が起きても **silent に exit 0**（Claude Code をブロックしない）
-- 既起動検出経路は **< 100ms**（毎 hook 走るため）
+- 既起動検出経路 (healthy server fast path) は **< 100ms**（毎 hook 走るため）
+  - alive + healthz 即時 200 のケースのみ。pid alive + healthz が不応答 (3 回
+    リトライしてもタイムアウト) の稀ケースでは最大 ~700ms (= 200ms × 3 + 50ms × 2)
+    に伸びる。多重起動回避優先のトレードオフで意図的に許容
 - healthz timeout は **200ms**、リトライ回数 3 / 間隔 50ms（起動中 race window 吸収）
 - start_new_session=True で親 PG/SID から切り離し、Claude Code 終了後も子は生存
 - stdin/stdout/stderr は DEVNULL でリダイレクトし親 hook の pipe を引き継がない
@@ -44,9 +47,10 @@ HEALTHZ_TIMEOUT_SECONDS = 0.2
 # Codex F2 / claude[bot] #1 対応:
 # pid alive のとき healthz が一時的に応答しない race window
 # (write_server_json 後 serve_forever 開始前) を吸収するためのリトライ。
-# 50ms × 3 = 最悪 150ms 追加だが、healthz timeout 200ms と合わせて
-# 既起動検出経路全体は alive 即時応答時 < 100ms を維持できる
-# (リトライは healthz fail 経路のみ発動)。
+# fast path (健全サーバーで healthz 即時 200) は 1 回目で True 返却で < 100ms。
+# 全リトライ枯渇する稀ケースは最大 ~700ms (timeout 200ms × 3 + sleep 50ms × 2)
+# に伸びるが、多重起動回避を優先する設計上のトレードオフで許容
+# (claude[bot] PR#27 review #2 対応: コメント正確化)。
 HEALTHZ_RETRY_COUNT = 3
 HEALTHZ_RETRY_INTERVAL_SECONDS = 0.05
 
