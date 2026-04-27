@@ -102,9 +102,18 @@ _EXPECTED_HOOK_EVENTS = frozenset({
 # parse は payload-size に比例した work となり <100ms budget が崩れる risk があった。
 # 先頭 _HOOK_PEEK_BYTES だけ読んで regex で値だけ抽出することで O(payload-size 非依存)
 # に変える。typical な hook payload で `hook_event_name` field は先頭近くにある。
+# codex Finding A 対応: 4KB peek で見つからない場合は **fallback** で残り stdin を
+# 読んで full `json.loads` する。これにより PostToolUse の `tool_response` が大きい
+# 等で field が後ろに来るケースでも通知が出る (rare path のため payload-size 依存を許容)。
 _HOOK_PEEK_BYTES = 4096
-# JSON で `"hook_event_name": "<value>"` の形を非欲張りでマッチ (escape 文字列は弾く /
-# 値の長さは _HOOK_PEEK_BYTES 以内なので安全)。
+# JSON で `"hook_event_name": "<value>"` の形を非欲張りでマッチ。
+# `[^"\\\n\r]` の文字クラスにより、JSON-escape された文字列値 (例 `\"...`)
+# は誤マッチしない。
+# 注 (codex Finding B): top-level の field 位置に anchor していないため、
+# ネストオブジェクト内に literal `hook_event_name` キーがあると先のものに誤マッチ
+# しうる。Claude Code 公式 hook schema にこのネストは無い想定だが、もし regex 経路
+# で誤マッチしても fallback parse が起動するのは「regex match なし」のときのみで
+# あり Finding B の完全防御にはならない点は許容 (攻撃面 narrow / 公式 schema にない)。
 _HOOK_EVENT_RE = re.compile(
     r'"hook_event_name"\s*:\s*"([^"\\\n\r]{1,256})"'
 )
@@ -360,12 +369,17 @@ def _maybe_log_debug_event(name) -> None:
 
 
 def _read_hook_event_name() -> Optional[str]:
-    """sys.stdin の先頭 `_HOOK_PEEK_BYTES` だけ読み、regex で `hook_event_name` 抽出。
+    """sys.stdin の先頭 `_HOOK_PEEK_BYTES` を peek + regex で `hook_event_name` 抽出。
 
     Issue #34 codex P1 対応: payload size に依存しない peek 実装。`json.loads` で
     payload 全体を parse すると、UserPromptSubmit / PostToolUse の長い payload で
     < 100ms budget が崩れる risk があったため、先頭固定 bytes だけを read + regex で
     値だけ取り出す形に変更。
+
+    Issue #34 codex Finding A 対応: peek で見つからない場合は **fallback** で残り
+    stdin を読んで full `json.loads`。PostToolUse の `tool_response` が大きい等で
+    field が 4KB 以降に来るケースでも通知が出るようにする (rare path のため
+    payload-size 依存を許容)。
 
     - stdin 空 / 値が抽出できない / 未知値 → None
     - `_EXPECTED_HOOK_EVENTS` に含まれる値のみ返す (set membership 防御 / 表記揺れに強い)
@@ -373,16 +387,31 @@ def _read_hook_event_name() -> Optional[str]:
     - `DASHBOARD_DEBUG_HOOK_EVENT` 経路で実値ログを残す (env 未設定時 no-op)
     """
     try:
-        raw = sys.stdin.read(_HOOK_PEEK_BYTES)
+        head = sys.stdin.read(_HOOK_PEEK_BYTES)
     except Exception:  # pylint: disable=broad-except
         # pytest の stdin capture 等 OSError も silent fallback
         return None
-    if not raw:
+    if not head:
         return None
-    match = _HOOK_EVENT_RE.search(raw)
-    if not match:
-        return None
-    name = match.group(1).strip()
+    match = _HOOK_EVENT_RE.search(head)
+    if match:
+        name = match.group(1).strip()
+    else:
+        # codex Finding A: 4KB に収まらなかった → 残りを読んで full parse (rare path)
+        try:
+            rest = sys.stdin.read()
+        except Exception:  # pylint: disable=broad-except
+            rest = ""
+        try:
+            data = json.loads(head + (rest or ""))
+        except (ValueError, json.JSONDecodeError):
+            return None
+        if not isinstance(data, dict):
+            return None
+        raw_name = data.get("hook_event_name")
+        if not isinstance(raw_name, str):
+            return None
+        name = raw_name.strip()
     _maybe_log_debug_event(name)
     return name if name in _EXPECTED_HOOK_EVENTS else None
 

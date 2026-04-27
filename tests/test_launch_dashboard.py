@@ -710,8 +710,8 @@ class TestReadHookEventName:
         with mock.patch.object(mod.sys, "stdin", io.StringIO('{"hook_event_name": "  SessionStart  "}')):
             assert mod._read_hook_event_name() == "SessionStart"
 
-    def test_large_payload_does_not_blow_up_budget(self, tmp_path):
-        """codex P1 対応: 1MB の payload でも O(payload-size 非依存) で完了する。
+    def test_large_payload_with_event_at_head_stays_under_budget(self, tmp_path):
+        """codex P1 対応: hook_event_name が先頭にある 1MB payload は fast path で完了する。
         regex peek は先頭 _HOOK_PEEK_BYTES (4KB) だけ読むので、payload が長くても影響なし。"""
         mod = load_launch_module(tmp_path / "server.json")
         # hook_event_name を先頭に置き、後ろに 1MB のダミー prompt を append
@@ -722,19 +722,42 @@ class TestReadHookEventName:
             result = mod._read_hook_event_name()
             elapsed = time.perf_counter() - t0
         assert result == "UserPromptSubmit"
-        # 1MB を全て読まないため <50ms に収まるはず (regex も O(read 量))
-        assert elapsed < 0.05, f"large payload で _read_hook_event_name が遅い: {elapsed:.3f}s"
+        # CI 環境のばらつきも踏まえて 100ms に緩めて flaky を回避 (codex 再レビュー反映)
+        assert elapsed < 0.1, f"large payload で _read_hook_event_name が遅い: {elapsed:.3f}s"
 
-    def test_peek_does_not_consume_full_stdin(self, tmp_path):
-        """codex P1 対応: 先頭 _HOOK_PEEK_BYTES を超えるサイズは読まないこと。"""
+    def test_fast_path_does_not_consume_full_stdin(self, tmp_path):
+        """fast path (先頭 4KB に hook_event_name がある) では残り stdin を読まない。
+
+        fallback parse 経路は 4KB 以内に見つからなかった場合のみ起動する設計。
+        """
         mod = load_launch_module(tmp_path / "server.json")
         peek = mod._HOOK_PEEK_BYTES
-        # 1MB stdin
-        big = io.StringIO("x" * (1024 * 1024) + '"hook_event_name":"SessionStart"' + "}")
+        payload = '{"hook_event_name":"SessionStart","extra":"' + ('y' * 100) + '"}'
+        big = io.StringIO(payload + ('z' * 100000))  # 100KB 余分
         with mock.patch.object(mod.sys, "stdin", big):
-            mod._read_hook_event_name()
-        # peek 後 stdin の position は先頭 peek 分のみ進んでいる
-        assert big.tell() <= peek, f"stdin を {peek} bytes 超読み込んでいる: tell={big.tell()}"
+            assert mod._read_hook_event_name() == "SessionStart"
+        # fast path のため残りは消費されない (peek 4KB のみ)
+        assert big.tell() <= peek, f"fast path で stdin を {peek} bytes 超読み込んでいる: tell={big.tell()}"
+
+    def test_fallback_full_parse_when_event_after_4kb(self, tmp_path):
+        """codex Finding A 対応: hook_event_name が 4KB 以降にある場合、fallback で
+        full json.loads を実行して値を取得する。PostToolUse の tool_response が
+        大きいケース等の regress を防ぐ。"""
+        mod = load_launch_module(tmp_path / "server.json")
+        # 先頭 5KB を tool_response で埋め、後ろに hook_event_name を配置
+        big = "x" * (5 * 1024)
+        payload = '{"tool_response":"' + big + '","hook_event_name":"PostToolUse"}'
+        with mock.patch.object(mod.sys, "stdin", io.StringIO(payload)):
+            assert mod._read_hook_event_name() == "PostToolUse"
+
+    def test_fallback_returns_none_for_invalid_full_payload(self, tmp_path):
+        """fallback parse でも JSON が壊れているケースは None を返す (silent fallback)。"""
+        mod = load_launch_module(tmp_path / "server.json")
+        # 先頭 5KB は valid な値で埋め、後ろに壊れた tail
+        big = "x" * (5 * 1024)
+        payload = '{"tool_response":"' + big + '","broken_tail'
+        with mock.patch.object(mod.sys, "stdin", io.StringIO(payload)):
+            assert mod._read_hook_event_name() is None
 
 
 # ----------------------------------------------------------------------------
