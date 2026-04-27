@@ -55,7 +55,11 @@ def read_events(path: Path | str) -> list[dict]:
     p = Path(path)
     if not p.exists():
         return []
-    return [json.loads(line) for line in p.read_text().splitlines() if line.strip()]
+    return [
+        json.loads(line)
+        for line in p.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
 
 
 def run_script(args: list[str], usage_jsonl: str,
@@ -199,7 +203,7 @@ class TestScanTranscriptFile:
 
     def test_scan_transcript_file_returns_empty_for_empty_file(self, tmp_path):
         f = tmp_path / "empty.jsonl"
-        f.write_text("")
+        f.write_text("", encoding="utf-8")
         assert rs._scan_transcript_file(f) == []
 
     def test_scan_transcript_file_returns_events_from_valid_file(self, tmp_path):
@@ -215,7 +219,7 @@ class TestScanTranscriptFile:
 
     def test_scan_transcript_file_skips_invalid_json_lines(self, tmp_path):
         f = tmp_path / "session.jsonl"
-        f.write_text('{"type": "file-history-snapshot"}\nnot valid json{{{\n')
+        f.write_text('{"type": "file-history-snapshot"}\nnot valid json{{{\n', encoding="utf-8")
         # JSON エラーの行はスキップ、クラッシュしない
         events = rs._scan_transcript_file(f)
         assert events == []
@@ -226,7 +230,7 @@ class TestScanTranscriptFile:
             [make_skill_block("my-skill")]
         )
         f = tmp_path / "session.jsonl"
-        f.write_text("\n\n" + json.dumps(row) + "\n\n")
+        f.write_text("\n\n" + json.dumps(row) + "\n\n", encoding="utf-8")
         events = rs._scan_transcript_file(f)
         assert len(events) == 1
 
@@ -236,7 +240,7 @@ class TestFindTranscriptFiles:
         proj_dir = tmp_path / "-Users-foo-myapp"
         proj_dir.mkdir()
         session_file = proj_dir / "abc123.jsonl"
-        session_file.write_text("")
+        session_file.write_text("", encoding="utf-8")
         files = rs._find_transcript_files(tmp_path)
         assert session_file in files
 
@@ -245,7 +249,7 @@ class TestFindTranscriptFiles:
         subagents_dir = proj_dir / "abc123" / "subagents"
         subagents_dir.mkdir(parents=True)
         agent_file = subagents_dir / "agent-xxx.jsonl"
-        agent_file.write_text("")
+        agent_file.write_text("", encoding="utf-8")
         files = rs._find_transcript_files(tmp_path)
         assert agent_file not in files
         assert len(files) == 0
@@ -258,9 +262,9 @@ class TestFindTranscriptFiles:
     def test_find_transcript_files_ignores_non_jsonl_files(self, tmp_path):
         proj_dir = tmp_path / "-Users-foo-myapp"
         proj_dir.mkdir()
-        (proj_dir / "readme.txt").write_text("hello")
+        (proj_dir / "readme.txt").write_text("hello", encoding="utf-8")
         session_file = proj_dir / "session.jsonl"
-        session_file.write_text("")
+        session_file.write_text("", encoding="utf-8")
         files = rs._find_transcript_files(tmp_path)
         assert session_file in files
         assert all(f.suffix == ".jsonl" for f in files)
@@ -352,7 +356,7 @@ class TestWriteEvents:
 
     def test_write_events_overwrites_existing_file(self, tmp_path):
         out = tmp_path / "usage.jsonl"
-        out.write_text(json.dumps(self._make_event("old-skill")) + "\n")
+        out.write_text(json.dumps(self._make_event("old-skill")) + "\n", encoding="utf-8")
 
         rs.write_events([self._make_event("new-skill")], out, append=False)
 
@@ -380,7 +384,7 @@ class TestWriteEvents:
         events = [self._make_event("skill-a"), self._make_event("skill-b")]
         rs.write_events(events, out, append=False)
 
-        lines = out.read_text().splitlines()
+        lines = out.read_text(encoding="utf-8").splitlines()
         assert len(lines) == 2
         for line in lines:
             obj = json.loads(line)  # パースできることを確認
@@ -442,7 +446,7 @@ class TestMainCLI:
         old_event = {"event_type": "skill_tool", "skill": "old-skill",
                      "args": "", "project": "myapp", "session_id": "s0",
                      "timestamp": "2025-01-01T00:00:00+00:00"}
-        usage_file.write_text(json.dumps(old_event) + "\n")
+        usage_file.write_text(json.dumps(old_event) + "\n", encoding="utf-8")
 
         run_script(["--append"], str(usage_file),
                    transcripts_dir=str(transcripts_dir))
@@ -478,7 +482,7 @@ class TestMainCLI:
 
         run_script([], str(usage_file), transcripts_dir=str(transcripts_dir))
 
-        lines = usage_file.read_text().splitlines()
+        lines = usage_file.read_text(encoding="utf-8").splitlines()
         assert len(lines) == 2
         for line in lines:
             obj = json.loads(line)

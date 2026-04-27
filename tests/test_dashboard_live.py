@@ -193,7 +193,7 @@ class TestServerJsonLifecycle:
         """expected_pid が一致するとき削除する。"""
         mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
         target = tmp_path / "server.json"
-        target.write_text(json.dumps({"pid": 4242, "port": 1, "url": "u", "started_at": "t"}))
+        target.write_text(json.dumps({"pid": 4242, "port": 1, "url": "u", "started_at": "t"}), encoding="utf-8")
         removed = mod.remove_server_json(target, expected_pid=4242)
         assert removed is True
         assert not target.exists()
@@ -202,18 +202,18 @@ class TestServerJsonLifecycle:
         """別プロセスが上書きした server.json を消さない（多重インスタンス保護）。"""
         mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
         target = tmp_path / "server.json"
-        target.write_text(json.dumps({"pid": 9999, "port": 1, "url": "u", "started_at": "t"}))
+        target.write_text(json.dumps({"pid": 9999, "port": 1, "url": "u", "started_at": "t"}), encoding="utf-8")
         removed = mod.remove_server_json(target, expected_pid=4242)
         assert removed is False
         assert target.exists()
         # 中身は元のまま
-        assert json.loads(target.read_text())["pid"] == 9999
+        assert json.loads(target.read_text(encoding="utf-8"))["pid"] == 9999
 
     def test_remove_server_json_compare_and_delete_handles_invalid_json(self, tmp_path):
         """壊れた JSON のときは消さない（誰かが書き換え中の可能性）。"""
         mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
         target = tmp_path / "server.json"
-        target.write_text("not valid json")
+        target.write_text("not valid json", encoding="utf-8")
         removed = mod.remove_server_json(target, expected_pid=4242)
         assert removed is False
         assert target.exists()

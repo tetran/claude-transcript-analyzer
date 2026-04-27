@@ -63,7 +63,9 @@ class TestHandleStop:
         usage_events: list[dict],
         alerts_file: Path | None = None,
     ) -> list[dict]:
-        cwd_encoded = cwd.replace("/", "-")
+        # Issue #24: Claude Code 本体のエンコード規則 (slash, backslash, colon, dot
+        # → '-') に揃える。POSIX dot 入り cwd の latent bug 修正と Win 互換を兼ねる。
+        cwd_encoded = vs._encode_cwd(cwd)
         transcript_dir = tmp_path / "projects" / cwd_encoded
         transcript_dir.mkdir(parents=True)
         write_jsonl(transcript_dir / f"{session_id}.jsonl", transcript_rows)
@@ -140,7 +142,7 @@ class TestHandleStop:
         cwd = "/Users/foo/myapp"
 
         usage_file = tmp_path / "usage.jsonl"
-        usage_file.write_text("")
+        usage_file.write_text("", encoding="utf-8")
         alerts_file = tmp_path / "health_alerts.jsonl"
 
         # transcript ファイルは作らない
@@ -166,7 +168,7 @@ class TestHandleStop:
         transcript_dir = tmp_path / "projects" / cwd_encoded
         transcript_dir.mkdir(parents=True)
         usage_file = tmp_path / "usage.jsonl"
-        usage_file.write_text("")
+        usage_file.write_text("", encoding="utf-8")
         alerts_file = tmp_path / "health_alerts.jsonl"
 
         # 1回目: subagent_start が 1件不足
@@ -204,7 +206,7 @@ class TestHandleStop:
         ])
 
         usage_file = tmp_path / "usage.jsonl"
-        usage_file.write_text("")
+        usage_file.write_text("", encoding="utf-8")
         alerts_file = tmp_path / "health_alerts.jsonl"
 
         vs.handle_stop(session_id, cwd, claude_home=tmp_path,
@@ -249,7 +251,7 @@ class TestHandleStop:
         ])
 
         usage_file = tmp_path / "usage.jsonl"
-        usage_file.write_text("")
+        usage_file.write_text("", encoding="utf-8")
         alerts_file = tmp_path / "health_alerts.jsonl"
 
         vs.handle_stop(
@@ -342,7 +344,7 @@ class TestMain:
         monkeypatch.setenv("USAGE_JSONL", str(tmp_path / "usage.jsonl"))
         monkeypatch.setenv("HEALTH_ALERTS_JSONL", str(tmp_path / "health_alerts.jsonl"))
         monkeypatch.setenv("CLAUDE_HOME", str(tmp_path))
-        (tmp_path / "usage.jsonl").write_text("")
+        (tmp_path / "usage.jsonl").write_text("", encoding="utf-8")
 
         # main は例外を発生させない
         vs.main()
@@ -353,7 +355,7 @@ class TestMain:
         monkeypatch.setenv("USAGE_JSONL", str(tmp_path / "usage.jsonl"))
         monkeypatch.setenv("HEALTH_ALERTS_JSONL", str(tmp_path / "health_alerts.jsonl"))
         monkeypatch.setenv("CLAUDE_HOME", str(tmp_path))
-        (tmp_path / "usage.jsonl").write_text("")
+        (tmp_path / "usage.jsonl").write_text("", encoding="utf-8")
 
         vs.main()  # no exception
 
@@ -364,6 +366,50 @@ class TestMain:
         monkeypatch.setenv("USAGE_JSONL", str(tmp_path / "usage.jsonl"))
         monkeypatch.setenv("HEALTH_ALERTS_JSONL", str(tmp_path / "health_alerts.jsonl"))
         monkeypatch.setenv("CLAUDE_HOME", str(tmp_path))
-        (tmp_path / "usage.jsonl").write_text("")
+        (tmp_path / "usage.jsonl").write_text("", encoding="utf-8")
 
         vs.main()  # no exception
+
+
+class TestEncodeCwd:
+    """Issue #24: cwd を Claude Code 本体の transcript ディレクトリ命名規則に揃える。
+    slash, backslash, colon, dot を全て `-` に変換する。
+    POSIX dot 入り cwd の latent bug 修正と Windows 互換を兼ねる。
+    """
+
+    def test_posix_basic_path_unchanged_behavior(self):
+        """既存の POSIX 単純パス: スラッシュのみ → ハイフン (従来通り)。"""
+        assert vs._encode_cwd("/Users/foo/myapp") == "-Users-foo-myapp"
+
+    def test_posix_with_dot_in_path(self):
+        """latent bug 修正: ドット入り POSIX パスもハイフンに変換。
+        例: `/Users/foo/.worktrees/issue-1` → `-Users-foo--worktrees-issue-1`
+        現状の `cwd.replace('/', '-')` だけでは `.worktrees` が残り transcript 解決が外れる。
+        実機 ls ~/.claude/projects/ で `--worktrees-` パターンを確認済み。"""
+        assert (
+            vs._encode_cwd("/Users/foo/.worktrees/issue-1")
+            == "-Users-foo--worktrees-issue-1"
+        )
+
+    def test_posix_with_dot_in_filename(self):
+        """ドットを含むディレクトリ名 (例: `my.app`) もハイフンに変換。"""
+        assert vs._encode_cwd("/Users/foo/my.app/sub") == "-Users-foo-my-app-sub"
+
+    def test_windows_drive_path(self):
+        """Windows ドライブ + バックスラッシュ + コロン → 全て `-` に変換。
+        例: `C:\\Users\\foo\\myapp` → `C--Users-foo-myapp`"""
+        assert vs._encode_cwd("C:\\Users\\foo\\myapp") == "C--Users-foo-myapp"
+
+    def test_windows_path_with_dot(self):
+        """Windows パス + ドット入りディレクトリ。
+        例: `C:\\Users\\foo\\.config\\app` → `C--Users-foo--config-app`"""
+        assert vs._encode_cwd("C:\\Users\\foo\\.config\\app") == "C--Users-foo--config-app"
+
+    def test_transcript_path_uses_encoded_cwd(self, tmp_path):
+        """_transcript_path() が _encode_cwd() を経由してパス組み立てする。"""
+        # POSIX dot 入り
+        p = vs._transcript_path(tmp_path, "/Users/foo/.worktrees/x", "sess-1")
+        assert p == tmp_path / "projects" / "-Users-foo--worktrees-x" / "sess-1.jsonl"
+        # Windows
+        p = vs._transcript_path(tmp_path, "C:\\Users\\foo\\app", "sess-2")
+        assert p == tmp_path / "projects" / "C--Users-foo-app" / "sess-2.jsonl"

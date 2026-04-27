@@ -32,8 +32,10 @@ def _now_iso() -> str:
 
 
 def _append_event(event: dict) -> None:
+    # newline="\n" 固定で Windows text mode の \r\n 変換を抑止 (Issue #24)。
+    # POSIX で書いた jsonl に Win から続けて書くと混在 EOL になりパース不能リスク。
     DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with DATA_FILE.open("a", encoding="utf-8") as f:
+    with DATA_FILE.open("a", encoding="utf-8", newline="\n") as f:
         f.write(json.dumps(event, ensure_ascii=False) + "\n")
 
 
