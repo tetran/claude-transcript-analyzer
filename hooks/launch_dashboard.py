@@ -73,9 +73,15 @@ def _read_server_json(path: Path) -> Optional[dict]:
     return info
 
 
-def _is_pid_alive(pid: int) -> bool:
-    """`os.kill(pid, 0)` で存在確認。ESRCH (No such process) → False。
-    EPERM (permission denied = 別ユーザのプロセスは存在する) → True。"""
+# Issue #24: Windows では `os.kill(pid, 0)` が SystemError を上げる (Python issue 14480)。
+# OpenProcess + GetExitCodeProcess で alive 判定する。STILL_ACTIVE=259 は MSDN
+# `GetExitCodeProcess` ドキュメントで定数定義されている値 (確認済み)。
+_WIN_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+_WIN_STILL_ACTIVE = 259
+
+
+def _is_pid_alive_posix(pid: int) -> bool:
+    """POSIX: `os.kill(pid, 0)` で存在確認。ESRCH → False、EPERM → True。"""
     try:
         os.kill(pid, 0)
         return True
@@ -86,6 +92,38 @@ def _is_pid_alive(pid: int) -> bool:
         return True
     except OSError:
         return False
+
+
+def _is_pid_alive_windows(pid: int) -> bool:
+    """Windows: kernel32!OpenProcess + GetExitCodeProcess で alive 判定。
+
+    OpenProcess が NULL → 不在 or アクセス不可 → False。
+    GetExitCodeProcess の exit_code が STILL_ACTIVE (259) → 生存中 → True。
+    """
+    import ctypes  # pylint: disable=import-outside-toplevel
+    kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+    handle = kernel32.OpenProcess(
+        _WIN_PROCESS_QUERY_LIMITED_INFORMATION, False, pid
+    )
+    if not handle:
+        return False
+    try:
+        exit_code = ctypes.c_ulong()
+        ok = kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code))
+        return bool(ok) and exit_code.value == _WIN_STILL_ACTIVE
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def _is_pid_alive(pid: int) -> bool:
+    """OS 別 dispatch。テストは sys.platform mock で各分岐を検証可能。"""
+    if sys.platform == "win32":
+        try:
+            return _is_pid_alive_windows(pid)
+        except OSError:
+            # ctypes 呼び出しが落ちた場合の保険。多重起動回避を優先して False
+            return False
+    return _is_pid_alive_posix(pid)
 
 
 def _healthz_ok(url: str, timeout: float = HEALTHZ_TIMEOUT_SECONDS) -> bool:
@@ -155,23 +193,45 @@ def _remove_stale_server_json() -> bool:
         return False
 
 
-def _spawn_server() -> None:
-    """`python3 dashboard/server.py` を fork-and-detach で起動。silent。
+# Windows fork-and-detach 用の CreateProcess flags (subprocess.* は Win 限定属性)。
+# POSIX で AttributeError を避けるため getattr fallback でハードコード値を採用。
+# DETACHED_PROCESS=0x8 / CREATE_NEW_PROCESS_GROUP=0x200 (MSDN: process creation flags)
+_WIN_DETACHED_PROCESS = getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+_WIN_CREATE_NEW_PROCESS_GROUP = getattr(
+    subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200
+)
 
-    - `start_new_session=True`: 親 PG/SID から切り離し、Claude Code 終了後も生存
+
+def _spawn_server() -> None:
+    """`dashboard/server.py` を fork-and-detach で起動。silent。
+
+    OS 別 detach 経路 (Issue #24):
+    - POSIX: `start_new_session=True` で親 PG/SID から切り離し、Claude Code 終了後も生存
+    - Windows: `creationflags=DETACHED_PROCESS|CREATE_NEW_PROCESS_GROUP` で同等の切り離し
+      (`start_new_session` は Win では no-op で親終了時に子も死ぬため不可)
+
+    共通:
     - `stdin/stdout/stderr=DEVNULL`: 親 hook の pipe を引き継がない
-    - `close_fds=True`: 余計な fd を継承しない（POSIX デフォルトだが明示）
+    - `close_fds=True`: 余計な fd を継承しない
     """
     if not _SERVER_SCRIPT.exists():
         return
+    kwargs: dict = {
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+        "close_fds": True,
+    }
+    if sys.platform == "win32":
+        kwargs["creationflags"] = (
+            _WIN_DETACHED_PROCESS | _WIN_CREATE_NEW_PROCESS_GROUP
+        )
+    else:
+        kwargs["start_new_session"] = True
     try:
         subprocess.Popen(  # pylint: disable=consider-using-with
             [sys.executable, str(_SERVER_SCRIPT)],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-            close_fds=True,
+            **kwargs,
         )
     except OSError:
         # PermissionError / FileNotFoundError / fork limit 等。silent fail。

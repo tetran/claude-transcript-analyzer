@@ -436,6 +436,10 @@ class _FileWatcher:
             st = self.path.stat()
         except (FileNotFoundError, OSError):
             return None
+        if sys.platform == "win32":
+            # Issue #24 N2: Win NTFS では st_ino が 0 / 不安定で signature 比較が
+            # 壊れることがある。size + mtime_ns のみで実用上の検出精度は十分。
+            return (st.st_size, st.st_mtime_ns)
         return (st.st_ino, st.st_size, st.st_mtime_ns)
 
 
@@ -611,7 +615,10 @@ class DashboardServer(ThreadingHTTPServer):
     """
 
     daemon_threads = True
-    allow_reuse_address = True
+    # Issue #24 N1: Win で True にすると SO_REUSEADDR の Win 仕様差で別プロセスに
+    # ポートを横取りされる懸念がある。POSIX のみ True (TIME_WAIT 中の再利用許可)、
+    # Win は default False にして OS の自然解放に任せる。
+    allow_reuse_address = sys.platform != "win32"
 
     def __init__(self, server_address, RequestHandlerClass, *,
                  idle_seconds: float = 0.0,

@@ -4,7 +4,7 @@
 べき等にマージする。
 
 Usage:
-    python3 merge_settings.py <repo_dir>
+    python merge_settings.py <repo_dir>
 """
 import json
 import shutil
@@ -26,8 +26,8 @@ def _load_settings(path: Path) -> dict:
 
 
 def _build_new_entries(repo_dir: str) -> dict:
-    record_skill = f"python3 {repo_dir}/hooks/record_skill.py"
-    record_subagent = f"python3 {repo_dir}/hooks/record_subagent.py"
+    record_skill = f"python {repo_dir}/hooks/record_skill.py"
+    record_subagent = f"python {repo_dir}/hooks/record_subagent.py"
     return {
         "PostToolUse": [
             {
@@ -49,7 +49,7 @@ def _build_new_entries(repo_dir: str) -> dict:
 
 
 def _stop_hook_command(repo_dir: str) -> str:
-    return f"python3 {repo_dir}/hooks/verify_session.py"
+    return f"python {repo_dir}/hooks/verify_session.py"
 
 
 def _merge_stop_hook_list(existing: list, command: str) -> list:

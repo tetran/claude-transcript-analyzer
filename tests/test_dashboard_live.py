@@ -8,6 +8,7 @@ server.json lifecycle / idle watchdog / /healthz / run() 統合) を切り出し
 import json
 import os
 import socketserver
+import sys
 import threading
 import time
 import urllib.request
@@ -379,6 +380,36 @@ class TestRunIntegration:
             t.join(timeout=2.0)
         # serve_forever が exit した後、server.json は削除されている
         assert not target.exists()
+
+
+class TestPlatformSpecificServerConfig:
+    """Issue #24 N1/N2: Windows 互換のためのプラットフォーム別設定。"""
+
+    def test_allow_reuse_address_disabled_on_windows(self, tmp_path):
+        """Windows で allow_reuse_address=True にすると別プロセスがポート横取りできる
+        (SO_REUSEADDR の Win 仕様差)。POSIX のみ True、Win では False に倒す。"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        if sys.platform == "win32":
+            assert mod.DashboardServer.allow_reuse_address is False
+        else:
+            assert mod.DashboardServer.allow_reuse_address is True
+
+    def test_file_watcher_signature_excludes_inode_on_windows(self, tmp_path):
+        """Windows NTFS では st_ino が 0 / 不安定なので、signature から除外する。
+        POSIX は (inode, size, mtime_ns)、Win は (size, mtime_ns) のみ。"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        target = tmp_path / "watched.jsonl"
+        target.write_text("hello", encoding="utf-8")
+
+        watcher = mod._FileWatcher(path=target, interval=0.0)
+        sig = watcher._signature()
+        assert sig is not None
+
+        if sys.platform == "win32":
+            assert len(sig) == 2  # (size, mtime_ns)
+        else:
+            assert len(sig) == 3  # (inode, size, mtime_ns)
+            assert sig[0] == target.stat().st_ino
 
 
 class TestServerJsonCrossProcessLock:
