@@ -559,6 +559,7 @@ class TestEndToEndLaunch:
         # 30s に伸ばして CI flaky を解消 (Issue #24)。
         env["DASHBOARD_IDLE_SECONDS"] = "30"
         env["_LAUNCH_DASHBOARD_CHILD_LOG"] = str(child_log)
+        env["_LAUNCH_DASHBOARD_DEBUG_TRACE"] = "1"  # macOS CI 死因取得用
         # 子サーバーが起動準備に時間がかかる場合があるので poll_interval は長めでも可
         result = subprocess.run(
             [sys.executable, str(_LAUNCH_PATH)],

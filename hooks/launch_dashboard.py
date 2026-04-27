@@ -48,6 +48,17 @@ from server_registry import remove_server_json as _registry_remove_server_json
 _DEFAULT_SERVER_JSON_PATH = Path.home() / ".claude" / "transcript-analyzer" / "server.json"
 SERVER_JSON_PATH = Path(os.environ.get("DASHBOARD_SERVER_JSON", str(_DEFAULT_SERVER_JSON_PATH)))
 
+
+def _trace(msg: str) -> None:
+    """Issue #24 PR#31 macOS CI debug: `_LAUNCH_DASHBOARD_DEBUG_TRACE=1` で
+    launcher の各ステップ到達点を stderr に出力。subprocess.run の result.stderr
+    から CI ログで見える。死因取得後に撤去予定。"""
+    if os.environ.get("_LAUNCH_DASHBOARD_DEBUG_TRACE"):
+        try:
+            print(f"[trace] {msg}", file=sys.stderr, flush=True)
+        except OSError:
+            pass
+
 # Issue #14 AC: healthz チェックのタイムアウト 200ms
 HEALTHZ_TIMEOUT_SECONDS = 0.2
 
@@ -258,7 +269,9 @@ def _spawn_server() -> None:
     macOS CI で子サーバーが server.json を書けない原因 (silent crash) を取るための
     一時経路。production では未設定、テスト/CI でのみ有効。
     """
+    _trace(f"_spawn_server: enter, script={_SERVER_SCRIPT}, exists={_SERVER_SCRIPT.exists()}")
     if not _SERVER_SCRIPT.exists():
+        _trace("_spawn_server: script does not exist, returning")
         return
     debug_log = os.environ.get("_LAUNCH_DASHBOARD_CHILD_LOG")
     kwargs: dict = {
@@ -274,6 +287,7 @@ def _spawn_server() -> None:
         log_fd = open(log_path, "wb", buffering=0)  # pylint: disable=consider-using-with
         kwargs["stdout"] = log_fd
         kwargs["stderr"] = subprocess.STDOUT  # stderr → stdout に統合
+        _trace(f"_spawn_server: child log -> {log_path}")
     else:
         kwargs["stdout"] = subprocess.DEVNULL
         kwargs["stderr"] = subprocess.DEVNULL
@@ -283,13 +297,16 @@ def _spawn_server() -> None:
         )
     else:
         kwargs["start_new_session"] = True
+    _trace(f"_spawn_server: about to Popen, sys.executable={sys.executable}")
     try:
-        subprocess.Popen(  # pylint: disable=consider-using-with
+        proc = subprocess.Popen(  # pylint: disable=consider-using-with
             [sys.executable, str(_SERVER_SCRIPT)],
             **kwargs,
         )
-    except OSError:
+        _trace(f"_spawn_server: Popen ok pid={proc.pid}")
+    except OSError as exc:
         # PermissionError / FileNotFoundError / fork limit 等。silent fail。
+        _trace(f"_spawn_server: Popen OSError {exc!r}")
         return
 
 
@@ -302,14 +319,19 @@ def main() -> int:
         _remove_stale_server_json()  # 明示的な zombie cleanup
         _spawn_server()              # fork-and-detach
     """
+    _trace(f"main: enter, SERVER_JSON_PATH={SERVER_JSON_PATH}")
     try:
         if _server_is_alive():
+            _trace("main: server already alive, returning")
             return 0
+        _trace("main: not alive, removing stale + spawning")
         _remove_stale_server_json()
         _spawn_server()
-    except Exception:
+        _trace("main: spawn completed")
+    except Exception as exc:  # pylint: disable=broad-except
         # どんな想定外例外でも Claude Code をブロックしない (Issue #14 AC)
-        pass
+        _trace(f"main: caught exception {exc!r}")
+    _trace("main: returning 0")
     return 0
 
 

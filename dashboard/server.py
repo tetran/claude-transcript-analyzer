@@ -730,11 +730,33 @@ def run(
 
 
 def main() -> None:
+    # Issue #24 PR#31 macOS CI debug: 起動到達点を stderr に出して
+    # launcher が起動した子サーバーがどこまで進んだか CI ログから見る。
+    # 死因取得後に撤去予定。
+    if os.environ.get("_LAUNCH_DASHBOARD_DEBUG_TRACE"):
+        try:
+            print(
+                f"[server-trace] main: enter, PORT={PORT}, "
+                f"SERVER_JSON_PATH={SERVER_JSON_PATH}, sys.platform={sys.platform}",
+                file=sys.stderr,
+                flush=True,
+            )
+        except OSError:
+            pass
     server = create_server(
         port=PORT,
         idle_seconds=IDLE_SECONDS,
         poll_interval=POLL_INTERVAL,
     )
+    if os.environ.get("_LAUNCH_DASHBOARD_DEBUG_TRACE"):
+        try:
+            print(
+                f"[server-trace] main: server bound port={server.server_address[1]}",
+                file=sys.stderr,
+                flush=True,
+            )
+        except OSError:
+            pass
     run(server, SERVER_JSON_PATH)
 
 
