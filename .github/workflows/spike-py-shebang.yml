@@ -1,0 +1,93 @@
+name: Spike — Python shebang direct invocation
+on:
+  workflow_dispatch:
+  push:
+    branches: [spike/python-shebang-windows]
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Prepare shebang .py file
+        shell: pwsh
+        run: |
+          @'
+          #!/usr/bin/env python3
+          import sys, json
+          try:
+              data = json.load(sys.stdin)
+          except Exception as e:
+              data = {"_stdin_error": str(e)}
+          sys.stderr.write(f"OK shebang invoked: tool={data.get('tool_name','?')}, py={sys.executable}, platform={sys.platform}\n")
+          sys.exit(0)
+          '@ | Out-File -Encoding utf8 -FilePath spike.py
+          Get-Content spike.py
+
+      - name: Probe A — pwsh direct .py invocation
+        shell: pwsh
+        run: |
+          $r = '{"tool_name":"Spike","tool_input":{}}' | & ".\spike.py"
+          if ($LASTEXITCODE -ne 0) { Write-Error "pwsh direct .py failed: $LASTEXITCODE"; exit 1 }
+          Write-Host "Probe A passed"
+
+      - name: Probe B — cmd.exe direct .py invocation
+        shell: cmd
+        run: |
+          echo {"tool_name":"Spike","tool_input":{}} | spike.py
+          if errorlevel 1 (echo cmd.exe direct .py failed & exit /b 1)
+          echo Probe B passed
+
+      - name: Probe C — bash (Git Bash) direct .py invocation
+        shell: bash
+        run: |
+          chmod +x spike.py || true
+          echo '{"tool_name":"Spike","tool_input":{}}' | ./spike.py
+          if [ $? -ne 0 ]; then echo "bash direct .py failed"; exit 1; fi
+          echo "Probe C passed"
+
+      - name: Probe D — py.exe launcher detection
+        shell: pwsh
+        run: |
+          py --list
+          py -3 --version
+
+      - name: Probe E — python (no python3) availability
+        shell: pwsh
+        run: |
+          # Confirm what `python` and `python3` resolve to on Windows runner
+          Get-Command python -ErrorAction SilentlyContinue | Format-List
+          Get-Command python3 -ErrorAction SilentlyContinue | Format-List
+          Get-Command py -ErrorAction SilentlyContinue | Format-List
+
+  posix-control:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Prepare and probe
+        shell: bash
+        run: |
+          cat > spike.py <<'EOF'
+          #!/usr/bin/env python3
+          import sys, json
+          try:
+              data = json.load(sys.stdin)
+          except Exception as e:
+              data = {"_stdin_error": str(e)}
+          sys.stderr.write(f"OK shebang: py={sys.executable}, platform={sys.platform}\n")
+          sys.exit(0)
+          EOF
+          chmod +x spike.py
+          echo '{"tool_name":"Spike"}' | ./spike.py
