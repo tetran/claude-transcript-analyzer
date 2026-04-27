@@ -4,6 +4,7 @@ import os
 import select
 import signal
 import socket
+import socketserver
 import sys
 import threading
 import time
@@ -575,6 +576,19 @@ class DashboardServer(ThreadingHTTPServer):
     # ポートを横取りされる懸念がある。POSIX のみ True (TIME_WAIT 中の再利用許可)、
     # Win は default False にして OS の自然解放に任せる。
     allow_reuse_address = sys.platform != "win32"
+
+    def server_bind(self):
+        # Issue #24 PR#31 macOS CI fix: `HTTPServer.server_bind` の default 実装は
+        # `server_name` を `socket.getfqdn(host)` で解決するが、これは reverse DNS
+        # lookup を起こし GitHub Actions の macOS arm64 runner で hang する
+        # (debug round 2 trace で `[server-trace] main: server bound port=N` が
+        # 出ない = bind 後の getfqdn でブロックすることを確認)。
+        # `TCPServer.server_bind` だけを直接呼んで socket の bind/getsockname を実行し、
+        # `server_name` には host 文字列をそのまま入れる (UI/URL 表示には影響なし)。
+        socketserver.TCPServer.server_bind(self)
+        host, port = self.server_address[:2]
+        self.server_name = host
+        self.server_port = port
 
     def __init__(self, server_address, RequestHandlerClass, *,
                  idle_seconds: float = 0.0,
