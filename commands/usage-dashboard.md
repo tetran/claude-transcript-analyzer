@@ -1,13 +1,52 @@
-Launch the claude-transcript-analyzer dashboard server.
+Manually launch the claude-transcript-analyzer dashboard server (idempotent).
+
+> **v0.3 以降の通常運用ではこのコマンドは不要**: `hooks/launch_dashboard.py` が
+> SessionStart / UserPromptSubmit / PostToolUse hook で**べき等に自動起動**する。
+> このスラッシュコマンドは、明示的に手動で立ち上げたい場合の併存パスとして残す。
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/hooks/launch_dashboard.py
+```
+
+Hook 経由と同じ launcher を呼ぶため **べき等**: 既起動なら何もせず、未起動なら
+fork-and-detach で起動する。多重起動・ポート競合は起きない。
+
+URL は起動時 stderr に `Dashboard available: http://localhost:<port>` として 1 行出力される。
+また `~/.claude/transcript-analyzer/server.json` の `url` フィールドからも取得できる：
+
+```bash
+cat ~/.claude/transcript-analyzer/server.json
+# → {"pid": ..., "port": ..., "url": "http://localhost:...", "started_at": "..."}
+```
+
+## 環境変数
+
+| 変数 | デフォルト | 意味 |
+|------|-----------|------|
+| `DASHBOARD_PORT` | `0`（OS 任せ・空きポート） | 具体ポート指定可 |
+| `DASHBOARD_IDLE_SECONDS` | `600`（10 分） | idle 自動停止の閾値秒。`0` で無効化 |
+| `DASHBOARD_POLL_INTERVAL` | `1.0` | usage.jsonl 変更検知の polling 周期 (秒) |
+
+```bash
+DASHBOARD_PORT=9090 python3 ${CLAUDE_PLUGIN_ROOT}/hooks/launch_dashboard.py
+```
+
+## 停止
+
+- idle 自動停止: 最後の HTTP リクエストから 10 分経過で graceful shutdown
+- 手動停止: `kill $(jq -r .pid ~/.claude/transcript-analyzer/server.json)`
+
+idle 停止後は次の Claude Code 操作で hook 経由で **自動復活** する。
+
+## デバッグ用 fg 起動 (上級ユーザー向け)
+
+サーバーログを foreground で見たい場合は `dashboard/server.py` を直接叩ける：
 
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/dashboard/server.py
 ```
 
-Open http://localhost:8080 in your browser to view the Skills and Subagents usage dashboard.
-
-You can set the `DASHBOARD_PORT` environment variable to use a different port:
-```bash
-DASHBOARD_PORT=9090 python3 ${CLAUDE_PLUGIN_ROOT}/dashboard/server.py
-```
+⚠️ ただしこの経路は **launcher を経由しないため二重起動チェックを行わない**。
+事前に `cat ~/.claude/transcript-analyzer/server.json` で既起動を確認するか、
+既存サーバーを kill してから叩くこと。
 
