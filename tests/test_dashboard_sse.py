@@ -23,6 +23,21 @@ def _start_server_in_thread(server) -> threading.Thread:
     return t
 
 
+def _wait_for_sse_clients(server, expected: int, timeout: float = 2.0) -> None:
+    """SSE クライアント数が `expected` に達するまで polling する deterministic な待機。
+
+    `time.sleep(0.3)` で「だいたい登録されてるはず」を待つと CI 高負荷時に flaky になる。
+    `sse_client_count()` を 20ms 刻みで読みに行く方が時間も短く確実。
+    """
+    deadline = time.monotonic() + timeout
+    while server.sse_client_count() < expected:
+        if time.monotonic() > deadline:
+            raise AssertionError(
+                f"SSE client registration timeout (got {server.sse_client_count()}, expected >= {expected})"
+            )
+        time.sleep(0.02)
+
+
 @dataclass
 class SseConn:
     """raw socket ベースの SSE クライアント。
@@ -43,8 +58,10 @@ class SseConn:
             return b""
 
     def disconnect(self) -> None:
+        # SHUT_WR でクライアント側送信のみ閉じて FIN を即送る。実機ブラウザの close
+        # に近いセマンティクス（read は OS バッファに残った data を吸い切れる）。
         try:
-            self.sock.shutdown(socket.SHUT_RDWR)
+            self.sock.shutdown(socket.SHUT_WR)
         except OSError:
             pass
         try:
@@ -133,8 +150,8 @@ class TestRefreshBroadcast:
             c = _open_sse("127.0.0.1", port)
             # 接続確立 (initial comment) を捨てる
             c.read_some(max_bytes=128, timeout=2.0)
-            # 接続が server に登録されるまで少し待つ
-            time.sleep(0.3)
+            # 接続が server に登録されるまで polling で待つ (CI flake 防止)
+            _wait_for_sse_clients(server, expected=1)
             # usage.jsonl を append 改変 → mtime/size が変わる
             with usage.open("a", encoding="utf-8") as f:
                 f.write(json.dumps({
@@ -165,11 +182,12 @@ class TestRefreshBroadcast:
             b = _open_sse("127.0.0.1", port)
             a.read_some(128, 1.0)
             b.read_some(128, 1.0)
-            time.sleep(0.3)
+            _wait_for_sse_clients(server, expected=2)
             # A を強制切断 (FIN を即送る)
             a.disconnect()
             a = None
-            time.sleep(0.2)
+            # A の unregister が完了するまで待つ (handler の peer-check 周期 ≤ 1s)
+            _wait_for_sse_clients(server, expected=1, timeout=2.5)
             # ファイル変更
             with usage.open("a", encoding="utf-8") as f:
                 f.write("{}\n")

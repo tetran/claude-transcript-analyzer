@@ -11,7 +11,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Callable, List, Optional
+from typing import Callable, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from subagent_metrics import aggregate_subagent_metrics, usage_invocation_events
@@ -291,7 +291,7 @@ class _SseState:
     """
 
     def __init__(self, keepalive: float):
-        self.clients: List[SSEClient] = []
+        self.clients: list[SSEClient] = []
         self.lock = threading.Lock()
         self.keepalive = float(keepalive)
 
@@ -314,7 +314,7 @@ class _SseState:
         with self.lock:
             clients = list(self.clients)
         sent = 0
-        dead: List[SSEClient] = []
+        dead: list[SSEClient] = []
         for c in clients:
             if c.send(payload):
                 sent += 1
@@ -511,7 +511,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 if _peer_disconnected(sock):
                     break
                 now = time.monotonic()
-                if now - last_keepalive >= keepalive:
+                # keepalive=0 は「無効化」の意図で渡される想定。`now - last_keepalive >= 0` が
+                # 常に True になって毎 tick で comment が飛ぶのを防ぐため、下限 0 を明示的に
+                # 含める chained comparison でガード。
+                if 0 < keepalive <= now - last_keepalive:
                     if not client.send(b": keepalive\n\n"):
                         break
                     last_keepalive = now
