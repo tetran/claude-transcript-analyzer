@@ -13,6 +13,13 @@ To specify a custom output path:
 "$(command -v python3 || command -v python)" ${CLAUDE_PLUGIN_ROOT}/reports/export_html.py --output /path/to/report.html
 ```
 
+To include archived events (`~/.claude/transcript-analyzer/archive/*.jsonl.gz`)
+in the report — by default only the hot tier (last 180 days) is rendered:
+
+```bash
+"$(command -v python3 || command -v python)" ${CLAUDE_PLUGIN_ROOT}/reports/export_html.py --include-archive
+```
+
 Open the generated file directly in a browser — it works offline and can be
 shared or archived without running a local server.
 

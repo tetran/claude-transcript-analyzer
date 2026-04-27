@@ -116,6 +116,11 @@ class TestExportHtmlMain:
     def _import_export_html(self):
         import dashboard.server as server_m
         importlib.reload(server_m)
+        # export_html は reports.summary.load_events を経由するため、
+        # 環境変数依存の DATA_FILE を再 evaluate するよう summary も reload する
+        # (Issue #30 Phase B で経路切替後の regression 対応)。
+        import reports.summary as summary_m
+        importlib.reload(summary_m)
         import reports.export_html as m
         importlib.reload(m)
         return m

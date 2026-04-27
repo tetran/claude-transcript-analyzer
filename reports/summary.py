@@ -1,4 +1,5 @@
 """reports/summary.py — usage.jsonl の集計レポートを表示する。"""
+import argparse
 import json
 import os
 import sys
@@ -7,6 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from subagent_metrics import aggregate_subagent_metrics
+from reports._archive_loader import load_archive_events
 
 _DEFAULT_PATH = Path.home() / ".claude" / "transcript-analyzer" / "usage.jsonl"
 DATA_FILE = Path(os.environ.get("USAGE_JSONL", str(_DEFAULT_PATH)))
@@ -16,18 +18,19 @@ DATA_FILE = Path(os.environ.get("USAGE_JSONL", str(_DEFAULT_PATH)))
 _PERMISSION_NOTIFICATION_TYPES = frozenset({"permission", "permission_prompt"})
 
 
-def load_events() -> list[dict]:
-    if not DATA_FILE.exists():
-        return []
-    events = []
-    for line in DATA_FILE.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            events.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
+def load_events(include_archive: bool = False) -> list[dict]:
+    events: list[dict] = []
+    if DATA_FILE.exists():
+        for line in DATA_FILE.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                events.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    if include_archive:
+        events.extend(load_archive_events())
     return events
 
 
@@ -147,7 +150,17 @@ def print_report(events: list[dict]) -> None:
         print("  (no data)")
 
 
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description="Skills/Subagents 使用状況の集計レポート")
+    parser.add_argument(
+        "--include-archive",
+        action="store_true",
+        help="archive/*.jsonl.gz を読み込んで集計に含める (default: hot tier のみ)",
+    )
+    args = parser.parse_args(argv)
+    print_report(load_events(include_archive=args.include_archive))
+
+
 if __name__ == "__main__":
-    all_events = load_events()
-    print_report(all_events)
+    main()
 
