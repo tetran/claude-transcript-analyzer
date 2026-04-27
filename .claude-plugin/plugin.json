@@ -1,7 +1,7 @@
 {
   "name": "claude-transcript-analyzer",
   "description": "Automatically collect and visualize Claude Code Skills and Subagents usage",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "author": {
     "name": "kkoichi"
   }
