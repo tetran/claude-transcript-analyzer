@@ -66,8 +66,27 @@ def _resolve_alerts_path() -> Path:
     return _DEFAULT_ALERTS_PATH
 
 
+_APPEND_DROP_HINT = (
+    "This event was lost while the archive job held an exclusive lock and "
+    "the append could not acquire its shared lock (signal-driven failure). "
+    "The full event is preserved in `event_payload` so it can be replayed: "
+    "either re-append it manually to usage.jsonl, or accept the data loss "
+    "if the same event was re-emitted by a later hook fire. "
+    "If drops persist, run `/usage-archive` while no hooks are firing to "
+    "catch up the archive cleanly."
+)
+
+
 def _record_drop_alert(event: dict) -> None:
     """archive 中で append が drop された event を health_alerts.jsonl に 1 行記録。
+
+    Issue #51: actionable な情報を追加:
+    - `kind: "append_drop"`: verify_session 由来 (`transcript_mismatch`) と区別
+    - `project`: event.project があれば転載 (発生プロジェクト即特定)
+    - `event_payload`: 失われた event 全体を保持 (lost forever 回避 / 手動復旧可)
+    - `hint`: recommended action 文
+    既存の `alert: "append_skipped_due_to_archive_lock"` は **backwards compat で維持**
+    (古いツール / dashboard 表示が依存している可能性)。
 
     記録自体の失敗は silent (元の hook を破壊しない)。
     """
@@ -75,10 +94,14 @@ def _record_drop_alert(event: dict) -> None:
         alerts_path = _resolve_alerts_path()
         alerts_path.parent.mkdir(parents=True, exist_ok=True)
         alert = {
-            "alert": "append_skipped_due_to_archive_lock",
-            "event_type": event.get("event_type", ""),
-            "session_id": event.get("session_id", ""),
+            "kind": "append_drop",
+            "alert": "append_skipped_due_to_archive_lock",  # backwards compat
             "timestamp": datetime.now(timezone.utc).isoformat(),
+            "session_id": event.get("session_id", ""),
+            "project": event.get("project", "") or "",
+            "event_type": event.get("event_type", ""),
+            "event_payload": event,
+            "hint": _APPEND_DROP_HINT,
         }
         with alerts_path.open("a", encoding="utf-8", newline="\n") as f:
             f.write(json.dumps(alert, ensure_ascii=False) + "\n")

@@ -310,6 +310,79 @@ class TestEnvOverride:
 
 
 # ---------------------------------------------------------------------------
+# TestDropAlertSchema: Issue #51 — drop alert に actionable な情報を載せる
+# ---------------------------------------------------------------------------
+
+
+class TestDropAlertSchema:
+    """Issue #51: drop alert はもとから情報量が少なく、復旧が難しかった。
+
+    新スキーマ:
+    - `kind: "append_drop"` で種別を明示 (verify_session 由来と区別)
+    - `project` で発生プロジェクトが分かる
+    - `event_payload` で失われた event 全体を保持 (lost forever 回避 / 手動復旧可)
+    - `hint` で recommended action を示す
+    - 既存の `alert: "append_skipped_due_to_archive_lock"` は backwards compat で維持
+    """
+
+    def test_drop_alert_includes_kind_and_event_payload(self, tmp_path, fresh_append_module):
+        alerts_path = tmp_path / "health_alerts.jsonl"
+        # fresh_append_module fixture が HEALTH_ALERTS_JSONL を tmp_path に向けている
+        event = {
+            "event_type": "skill_tool",
+            "skill": "user-story-creation",
+            "args": "6",
+            "project": "myapp",
+            "session_id": "sess-drop-1",
+            "timestamp": "2026-04-28T10:00:00+00:00",
+        }
+        fresh_append_module._record_drop_alert(event)
+        records = _read_lines(alerts_path)
+        assert len(records) == 1
+        rec = records[0]
+        assert rec["kind"] == "append_drop"
+        assert rec["alert"] == "append_skipped_due_to_archive_lock"  # backwards compat
+        assert rec["session_id"] == "sess-drop-1"
+        assert rec["event_type"] == "skill_tool"
+        # event_payload で失われた event 全体を保持 (recovery 用)
+        assert rec["event_payload"] == event
+
+    def test_drop_alert_includes_project_when_present(self, tmp_path, fresh_append_module):
+        alerts_path = tmp_path / "health_alerts.jsonl"
+        event = {
+            "event_type": "subagent_start",
+            "subagent_type": "Explore",
+            "project": "chirper",
+            "session_id": "sess-drop-2",
+        }
+        fresh_append_module._record_drop_alert(event)
+        records = _read_lines(alerts_path)
+        assert len(records) == 1
+        assert records[0]["project"] == "chirper"
+
+    def test_drop_alert_handles_missing_project(self, tmp_path, fresh_append_module):
+        """project field が event に無くても落ちない (空文字 fallback)。"""
+        alerts_path = tmp_path / "health_alerts.jsonl"
+        event = {"event_type": "skill_tool", "session_id": "sess-drop-3"}
+        fresh_append_module._record_drop_alert(event)
+        records = _read_lines(alerts_path)
+        assert len(records) == 1
+        assert records[0]["project"] == ""
+
+    def test_drop_alert_includes_hint(self, tmp_path, fresh_append_module):
+        """hint で recommended action を示す。"""
+        alerts_path = tmp_path / "health_alerts.jsonl"
+        event = {"event_type": "skill_tool", "session_id": "sess-drop-4"}
+        fresh_append_module._record_drop_alert(event)
+        records = _read_lines(alerts_path)
+        assert len(records) == 1
+        hint = records[0]["hint"]
+        assert isinstance(hint, str) and hint  # non-empty
+        # event_payload に言及して復旧経路を示す
+        assert "event_payload" in hint or "archive" in hint.lower()
+
+
+# ---------------------------------------------------------------------------
 # TestNonContentionPerformance: 非競合 hot path の budget 確認
 # ---------------------------------------------------------------------------
 

@@ -237,6 +237,125 @@ class TestHandleStop:
         assert "missing_types" in alert
         assert isinstance(alert["missing_types"], list)
 
+    # ---- Issue #51: actionable fields ----
+
+    def test_alert_includes_kind_and_project_and_cwd(self, tmp_path):
+        """Issue #51: kind / project / cwd が記録され「どこで起きたか」即座に分かる。"""
+        session_id = "sess-issue51-kind"
+        cwd = "/Users/foo/myapp"
+
+        alerts = self._run(
+            tmp_path, session_id, cwd,
+            transcript_rows=[
+                make_transcript_row("assistant", session_id, cwd, [make_task_block("Plan")]),
+            ],
+            usage_events=[],
+        )
+        assert len(alerts) == 1
+        a = alerts[0]
+        assert a["kind"] == "transcript_mismatch"
+        assert a["project"] == "myapp"  # basename of cwd
+        assert a["cwd"] == cwd
+
+    def test_alert_includes_transcript_path(self, tmp_path):
+        """Issue #51: 該当トランスクリプトのフルパスが記録される (= 直接開ける)。"""
+        session_id = "sess-issue51-path"
+        cwd = "/Users/foo/myapp"
+
+        alerts = self._run(
+            tmp_path, session_id, cwd,
+            transcript_rows=[
+                make_transcript_row("assistant", session_id, cwd, [make_task_block("Plan")]),
+            ],
+            usage_events=[],
+        )
+        assert len(alerts) == 1
+        # transcript_path は claude_home (= tmp_path) 配下の実パス
+        expected = tmp_path / "projects" / "-Users-foo-myapp" / f"{session_id}.jsonl"
+        assert alerts[0]["transcript_path"] == str(expected)
+
+    def test_alert_includes_missing_samples_per_type(self, tmp_path):
+        """Issue #51: 欠損 type ごとに transcript_count / usage_count / delta が分かる。
+
+        actionability: 「skill_tool が 1 件欠けた」だけでなく
+        「transcript には 3 件あったが usage には 2 件しかない」と即座に分かる。
+        """
+        session_id = "sess-issue51-samples"
+        cwd = "/Users/foo/myapp"
+
+        alerts = self._run(
+            tmp_path, session_id, cwd,
+            transcript_rows=[
+                # transcript: skill_tool 3 件 + subagent_start 2 件
+                make_transcript_row("assistant", session_id, cwd,
+                                    [make_skill_block("commit")] * 3),
+                make_transcript_row("assistant", session_id, cwd,
+                                    [make_task_block("Explore")] * 2),
+            ],
+            usage_events=[
+                # usage: skill_tool 2 件 (1 件不足) + subagent_start 0 件 (2 件不足)
+                make_usage_event("skill_tool", session_id, skill="commit", args=""),
+                make_usage_event("skill_tool", session_id, skill="commit", args=""),
+            ],
+        )
+        assert len(alerts) == 1
+        samples = alerts[0]["missing_samples"]
+        assert isinstance(samples, list)
+        # samples は missing_types と同じ集合
+        sample_types = {s["event_type"] for s in samples}
+        assert sample_types == {"skill_tool", "subagent_start"}
+        # 各 sample に delta が入る
+        skill_sample = next(s for s in samples if s["event_type"] == "skill_tool")
+        assert skill_sample["transcript_count"] == 3
+        assert skill_sample["usage_count"] == 2
+        assert skill_sample["delta"] == 1
+        sub_sample = next(s for s in samples if s["event_type"] == "subagent_start")
+        assert sub_sample["transcript_count"] == 2
+        assert sub_sample["usage_count"] == 0
+        assert sub_sample["delta"] == 2
+
+    def test_alert_includes_hint_text(self, tmp_path):
+        """Issue #51: hint で recommended action を示す (空文字列ではない)。"""
+        session_id = "sess-issue51-hint"
+        cwd = "/Users/foo/myapp"
+
+        alerts = self._run(
+            tmp_path, session_id, cwd,
+            transcript_rows=[
+                make_transcript_row("assistant", session_id, cwd, [make_task_block("Plan")]),
+            ],
+            usage_events=[],
+        )
+        assert len(alerts) == 1
+        hint = alerts[0]["hint"]
+        assert isinstance(hint, str)
+        assert hint  # non-empty
+        # hint は具体的アクションへの誘導を含む (透明性: transcript_path に言及)
+        assert "transcript" in hint.lower()
+
+    def test_project_falls_back_when_cwd_is_empty(self, tmp_path):
+        """cwd が空のときも project は空文字 / kind は付く (堅牢性)。"""
+        session_id = "sess-issue51-emptycwd"
+        cwd = ""  # 空 cwd
+        cwd_encoded = vs._encode_cwd(cwd)
+        transcript_dir = tmp_path / "projects" / cwd_encoded
+        transcript_dir.mkdir(parents=True, exist_ok=True)
+        write_jsonl(transcript_dir / f"{session_id}.jsonl", [
+            make_transcript_row("assistant", session_id, cwd, [make_task_block("Plan")]),
+        ])
+        usage_file = tmp_path / "usage.jsonl"
+        write_jsonl(usage_file, [])
+        alerts_file = tmp_path / "health_alerts.jsonl"
+        vs.handle_stop(
+            session_id=session_id, cwd=cwd, claude_home=tmp_path,
+            usage_file=usage_file, alerts_file=alerts_file,
+        )
+        alerts = read_jsonl(alerts_file)
+        assert len(alerts) == 1
+        assert alerts[0]["kind"] == "transcript_mismatch"
+        # project は空文字でも構わない (落ちないことが大事)
+        assert alerts[0]["project"] == ""
+
     def test_cwd_encoding_keeps_leading_dash(self, tmp_path):
         """cwd エンコードで先頭の '-' が保持されること"""
         session_id = "sess-enc"
