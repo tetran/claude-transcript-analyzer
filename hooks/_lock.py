@@ -93,6 +93,7 @@ def acquire_exclusive(fd: int, *, blocking: bool = True) -> None:
     elif _HAS_MSVCRT:
         mode = msvcrt.LK_LOCK if blocking else msvcrt.LK_NBLCK
         msvcrt.locking(fd, mode, _LOCK_NBYTES)
+    # else: no-op degrade (両 module 不在環境)
 
 
 def release(fd: int) -> None:
