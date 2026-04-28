@@ -146,6 +146,24 @@ def _calculate_archive_target_months(
     return {ym for ym in available_months if ym.month_end_utc() < cutoff}
 
 
+def _calculate_archivable_horizon(now: datetime, retention_days: int) -> YearMonth:
+    """現在の archivable horizon (= eligible な最大月) を返す (codex 6th P2)。
+
+    archive_usage の eligibility 条件 `month_end_utc < cutoff` と整合する最大月は
+    `cutoff` の **前月** (cutoff = now - retention)。導出:
+        - cutoff の calendar 月をそのまま採用すると、月末が cutoff より strictly
+          前であることが保証されない (cutoff が当月 mid なら月末は cutoff より後)
+        - 前月の月末は必ず cutoff より strictly 前 (= 必ず eligible)
+
+    launcher が「horizon が advance してなければ skip」判定するために state に
+    記録する。データ存在の有無に関わらず計算可能 (純粋関数)。
+    """
+    cutoff = now - timedelta(days=retention_days)
+    if cutoff.month == 1:
+        return YearMonth(cutoff.year - 1, 12)
+    return YearMonth(cutoff.year, cutoff.month - 1)
+
+
 def _event_year_month(event: dict) -> Optional[YearMonth]:
     """event timestamp から UTC YearMonth を抽出。
     naive / 不正 / 欠落の場合は None を返し、partition 側で hot tier に保留させる。
@@ -401,10 +419,17 @@ def _write_state(
     state_file: Path,
     last_run_at: str,
     last_archived_month: Optional[str],
+    last_archivable_horizon: Optional[str] = None,
 ) -> None:
     state: dict = {"last_run_at": last_run_at}
     if last_archived_month is not None:
         state["last_archived_month"] = last_archived_month
+    if last_archivable_horizon is not None:
+        # codex 6th P2: archive_usage 実行時点の archivable horizon を記録。
+        # launcher が「horizon が advance してなければ skip」判定するための gate。
+        # 旧 last_run_at == this_month skip では retention boundary が月末を跨いだ
+        # mid-month で立つ archive 対象を次月まで遅延させる bug があった。
+        state["last_archivable_horizon"] = last_archivable_horizon
     state_file.parent.mkdir(parents=True, exist_ok=True)
     tmp = state_file.with_name(state_file.name + f".{os.getpid()}.tmp")
     try:
@@ -462,8 +487,12 @@ def run_archive(
     state = _read_state(paths.state_file)
     last_archived_str = state.get("last_archived_month")
 
+    # codex 6th P2: 実行ごとに archivable horizon を計算して state に記録する。
+    # launcher が「horizon が advance してなければ skip」を gate にできる。
+    horizon_str = str(_calculate_archivable_horizon(now, retention_days))
+
     if not target_months:
-        _write_state(paths.state_file, now.isoformat(), last_archived_str)
+        _write_state(paths.state_file, now.isoformat(), last_archived_str, horizon_str)
         return ArchiveResult(
             archived_months=[],
             archived_event_count=0,
@@ -511,7 +540,7 @@ def run_archive(
                 new_last_str = str(candidate)
         else:
             new_last_str = str(candidate)
-    _write_state(paths.state_file, now.isoformat(), new_last_str)
+    _write_state(paths.state_file, now.isoformat(), new_last_str, horizon_str)
 
     return ArchiveResult(
         archived_months=archived_months,

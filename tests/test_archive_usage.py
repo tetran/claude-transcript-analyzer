@@ -856,6 +856,77 @@ class TestStateMarker:
 
 
 # ---------------------------------------------------------------------------
+# TestArchivableHorizonInState — codex 6th review P2
+# ---------------------------------------------------------------------------
+
+
+class TestArchivableHorizonInState:
+    """codex 6th review P2: archive_usage は実行ごとに `last_archivable_horizon` を
+    state に書き込む。launcher が「horizon が advance してなければ skip」判定する
+    ための gate marker として使う。"""
+
+    def test_horizon_recorded_when_targets_archived(self, archive_module, tmp_path):
+        """archive 対象あり → horizon を state に記録する。"""
+        data_file = tmp_path / "usage.jsonl"
+        old = _make_event("skill_tool", _utc(2025, 8, 15), tool_use_id="t_old")
+        _write_hot_tier(data_file, [old])
+
+        state_file = tmp_path / "state.json"
+        paths = archive_module.ArchivePaths(
+            data_file=data_file,
+            archive_dir=tmp_path / "archive",
+            state_file=state_file,
+            lock_file=tmp_path / "usage.jsonl.lock",
+        )
+        # now=2026-04-27, retention=180 → cutoff=2025-10-29 → horizon=previous_month(2025,10)=2025-09
+        archive_module.run_archive(_utc(2026, 4, 27), paths, retention_days=180)
+
+        state = json.loads(state_file.read_text())
+        assert state["last_archivable_horizon"] == "2025-09"
+
+    def test_horizon_recorded_when_no_targets(self, archive_module, tmp_path):
+        """archive 対象なし (no-op) でも horizon を state に記録する。
+
+        これが launcher の「対象なしで run 終了したあと毎セッション spawn しない」
+        gate になる。horizon が advance していなければ skip、advance したら spawn。
+        """
+        data_file = tmp_path / "usage.jsonl"
+        # 全 event が retention 内 (= archive 対象なし)
+        recent = _make_event("skill_tool", _utc(2026, 4, 20), tool_use_id="t_recent")
+        _write_hot_tier(data_file, [recent])
+
+        state_file = tmp_path / "state.json"
+        paths = archive_module.ArchivePaths(
+            data_file=data_file,
+            archive_dir=tmp_path / "archive",
+            state_file=state_file,
+            lock_file=tmp_path / "usage.jsonl.lock",
+        )
+        result = archive_module.run_archive(_utc(2026, 4, 27), paths, retention_days=180)
+
+        assert result.archived_months == []
+        state = json.loads(state_file.read_text())
+        # horizon は run 時点の現在 horizon (2025-09) で記録される
+        assert state["last_archivable_horizon"] == "2025-09"
+
+    def test_horizon_recorded_with_no_data_at_all(self, archive_module, tmp_path):
+        """usage.jsonl が空でも horizon を state に書く。R2 無限 spawn 防止用。"""
+        data_file = tmp_path / "usage.jsonl"
+        data_file.write_text("")  # 空
+        state_file = tmp_path / "state.json"
+        paths = archive_module.ArchivePaths(
+            data_file=data_file,
+            archive_dir=tmp_path / "archive",
+            state_file=state_file,
+            lock_file=tmp_path / "usage.jsonl.lock",
+        )
+        archive_module.run_archive(_utc(2026, 4, 27), paths, retention_days=180)
+
+        state = json.loads(state_file.read_text())
+        assert state["last_archivable_horizon"] == "2025-09"
+
+
+# ---------------------------------------------------------------------------
 # TestEnvOverrides
 # ---------------------------------------------------------------------------
 

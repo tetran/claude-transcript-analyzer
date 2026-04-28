@@ -167,6 +167,51 @@ class TestArchiveLockBlocking:
             f"until lock release (holder held for {HOLD_SECONDS}s)"
         )
 
+    def test_loader_creates_lock_file_when_missing(
+        self, loader_module, monkeypatch, tmp_path
+    ):
+        """codex 6th P3: lock_path 不在 (clean install / 手動削除直後) でも
+        loader は lock を取得する。
+
+        旧実装は `lock_path.exists()` で early return していたため、`exists()` 後に
+        archive_usage が file 作成 + LOCK_EX 取得した瞬間に reader が unlocked で
+        archive を読む TOCTOU window があった。`os.O_RDWR | os.O_CREAT` で
+        create-on-open に変えることで window を構造的に閉じる。
+        """
+        try:
+            import fcntl  # noqa: F401
+        except ImportError:
+            pytest.skip("requires POSIX fcntl")
+
+        archive_dir = tmp_path / "archive"
+        _write_archive(
+            archive_dir,
+            "2025-08",
+            [
+                {
+                    "event_type": "skill_tool",
+                    "skill": "/old",
+                    "timestamp": "2025-08-01T00:00:00+00:00",
+                    "session_id": "s",
+                }
+            ],
+        )
+
+        lock_path = tmp_path / "usage.jsonl.lock"
+        monkeypatch.setenv("USAGE_JSONL", str(tmp_path / "usage.jsonl"))
+        monkeypatch.setenv("ARCHIVE_DIR", str(archive_dir))
+        monkeypatch.setenv("USAGE_JSONL_LOCK", str(lock_path))
+
+        # 前提: lock file は存在しない (clean install / 手動削除後)
+        assert not lock_path.exists()
+
+        events = list(loader_module.load_archive_events())
+
+        # archive を正常に読めた + lock file が作成された (= O_CREAT が効いた)
+        assert len(events) == 1
+        assert events[0]["skill"] == "/old"
+        assert lock_path.exists(), "loader must create lock file via O_CREAT (TOCTOU 閉鎖)"
+
     def test_loader_reads_archive_when_lock_is_free(
         self, loader_module, monkeypatch, tmp_path
     ):

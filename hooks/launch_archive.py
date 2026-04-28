@@ -4,11 +4,18 @@
 Claude Code Hook (SessionStart) から呼ばれ、`scripts/archive_usage.py` を
 fork-and-detach で起動する **べき等な薄い launcher**。usage.jsonl には書かない。
 
-判定フロー (< 100ms 既起動経路):
+判定フロー (< 100ms 既起動経路 / codex 6th P2 で horizon ベースに刷新):
 1. ``ARCHIVE_STATE_FILE`` (default ``~/.claude/transcript-analyzer/.archive_state.json``)
-   を読み、``last_archived_month`` を確認
-2. ``last_archived_month`` が **前月 (UTC) 以前** なら archive job 起動が必要 → spawn
-3. それ以外 (state 不在 / 壊れた JSON / 当月 / 前月) → silent exit 0
+   を読む
+2. ``last_archived_month`` が前月 (UTC) 以降ならカバー済 → skip
+3. ``last_archivable_horizon`` が現在の archivable horizon と同じ or それ以降 →
+   archive_usage が同じ horizon を既に観測済みで no-op だったので skip
+   (R2 の「対象なし状態の毎セッション spawn 防止」を保つ)
+4. それ以外 (state 不在 / 壊れた JSON / horizon 未記録 / horizon 古い) → spawn
+
+旧 `last_run_at == this_month` skip は廃止。retention boundary が月末を跨いだ
+mid-month で立つ archive 対象を次の calendar 月まで遅延させる bug があった
+(codex 6th review P2)。
 
 設計上の不変条件:
 - どんな例外でも **silent exit 0** (Claude Code をブロックしない)
@@ -24,9 +31,12 @@ from __future__ import annotations
 import json
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
+
+
+_DEFAULT_RETENTION_DAYS = 180
 
 # `_launcher_common.spawn_detached` を import するため hooks/ を sys.path に追加
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -91,41 +101,66 @@ def _read_state_last_archived(state_file: Path) -> Optional[tuple[int, int]]:
     return _parse_month_string(last)
 
 
-def _read_state_last_run_month(state_file: Path) -> Optional[tuple[int, int]]:
-    """state file の ``last_run_at`` を UTC YearMonth で返す。不在 / 不正 → None。"""
+def _read_state_last_archivable_horizon(state_file: Path) -> Optional[tuple[int, int]]:
+    """state file から ``last_archivable_horizon`` を ``(year, month)`` で取得。"""
     state = _read_state_dict(state_file)
     if state is None:
         return None
-    raw = state.get("last_run_at")
+    raw = state.get("last_archivable_horizon")
     if not isinstance(raw, str):
         return None
+    return _parse_month_string(raw)
+
+
+def _calculate_archivable_horizon(now: datetime, retention_days: int) -> tuple[int, int]:
+    """現在の archivable horizon (= archive 対象として立つ最大月) を返す。
+
+    archive_usage.py:_calculate_archivable_horizon と同一規約 (= cutoff の前月)。
+    ここで二重実装している理由: launcher は archive_usage を import しない
+    (依存関係を最小化して < 100ms 既起動経路を死守)。式が単純 (cutoff = now -
+    retention_days, return previous_month(cutoff))なので二重化のコストは小さい。
+    """
+    cutoff = now - timedelta(days=retention_days)
+    return _previous_month(cutoff.year, cutoff.month)
+
+
+def _resolve_retention_days() -> int:
+    """``USAGE_RETENTION_DAYS`` env を読む。不正値は default にフォールバック。"""
+    raw = os.environ.get("USAGE_RETENTION_DAYS")
+    if raw is None:
+        return _DEFAULT_RETENTION_DAYS
     try:
-        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        value = int(raw)
+        if value <= 0:
+            return _DEFAULT_RETENTION_DAYS
+        return value
     except ValueError:
-        return None
-    if dt.tzinfo is None:
-        return None
-    dt_utc = dt.astimezone(timezone.utc)
-    return (dt_utc.year, dt_utc.month)
+        return _DEFAULT_RETENTION_DAYS
 
 
-def _needs_archive(state_file: Path, now: datetime) -> bool:
-    """state を読み、archive job 起動が必要かを判定する。
+def _needs_archive(
+    state_file: Path,
+    now: datetime,
+    retention_days: Optional[int] = None,
+) -> bool:
+    """state を読み、archive job 起動が必要かを判定する (codex 6th P2 で刷新)。
 
+    判定:
     - state 不在 / 壊れ / 不正 → True (未実行扱いで spawn)
-    - last_archived_month >= 前月 (UTC) → False (skip / 通常運用)
-    - last_run_at が当月内 → False (codex P2: 月初の no-op 実行 / 対象なし状態が
-      温存されたとき同月内で毎セッション spawn する bug を防ぐ)
-    - last_archived_month < 前月 + last_run_at が前月以前 → True (月跨ぎ retry)
-    - last_archived_month 欠落 + last_run_at が前月以前 / 不在 → True (新規 / retry)
+    - last_archived_month >= 前月 (UTC) → False (skip / 通常運用 fast path)
+    - last_archivable_horizon が現在 horizon 以降 → False
+      (archive_usage が同じ horizon を観測済みで no-op だった = R2 無限 spawn 防止)
+    - 上記以外 → True (新 horizon に追従 / 旧 schema state は保守的 spawn)
 
-    backfill (`rescan_transcripts.py --append` で過去月を再 append) 用途は
-    手動 `/usage-archive` で実行する運用 (CLAUDE.md 参照)。同月内の launcher
-    経路は state.last_run_at で短絡される。
+    旧 `last_run_at == this_month` skip は **廃止**。retention boundary が月末を
+    跨いだ mid-month で archive 対象が立つケース (codex 6th P2) を遅延させていた。
     """
     state = _read_state_dict(state_file)
     if state is None:
         return True
+
+    if retention_days is None:
+        retention_days = _resolve_retention_days()
 
     last_archived = _read_state_last_archived(state_file)
     if last_archived is not None:
@@ -133,10 +168,11 @@ def _needs_archive(state_file: Path, now: datetime) -> bool:
         if last_archived >= (prev_y, prev_m):
             return False
 
-    # last_archived_month 不在 / 古い → さらに last_run_at の同月チェックで
-    # 「今月内に既に archive_usage を走らせた (対象なし or backfill 完了)」を吸収する。
-    last_run_ym = _read_state_last_run_month(state_file)
-    if last_run_ym is not None and last_run_ym == (now.year, now.month):
+    # codex 6th P2: archivable horizon 比較で "同じ horizon を既に観測済みなら skip"。
+    # 旧実装の last_run_at calendar 月 skip は同月内 horizon advance を見逃していた。
+    current_horizon = _calculate_archivable_horizon(now, retention_days)
+    last_horizon = _read_state_last_archivable_horizon(state_file)
+    if last_horizon is not None and last_horizon >= current_horizon:
         return False
     return True
 

@@ -91,11 +91,15 @@ def _acquire_archive_read_lock() -> Optional[int]:
     if not _HAS_FCNTL:
         return None  # Windows / fcntl 不在 — 保護できないが進める
     lock_path = _resolve_lock_path()
-    if not lock_path.exists():
-        # archive_usage.py が一度も走ってない → 競合相手不在で読んで OK
-        return None
     try:
-        fd = os.open(str(lock_path), os.O_RDONLY)
+        # codex 6th P3: O_RDWR | O_CREAT で create-on-open に統一。
+        # 旧実装は `lock_path.exists()` で early return していたため、check と
+        # archive_usage の lock file 作成 + LOCK_EX 取得の間に reader が unlocked
+        # で archive を読む TOCTOU window があった。create-on-open でこの window を
+        # 構造的に閉じる (lock file は archive_usage 側も同じ path を見るため
+        # SH/EX が正しく coordinate する)。
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o644)
     except OSError:
         return None  # 保護できないが進める
     try:

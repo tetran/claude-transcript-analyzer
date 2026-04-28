@@ -94,51 +94,82 @@ class TestNeedsArchive:
         state_file.write_text(json.dumps({"last_archived_month": "2026-12"}))
         assert launch_archive_module._needs_archive(state_file, _utc(2027, 1, 15)) is False
 
-    def test_no_archived_month_but_run_in_current_month_skips(self, launch_archive_module, tmp_path):
-        """codex P2: archive 対象なしで run 終了 (last_archived_month 未設定) のあと、
-        同月内に再 SessionStart → last_run_at が当月なので skip (毎セッション spawn 防止)."""
+    def test_no_archived_with_horizon_at_current_skips(self, launch_archive_module, tmp_path):
+        """archive 対象なしで run 終了 (last_archived_month 未設定) のあと、
+        同じ archivable horizon を再観測したら skip (毎セッション spawn 防止)。
+
+        codex 6th P2: 旧実装は last_run_at の calendar month で skip していたため、
+        retention boundary が月末を跨いで新 eligibility が立った場合に最大 30 日
+        spawn が抑止される bug があった。horizon 比較ベースに変更で解消。
+        """
         state_file = tmp_path / ".archive_state.json"
+        # now=2026-04-27, retention=180, cutoff=2025-10-29, horizon=2025-09
         state_file.write_text(json.dumps({
             "last_run_at": "2026-04-15T10:00:00+00:00",
-            # last_archived_month は意図的に欠落
+            "last_archivable_horizon": "2025-09",
+            # last_archived_month は意図的に欠落 (= no-op 完了)
         }))
         assert launch_archive_module._needs_archive(state_file, _utc(2026, 4, 27)) is False
 
-    def test_no_archived_month_with_old_run_means_needs_archive(self, launch_archive_module, tmp_path):
-        """last_archived_month 不在 + last_run_at が前月以前 → 月跨ぎなので spawn (定期 retry)."""
+    def test_no_archived_with_advanced_horizon_means_needs_archive(self, launch_archive_module, tmp_path):
+        """codex 6th P2: **同月内で** retention boundary が月末を跨いで eligibility
+        horizon が advance したら spawn する (旧実装の同月 skip bug の本丸ケース)。
+
+        旧実装は last_run_at == this_month で問答無用 skip していたため、
+        retention boundary が月末を跨いだ瞬間に立つ archive 対象が次の calendar
+        月まで遅延していた。horizon 比較に変えることでこの遅延を解消。
+        """
+        state_file = tmp_path / ".archive_state.json"
+        # 5/1 に走った時点: cutoff=2025-11-02, horizon=previous_month(2025,11)=2025-10
+        state_file.write_text(json.dumps({
+            "last_run_at": "2026-05-01T00:00:00+00:00",
+            "last_archivable_horizon": "2025-10",
+        }))
+        # 5/30 (同 5 月内): cutoff=2025-12-01, horizon=previous_month(2025,12)=2025-11 (advanced)
+        # 旧実装は last_run_at が 5 月内なので skip(=False) を返してしまう → bug
+        assert launch_archive_module._needs_archive(state_file, _utc(2026, 5, 30)) is True
+
+    def test_old_archived_with_horizon_covered_skips(self, launch_archive_module, tmp_path):
+        """last_archived_month < 前月 でも last_archivable_horizon が現在の horizon を
+        既にカバーしているなら skip (= no-op だったが新 eligibility は無し)。
+        """
+        state_file = tmp_path / ".archive_state.json"
+        # now=2026-04-27, retention=180, cutoff=2025-10-29, horizon=2025-09
+        state_file.write_text(json.dumps({
+            "last_run_at": "2026-04-15T10:00:00+00:00",
+            "last_archived_month": "2026-01",  # 過去の archived は新しい
+            "last_archivable_horizon": "2025-09",  # 現在 horizon と一致
+        }))
+        # last_archived_month=2026-01 >= 前月 (2026-03)? No (older). → fall through to horizon check
+        # last_archivable_horizon=2025-09 == current horizon=2025-09 → skip ✓
+        assert launch_archive_module._needs_archive(state_file, _utc(2026, 4, 27)) is False
+
+    def test_old_archived_with_horizon_advanced_means_needs_archive(self, launch_archive_module, tmp_path):
+        """last_archived_month < 前月 + horizon が advance → 月跨ぎ retry で spawn."""
         state_file = tmp_path / ".archive_state.json"
         state_file.write_text(json.dumps({
             "last_run_at": "2026-03-15T10:00:00+00:00",
-            # last_archived_month 欠落
+            "last_archived_month": "2026-01",
+            "last_archivable_horizon": "2025-08",  # 古い horizon
         }))
+        # now=2026-04-15, cutoff~2025-10-17, horizon=previous_month(2025,10)=2025-09 (advanced)
         assert launch_archive_module._needs_archive(state_file, _utc(2026, 4, 15)) is True
 
-    def test_old_archived_with_run_in_current_month_skips(self, launch_archive_module, tmp_path):
-        """codex P2: last_archived_month < 前月 でも last_run_at が当月なら skip する。
-
-        月初に archive_usage が走って対象なしで終わると last_archived_month は前回値の
-        まま温存されるため、これを spawn トリガーにすると毎 SessionStart で archive
-        process が起動する bug になる。last_run_at の同月 short-circuit で防ぐ。
-        backfill 用途は手動 `/usage-archive` で実行するという CLAUDE.md の運用に揃える."""
+    def test_legacy_state_without_horizon_means_needs_archive(self, launch_archive_module, tmp_path):
+        """codex 6th P2 後方互換: last_archivable_horizon を持たない旧 state は
+        保守的に spawn する (= 一度走らせて horizon を書かせる)。
+        """
         state_file = tmp_path / ".archive_state.json"
+        # last_archived_month は前月でないので fast skip も効かない
         state_file.write_text(json.dumps({
             "last_run_at": "2026-04-15T10:00:00+00:00",
             "last_archived_month": "2026-01",
+            # last_archivable_horizon 欠落 (旧 schema)
         }))
-        # last_archived_month=2026-01 < 前月 (2026-03) だが last_run_at=2026-04 → skip
-        assert launch_archive_module._needs_archive(state_file, _utc(2026, 4, 27)) is False
-
-    def test_old_archived_with_run_in_previous_month_means_needs_archive(self, launch_archive_module, tmp_path):
-        """last_archived_month < 前月 + last_run_at が前月以前 → 月跨ぎ retry で spawn."""
-        state_file = tmp_path / ".archive_state.json"
-        state_file.write_text(json.dumps({
-            "last_run_at": "2026-03-15T10:00:00+00:00",
-            "last_archived_month": "2026-01",
-        }))
-        assert launch_archive_module._needs_archive(state_file, _utc(2026, 4, 15)) is True
+        assert launch_archive_module._needs_archive(state_file, _utc(2026, 4, 27)) is True
 
     def test_no_state_file_means_needs_archive_even_with_run_at(self, launch_archive_module, tmp_path):
-        """state 不在のときは last_run_at の検査も走らない (data 未初期化扱い)."""
+        """state 不在のときは horizon の検査も走らない (data 未初期化扱い)."""
         state_file = tmp_path / ".archive_state.json"
         # state file 不在
         assert launch_archive_module._needs_archive(state_file, _utc(2026, 4, 15)) is True
