@@ -53,6 +53,27 @@ DEFAULT_RETENTION_DAYS = 180
 _DEFAULT_DATA_FILE = Path.home() / ".claude" / "transcript-analyzer" / "usage.jsonl"
 
 
+def _resolve_default_retention_days() -> int:
+    """``USAGE_RETENTION_DAYS`` env を robust に解釈して default を返す。
+
+    codex 8th P2-B: 旧実装は argparse の default に `int(env)` を直接注入していたため、
+    env が "abc" だと argparse 評価前に ValueError raise → archive_usage.py が
+    lock/state 書き込み前に traceback で即死。launch_archive は env malformed を
+    silent に default fallback する非対称な仕様だったため、毎セッション detached
+    child が即 crash → archive 機能完全停止 (env 修正まで進まない死に螺旋) を起こす。
+    """
+    raw = os.environ.get("USAGE_RETENTION_DAYS")
+    if raw is None:
+        return DEFAULT_RETENTION_DAYS
+    try:
+        value = int(raw)
+        if value <= 0:
+            return DEFAULT_RETENTION_DAYS
+        return value
+    except ValueError:
+        return DEFAULT_RETENTION_DAYS
+
+
 class ArchiveReadError(OSError):
     """既存 archive ファイルの読み込みに失敗 (rewrite 不可 / silent 上書き禁止)。
 
@@ -540,7 +561,15 @@ def run_archive(
                 new_last_str = str(candidate)
         else:
             new_last_str = str(candidate)
-    _write_state(paths.state_file, now.isoformat(), new_last_str, horizon_str)
+
+    # codex 8th P2-A: target に失敗があれば horizon は出さない (= state に書かない)。
+    # current 値で記録すると launcher は次セッションで `last_horizon >= current` を
+    # 見て skip してしまい、ユーザーが .gz 修復しても次月まで retry できない。
+    # 失敗があるなら None で出して launcher の同月内 retry を許す。
+    # 「全成功」= 全 archive_buckets が successfully_archived に乗った状態。
+    all_targets_succeeded = len(successfully_archived_yms) == len(archive_buckets)
+    horizon_to_write = horizon_str if all_targets_succeeded else None
+    _write_state(paths.state_file, now.isoformat(), new_last_str, horizon_to_write)
 
     return ArchiveResult(
         archived_months=archived_months,
@@ -574,9 +603,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument(
         "--retention-days",
         type=int,
-        default=int(
-            os.environ.get("USAGE_RETENTION_DAYS", str(DEFAULT_RETENTION_DAYS))
-        ),
+        default=_resolve_default_retention_days(),
     )
     parser.add_argument(
         "--log",

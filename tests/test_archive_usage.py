@@ -925,6 +925,124 @@ class TestArchivableHorizonInState:
         state = json.loads(state_file.read_text())
         assert state["last_archivable_horizon"] == "2025-09"
 
+    def test_horizon_not_advanced_when_archive_fails(self, archive_module, tmp_path):
+        """codex 8th review P2-A: ArchiveReadError で archive 失敗した月があるとき、
+        horizon を advance しない (= state から削除)。
+
+        旧実装は失敗があっても horizon を current 値で記録していたため、launcher が
+        次セッションで `last_horizon >= current_horizon` を見て skip し、ユーザーが
+        破損 .gz を修復しても horizon が次月に進むまで auto-launcher が retry して
+        くれなかった。失敗時に horizon を出さないことで「次の launcher で再 spawn
+        →修復後の archive_usage が成功して horizon を advance」のサイクルが回る。
+        """
+        data_file = tmp_path / "usage.jsonl"
+        archive_dir = tmp_path / "archive"
+        archive_dir.mkdir()
+        # 既存 archive を corrupt にする → merge で ArchiveReadError
+        (archive_dir / "2025-08.jsonl.gz").write_text("not a gzip file")
+
+        old = _make_event("skill_tool", _utc(2025, 8, 15), tool_use_id="t_old")
+        _write_hot_tier(data_file, [old])
+
+        state_file = tmp_path / "state.json"
+        paths = archive_module.ArchivePaths(
+            data_file=data_file,
+            archive_dir=archive_dir,
+            state_file=state_file,
+            lock_file=tmp_path / "usage.jsonl.lock",
+        )
+        result = archive_module.run_archive(_utc(2026, 4, 27), paths, retention_days=180)
+
+        # 2025-08 は archive 失敗 → archived_months 空、hot_remainder に保留
+        assert result.archived_months == []
+        state = json.loads(state_file.read_text())
+        # horizon が state に **書かれていない** → launcher は同月内で再 spawn できる
+        assert "last_archivable_horizon" not in state, (
+            "失敗があれば horizon は出さない (launcher の同月内 retry を可能にする)"
+        )
+
+    def test_horizon_advanced_when_partial_success(self, archive_module, tmp_path):
+        """target が複数、一部成功 / 一部失敗の混在ケースでも horizon は advance しない。
+
+        混在状態で horizon 進めると失敗月が次月までスタックするのは P2-A と同症状。
+        """
+        data_file = tmp_path / "usage.jsonl"
+        archive_dir = tmp_path / "archive"
+        archive_dir.mkdir()
+        # 2025-08 corrupt, 2025-09 healthy
+        (archive_dir / "2025-08.jsonl.gz").write_text("corrupted")
+
+        aug = _make_event("skill_tool", _utc(2025, 8, 15), tool_use_id="t_aug")
+        sep = _make_event("skill_tool", _utc(2025, 9, 15), tool_use_id="t_sep")
+        _write_hot_tier(data_file, [aug, sep])
+
+        state_file = tmp_path / "state.json"
+        paths = archive_module.ArchivePaths(
+            data_file=data_file,
+            archive_dir=archive_dir,
+            state_file=state_file,
+            lock_file=tmp_path / "usage.jsonl.lock",
+        )
+        result = archive_module.run_archive(_utc(2026, 4, 27), paths, retention_days=180)
+
+        # 2025-09 だけ成功、2025-08 は失敗
+        assert result.archived_months == ["2025-09"]
+        state = json.loads(state_file.read_text())
+        # 部分成功でも horizon は出さない
+        assert "last_archivable_horizon" not in state
+
+
+# ---------------------------------------------------------------------------
+# TestRetentionEnvRobustness — codex 8th review P2-B
+# ---------------------------------------------------------------------------
+
+
+class TestRetentionEnvRobustness:
+    def test_main_with_invalid_retention_env_falls_back_to_default(
+        self, tmp_path, monkeypatch
+    ):
+        """codex 8th review P2-B: USAGE_RETENTION_DAYS が typo (非数値) でも
+        archive_usage.py は ValueError で死なず、default にフォールバックして動く。
+
+        旧実装は argparse の default に `int(env)` を直接注入していたため、env が
+        "abc" だと argparse 評価前に ValueError raise して traceback で即死していた。
+        launch_archive が同じ env で default fallback して spawn し続けるため、
+        毎セッション detached child が即 crash → archive 機能完全停止になっていた。
+        """
+        # USAGE_RETENTION_DAYS は無効値、他 env は最小限に揃える
+        monkeypatch.setenv("USAGE_RETENTION_DAYS", "abc-not-a-number")
+        monkeypatch.setenv("USAGE_JSONL", str(tmp_path / "usage.jsonl"))
+        monkeypatch.setenv("ARCHIVE_DIR", str(tmp_path / "archive"))
+        monkeypatch.setenv("ARCHIVE_STATE_FILE", str(tmp_path / ".archive_state.json"))
+        monkeypatch.setenv("USAGE_JSONL_LOCK", str(tmp_path / "usage.jsonl.lock"))
+        monkeypatch.setenv("HEALTH_ALERTS_JSONL", str(tmp_path / "health_alerts.jsonl"))
+
+        sys.modules.pop("archive_usage", None)
+        import archive_usage
+        importlib.reload(archive_usage)
+
+        # main() が ValueError で死なず exit 0 で帰ってくる
+        rc = archive_usage.main(["--log", "-"])
+        assert rc == 0
+
+    def test_main_with_negative_retention_env_falls_back_to_default(
+        self, tmp_path, monkeypatch
+    ):
+        """負数 / 0 もデフォルトにフォールバック (retention_days <= 0 は意味不明)。"""
+        monkeypatch.setenv("USAGE_RETENTION_DAYS", "-5")
+        monkeypatch.setenv("USAGE_JSONL", str(tmp_path / "usage.jsonl"))
+        monkeypatch.setenv("ARCHIVE_DIR", str(tmp_path / "archive"))
+        monkeypatch.setenv("ARCHIVE_STATE_FILE", str(tmp_path / ".archive_state.json"))
+        monkeypatch.setenv("USAGE_JSONL_LOCK", str(tmp_path / "usage.jsonl.lock"))
+        monkeypatch.setenv("HEALTH_ALERTS_JSONL", str(tmp_path / "health_alerts.jsonl"))
+
+        sys.modules.pop("archive_usage", None)
+        import archive_usage
+        importlib.reload(archive_usage)
+
+        rc = archive_usage.main(["--log", "-"])
+        assert rc == 0
+
 
 # ---------------------------------------------------------------------------
 # TestEnvOverrides
