@@ -99,16 +99,6 @@ def _existing_fingerprints(alerts_file: Path) -> set[str]:
     return fps
 
 
-_TRANSCRIPT_MISMATCH_HINT = (
-    "Inspect transcript_path to identify the missed events. "
-    "User slash commands are observed via UserPromptExpansion (primary) and "
-    "UserPromptSubmit (fallback); skill / subagent events via PostToolUse. "
-    "A missing entry usually indicates a hook execution failure — check "
-    "~/.claude/log/ for hook errors, then re-run "
-    "`scripts/rescan_transcripts.py --append` if the gap needs to be backfilled."
-)
-
-
 def _project_from_cwd(cwd: str) -> str:
     """cwd の basename を project 名として返す (空 cwd は空文字)。"""
     if not cwd:
@@ -177,12 +167,13 @@ def handle_stop(
     if fingerprint in _existing_fingerprints(alerts_file):
         return
 
-    # Issue #51: alert に actionable な情報を追加する。
-    # - kind: 種別 enum (drop alert と区別)
+    # Issue #51: alert に actionable な raw data を載せる。
+    # - kind: 種別 enum (drop alert と区別 / consumer 側 dispatch 用)
     # - project / cwd: どこで起きたか即座に分かる
     # - transcript_path: 直接該当トランスクリプトを開ける
     # - missing_samples: 欠損 type ごとの transcript vs usage 件数比較
-    # - hint: recommended action 文
+    # 人間向けの hint 文は **consumer 側 (dashboard / reports / docs)** に
+    # `kind` ベースの mapping として持たせる方針。jsonl は raw data に徹する。
     alert = {
         "kind": "transcript_mismatch",
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -195,7 +186,6 @@ def handle_stop(
         "missing_samples": _build_missing_samples(
             transcript_counter, usage_counter, missing_types
         ),
-        "hint": _TRANSCRIPT_MISMATCH_HINT,
     }
     # newline="\n" 固定で Windows text mode の \r\n 変換を抑止 (Issue #24)。
     alerts_file.parent.mkdir(parents=True, exist_ok=True)

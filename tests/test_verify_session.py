@@ -314,25 +314,6 @@ class TestHandleStop:
         assert sub_sample["usage_count"] == 0
         assert sub_sample["delta"] == 2
 
-    def test_alert_includes_hint_text(self, tmp_path):
-        """Issue #51: hint で recommended action を示す (空文字列ではない)。"""
-        session_id = "sess-issue51-hint"
-        cwd = "/Users/foo/myapp"
-
-        alerts = self._run(
-            tmp_path, session_id, cwd,
-            transcript_rows=[
-                make_transcript_row("assistant", session_id, cwd, [make_task_block("Plan")]),
-            ],
-            usage_events=[],
-        )
-        assert len(alerts) == 1
-        hint = alerts[0]["hint"]
-        assert isinstance(hint, str)
-        assert hint  # non-empty
-        # hint は具体的アクションへの誘導を含む (透明性: transcript_path に言及)
-        assert "transcript" in hint.lower()
-
     def test_project_falls_back_when_cwd_is_empty(self, tmp_path):
         """cwd が空のときも project は空文字 / kind は付く (堅牢性)。"""
         session_id = "sess-issue51-emptycwd"
