@@ -65,9 +65,10 @@ class TestRouterShellStructure:
             assert f'id="{el_id}"' in overview, f"id={el_id} missing from Overview section"
 
     def test_non_overview_pages_are_placeholders(self):
-        """Patterns / Quality / Surface は placeholder (Coming soon) で、Overview の widget ID を持たない"""
+        """Quality / Surface は placeholder (Coming soon) で、Overview の widget ID を持たない。
+        patterns は Issue #58 で実 widget 化したため対象から除外 (#58 Phase 3)。"""
         template = _load_template()
-        for page in ['patterns', 'quality', 'surface']:
+        for page in ['quality', 'surface']:
             section = _extract_section(template, page)
             assert 'page-placeholder' in section, f"{page}: page-placeholder class missing"
             # Overview 専用 ID は混入していないこと
