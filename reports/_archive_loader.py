@@ -7,9 +7,17 @@ event を opt-in で読み込むための共通 loader (Issue #30 Phase B)。
 `--include-archive` flag 経由で archive を merge して集計する。
 dashboard/server.py は archive を読まない (仕様で 180 日固定) ため
 このモジュールを import しない。
+
+Public API:
+- archive_read_lock(): context manager。block で SH を取って release まで保持。
+  caller は hot tier + archive を 1 つの atomic snapshot として読みたいとき使う。
+- iter_archive_events_unlocked(): lock を取らずに archive を iter。caller が
+  archive_read_lock() 下で呼ぶ前提。
+- load_archive_events(): backwards-compat な薄い wrapper (lock 取得 + iterate)。
 """
 from __future__ import annotations
 
+import contextlib
 import gzip
 import json
 import os
@@ -114,33 +122,63 @@ def _release_archive_read_lock(fd: Optional[int]) -> None:
         pass
 
 
-def load_archive_events(archive_dir: Path | None = None) -> Iterator[dict]:
-    """archive_dir/*.jsonl.gz を順に iter して event を yield。
+@contextlib.contextmanager
+def archive_read_lock() -> Iterator[None]:
+    """archive 読み取り用 LOCK_SH を blocking で取得して保持する context manager。
+
+    codex 5th review P2: caller (summary.py / export_html.py) が hot tier と
+    archive を **同じ SH lock 下で読む** ことで、archive job の LOCK_EX と
+    atomic snapshot semantics を実現する。
+
+    使い方:
+        with archive_read_lock():
+            hot_events = read_hot_tier()
+            archive_events = list(iter_archive_events_unlocked())
+            # ↑ archive job がこの with の最中に走ることはないので
+            #   hot と archive は consistent な snapshot
+    """
+    lock_fd = _acquire_archive_read_lock()
+    try:
+        yield
+    finally:
+        _release_archive_read_lock(lock_fd)
+
+
+def iter_archive_events_unlocked(archive_dir: Path | None = None) -> Iterator[dict]:
+    """archive_dir/*.jsonl.gz を順に iter して event を yield (**lock 取得なし**)。
+
+    caller は `archive_read_lock()` で SH を保持中である前提。lock 無しで呼ぶと
+    archive job と race して transient な部分書き込み状態を読む可能性がある。
 
     - `.tmp` 系は glob pattern で自動除外される (`*.jsonl.gz` が拾うのは完成形のみ)
     - archive_dir 不在時は空 iterator
-    - JSON parse error 行は silent skip (人手修復に委ねる、人間の jq で読める前提を維持)
-    - codex P2 #1: archive job が LOCK_EX 保持中なら blocking で release を待ってから読む
-      (silent skip だと `--include-archive` の意図に反して全期間集計が偽装される)
+    - JSON parse error 行は silent skip
     """
     if archive_dir is None:
         archive_dir = resolve_archive_dir()
     if not archive_dir.exists():
         return
-    lock_fd = _acquire_archive_read_lock()
-    try:
-        for path in sorted(archive_dir.glob("*.jsonl.gz")):
-            try:
-                with gzip.open(path, "rt", encoding="utf-8") as f:
-                    for line in f:
-                        line = line.strip()
-                        if not line:
-                            continue
-                        try:
-                            yield json.loads(line)
-                        except json.JSONDecodeError:
-                            continue
-            except OSError:
-                continue
-    finally:
-        _release_archive_read_lock(lock_fd)
+    for path in sorted(archive_dir.glob("*.jsonl.gz")):
+        try:
+            with gzip.open(path, "rt", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        yield json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+        except OSError:
+            continue
+
+
+def load_archive_events(archive_dir: Path | None = None) -> Iterator[dict]:
+    """archive_dir/*.jsonl.gz を SH lock 下で iter する backwards-compat wrapper。
+
+    archive 単体読み出しが目的の caller (旧 API) 向け。hot tier と組み合わせて
+    atomic snapshot を取りたい caller は `archive_read_lock()` +
+    `iter_archive_events_unlocked()` を直接使うこと (codex 5th P2)。
+    """
+    with archive_read_lock():
+        yield from iter_archive_events_unlocked(archive_dir)

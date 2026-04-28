@@ -1,14 +1,14 @@
 """tests/test_hooks_append_lock.py
 
-hooks/_append.py の lock 付き append (Issue #30 Phase A1) のテスト。
+hooks/_append.py の lock 付き append (Issue #30 Phase A1 + codex 5th review P1) のテスト。
 
 責務:
 - 通常 (非競合) 時の append 成功
-- archive job (LOCK_EX) と並行時の LOCK_SH × 5 retry × 100ms
-- retry 失敗時の silent drop + health_alerts.jsonl への alert 記録 (Issue #30 D2)
+- archive job (LOCK_EX) と並行時の blocking LOCK_SH (release 待ち)
+- 500ms 超の archive hold でも silent drop せず最終的に append (codex 5th P1)
 - fcntl 不在環境 (Windows) での lock なし degrade
 - USAGE_JSONL_LOCK env での lock path override
-- 非競合時の hot path 性能予算 (p99 < 10ms)
+- 非競合時の hot path 性能予算 (p99 < 20ms)
 """
 import importlib
 import json
@@ -111,7 +111,7 @@ def _hook_appends_with_lock(data_file: str, lock_path: str, alerts_path: str, ev
 )
 class TestArchiveContention:
     def test_hook_waits_then_succeeds_when_archive_releases(self, tmp_path):
-        """archive が 0.25 秒で release → hook は retry 中に取得成功し append 完了。"""
+        """archive が短時間 EX 保持 → hook は blocking で待ち release 後に append する。"""
         data_file = tmp_path / "usage.jsonl"
         lock_path = tmp_path / "usage.jsonl.lock"
         alerts_path = tmp_path / "health_alerts.jsonl"
@@ -140,9 +140,11 @@ class TestArchiveContention:
         assert hook.exitcode == 0
 
         elapsed = result_queue.get(timeout=1)
-        # hook should have waited ~0.25s for the archive to release
-        assert elapsed >= 0.1, f"hook returned too quickly ({elapsed:.3f}s) — lock contention not exercised"
-        assert elapsed < 0.5, f"hook waited too long ({elapsed:.3f}s)"
+        # blocking 経路: hook は archive release を待ってから append する。
+        # 0.25s 保持なので最低 0.1s は contention で待つ。
+        assert elapsed >= 0.1, (
+            f"hook returned too quickly ({elapsed:.3f}s) — lock contention not exercised"
+        )
 
         events = _read_lines(data_file)
         assert events == [event]
@@ -151,7 +153,7 @@ class TestArchiveContention:
 
 
 # ---------------------------------------------------------------------------
-# TestArchiveContentionDrop: retry 5 回失敗 → silent drop + alert 記録
+# TestBlockingThroughLongHold: codex 5th review P1 — 500ms 超 EX hold でも drop しない
 # ---------------------------------------------------------------------------
 
 
@@ -159,22 +161,34 @@ class TestArchiveContention:
     sys.platform == "win32",
     reason="POSIX flock 限定",
 )
-class TestArchiveContentionDrop:
-    def test_drop_after_retries_records_alert(self, tmp_path):
-        """archive が 1 秒以上 LOCK_EX 保持 → hook は 5 retry × 100ms = 500ms 後に drop + alert。"""
+class TestBlockingThroughLongHold:
+    def test_hook_blocks_through_long_archive_hold_no_drop(self, tmp_path):
+        """codex 5th review P1: archive が長時間 (500ms 超) EX を保持しても、
+        blocking LOCK_SH に切り替えたので hook は silent drop せず最終的に append する。
+
+        旧実装は LOCK_SH | LOCK_NB × 5 retry × 100ms = 500ms upper-bound で
+        500ms 超えると `_record_drop_alert` 経由で event を silent drop していた。
+        これは launch_archive auto-launcher (Phase C) が SessionStart で
+        archive_usage を起動する前提下では、長期運用環境で大きな usage.jsonl の
+        gzip rewrite に > 500ms かかる現実的なケースで append-only 不変条件を
+        破っていた。blocking に切り替えることで data loss を eliminate する。
+        """
         data_file = tmp_path / "usage.jsonl"
         lock_path = tmp_path / "usage.jsonl.lock"
         alerts_path = tmp_path / "health_alerts.jsonl"
-        event = {"event_type": "skill_tool", "skill": "/foo", "session_id": "s_drop"}
+        event = {"event_type": "skill_tool", "skill": "/foo", "session_id": "s_long"}
 
         ctx = multiprocessing.get_context("spawn")
         ready_event = ctx.Event()
         done_event = ctx.Event()
         result_queue = ctx.Queue()
 
+        # 旧 retry budget 500ms を確実に超える 0.7s 保持
+        HOLD_SECONDS = 0.7
+
         archive = ctx.Process(
             target=_archive_holds_ex_lock,
-            args=(str(lock_path), 1.0, ready_event, done_event),
+            args=(str(lock_path), HOLD_SECONDS, ready_event, done_event),
         )
         hook = ctx.Process(
             target=_hook_appends_with_lock,
@@ -189,20 +203,21 @@ class TestArchiveContentionDrop:
         assert hook.exitcode == 0
 
         elapsed = result_queue.get(timeout=1)
-        # 5 retry × 100ms = 500ms 程度で drop してるはず
-        assert 0.4 <= elapsed < 0.7, f"hook drop timing 期待外: {elapsed:.3f}s"
+        # blocking なので hook は archive 完了 (~0.7s) まで待つ
+        assert elapsed >= 0.5, (
+            f"hook returned in {elapsed:.3f}s — should have blocked through "
+            f"the full {HOLD_SECONDS}s archive hold"
+        )
 
-        # event は drop されて usage.jsonl に書かれていない
-        assert not data_file.exists() or _read_lines(data_file) == []
-
-        # alert が health_alerts.jsonl に記録されている
-        alerts = _read_lines(alerts_path)
-        assert len(alerts) == 1
-        alert = alerts[0]
-        assert alert["alert"] == "append_skipped_due_to_archive_lock"
-        assert alert["event_type"] == "skill_tool"
-        assert alert["session_id"] == "s_drop"
-        assert "timestamp" in alert
+        # event は drop されず append されている (data loss 無し = append-only 守られた)
+        events = _read_lines(data_file)
+        assert events == [event], (
+            "blocking 契約: 長時間 EX hold でも event は最終的に append される"
+        )
+        # drop alert は記録されない (drop が起きていない)
+        assert not alerts_path.exists() or _read_lines(alerts_path) == [], (
+            "blocking 契約下では drop alert は出ないはず"
+        )
 
 
 # ---------------------------------------------------------------------------

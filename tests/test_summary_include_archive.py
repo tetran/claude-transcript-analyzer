@@ -193,3 +193,96 @@ class TestCliFlag:
         summary_module.main(["--include-archive"])
         out = capsys.readouterr().out
         assert "Total events: 2" in out
+
+
+# ---------------------------------------------------------------------------
+# TestAtomicSnapshot — codex 5th review P2: hot+archive を同じ SH lock 下で読む
+# ---------------------------------------------------------------------------
+
+
+class TestAtomicSnapshot:
+    def test_no_double_count_when_archive_runs_concurrently(
+        self, summary_module, tmp_path, monkeypatch
+    ):
+        """codex 5th review P2: archive job が EX を取って event を hot から archive に
+        移動している最中に load_events(include_archive=True) が走っても、event を
+        二重カウントしない (atomic snapshot 契約)。
+
+        旧実装は hot tier を lock 外で先に読んでから _archive_loader が SH を取って
+        archive を読んだため、その間に archive job が走ると event A が hot 経由 +
+        archive 経由で 2 回数えられる race window があった (codex 4th P2 #1 fix で
+        archive 読み出しを blocking にしたが、read 順序を atomic 化していなかった
+        ことで誘発)。修正後は load_events 全体が同じ SH lock 下で実行されるので、
+        archive job 完了後の consistent snapshot で A はちょうど 1 回だけ見える。
+        """
+        try:
+            import fcntl
+        except ImportError:
+            pytest.skip("requires POSIX fcntl")
+
+        import threading
+        import time as _time
+        import os as _os
+
+        a_old = {
+            "event_type": "skill_tool",
+            "skill": "/A_old",
+            "timestamp": "2025-08-01T00:00:00+00:00",
+            "session_id": "s",
+        }
+        b_recent = {
+            "event_type": "skill_tool",
+            "skill": "/B_recent",
+            "timestamp": "2026-04-20T00:00:00+00:00",
+            "session_id": "s",
+        }
+        _write_hot(tmp_path, [a_old, b_recent])
+        archive_dir = tmp_path / "archive"
+        archive_dir.mkdir(parents=True, exist_ok=True)
+
+        # USAGE_JSONL fixture が tmp_path/usage.jsonl を設定済 → lock は <data>.lock
+        lock_path = tmp_path / "usage.jsonl.lock"
+        # 念のため明示 (env 経由で _archive_loader / _append が同じ lock を見るように)
+        monkeypatch.setenv("USAGE_JSONL_LOCK", str(lock_path))
+
+        ex_acquired = threading.Event()
+        HOLD_SECONDS = 0.3
+
+        def archive_job_simulation():
+            """archive_usage.run_archive 相当の動作を直列で実行する thread。
+
+            手順 (本物の archive job と同じ): EX 取得 → archive .gz 書き込み →
+            hot tier rewrite → EX release。途中の sleep で main 側が「lock 外で
+            hot を読む旧バグ経路」を踏める時間を確保する。
+            """
+            fd = _os.open(str(lock_path), _os.O_CREAT | _os.O_RDWR, 0o600)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX)
+                ex_acquired.set()
+                _time.sleep(HOLD_SECONDS)
+                # archive .gz に A_old を書き、hot を [B_recent] に rewrite
+                with gzip.open(archive_dir / "2025-08.jsonl.gz", "wt", encoding="utf-8") as f:
+                    f.write(json.dumps(a_old, ensure_ascii=False) + "\n")
+                hot_path = tmp_path / "usage.jsonl"
+                tmp_hot = hot_path.with_name(hot_path.name + ".tmp")
+                with tmp_hot.open("w", encoding="utf-8") as f:
+                    f.write(json.dumps(b_recent, ensure_ascii=False) + "\n")
+                _os.replace(tmp_hot, hot_path)
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            finally:
+                _os.close(fd)
+
+        t = threading.Thread(target=archive_job_simulation, daemon=True)
+        t.start()
+        assert ex_acquired.wait(timeout=2.0), "archive thread failed to acquire LOCK_EX"
+
+        events = summary_module.load_events(include_archive=True)
+        t.join(timeout=2.0)
+
+        skills = [ev.get("skill") for ev in events]
+        # 修正後: A_old と B_recent がちょうど 1 回ずつ (archive 完了後の snapshot)
+        assert skills.count("/A_old") == 1, (
+            f"A_old appears {skills.count('/A_old')} times — race window で double count!"
+        )
+        assert skills.count("/B_recent") == 1
+        assert len(events) == 2
