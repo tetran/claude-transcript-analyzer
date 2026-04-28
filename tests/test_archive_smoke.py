@@ -16,13 +16,10 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-import pytest
-
 PROJECT_ROOT = Path(__file__).parent.parent
 ARCHIVE_USAGE_PY = PROJECT_ROOT / "scripts" / "archive_usage.py"
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="POSIX flock 限定")
 class TestArchiveSmoke:
     def test_retention_one_day_archives_old_events(self, tmp_path):
         data_file = tmp_path / "usage.jsonl"

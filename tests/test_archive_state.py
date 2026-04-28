@@ -19,8 +19,6 @@ import sys
 import time
 from pathlib import Path
 
-import pytest
-
 from archive_test_helpers import (
     make_event as _make_event,
     read_archive as _read_archive,
@@ -454,7 +452,6 @@ def _archive_subprocess_main(env_dict: dict, sleep_inside: float, ready_q, resul
     result_q.put(rc)
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="POSIX flock 限定")
 class TestLockExclusion:
     def test_concurrent_archive_jobs_serialize(self, tmp_path):
         """2 つの archive_usage を並列起動 → LOCK_EX で直列化."""

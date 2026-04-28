@@ -22,6 +22,9 @@ import pytest
 
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(PROJECT_ROOT / "hooks"))
+
+import _lock  # noqa: E402  — Issue #44 cross-platform lock helper
 
 
 @pytest.fixture(name="loader_module")
@@ -100,18 +103,23 @@ class TestArchiveLockBlocking:
     def test_loader_blocks_until_lock_released(
         self, loader_module, monkeypatch, tmp_path
     ):
-        """codex P2 #1: archive job が LOCK_EX を保持中に loader を呼ぶと、
+        """codex P2 #1 + Issue #44: archive job が EX を保持中に loader を呼ぶと、
         archive を silent skip せず blocking で待ち、release 後に events を読む。
 
         旧 codex P3 fix は LOCK_SH | LOCK_NB で「取れなければ archive を読まない」
         だったが、`--include-archive` を明示したユーザーに「archive 0 件」を返すと
         全期間集計の silent な嘘になる。CLI 起動の reports は < 100ms 制約が無く、
         archive job の EX 保持はサブ秒で終わるため blocking が正解。
+
+        Issue #44: helper thread の lock 取得は `_lock` 経由で POSIX/Windows 両対応。
         """
-        try:
-            import fcntl
-        except ImportError:
-            pytest.skip("requires POSIX fcntl")
+        # threading では同一プロセス内なので msvcrt.locking が SH/EX を区別せず
+        # blocking しない (file system レベルの lock じゃないとプロセス内の
+        # double-acquire で上手く動かない) — Windows では multiprocess パスに
+        # 倒すべきだが、ここでは loader 側の blocking semantics を確認する目的のため
+        # POSIX 限定の thread-based テストで OK。Windows は別 helper で確認 (cross-process)。
+        if not _lock._HAS_FCNTL:
+            pytest.skip("requires POSIX fcntl for thread-based contention test")
 
         import threading
         import time as _time
@@ -138,12 +146,12 @@ class TestArchiveLockBlocking:
         lock_acquired = threading.Event()
 
         def hold_lock_briefly():
-            fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
+            fd = _lock.open_lock_file(lock_path)
             try:
-                fcntl.flock(fd, fcntl.LOCK_EX)
+                _lock.acquire_exclusive(fd, blocking=True)
                 lock_acquired.set()
                 _time.sleep(HOLD_SECONDS)
-                fcntl.flock(fd, fcntl.LOCK_UN)
+                _lock.release(fd)
             finally:
                 os.close(fd)
 
@@ -174,11 +182,14 @@ class TestArchiveLockBlocking:
         loader は lock を取得する。
 
         旧実装は `lock_path.exists()` で early return していたため、`exists()` 後に
-        archive_usage が file 作成 + LOCK_EX 取得した瞬間に reader が unlocked で
+        archive_usage が file 作成 + EX 取得した瞬間に reader が unlocked で
         archive を読む TOCTOU window があった。`os.O_RDWR | os.O_CREAT` で
         create-on-open に変えることで window を構造的に閉じる。
+
+        Issue #44: lock file 作成は `_lock.open_lock_file` 経由で POSIX/Windows
+        両対応。両 module 不在の degrade 環境では lock file 作成自体は走るが、
+        flock が no-op になる。
         """
-        pytest.importorskip("fcntl")
 
         archive_dir = tmp_path / "archive"
         _write_archive(

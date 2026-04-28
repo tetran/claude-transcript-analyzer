@@ -243,12 +243,27 @@ class TestSpawnLogic:
         launch_archive_module.main()
         assert called == []
 
-    def test_spawn_archive_job_skips_on_windows(self, launch_archive_module, monkeypatch):
-        """codex P2: archive_usage.py は POSIX fcntl 限定で state を書かずに exit する。
-        Windows で spawn し続けると永久 spawn ループになるため launcher 側で skip する."""
+    def test_spawn_archive_job_runs_on_windows(self, launch_archive_module, monkeypatch):
+        """Issue #44: 旧 codex P2 では archive_usage.py が POSIX fcntl 限定だった
+        ため Windows では launcher 側で skip していた。`_lock` 経路の追加で
+        Windows でも archive_usage が state を更新できるようになったので、
+        Windows でも spawn される (skip しない)。
+
+        spawn_detached を mock して「呼ばれた」ことだけ確認する (実機 Popen は
+        platform 差で creationflags の妥当性が変わるため)。
+        """
         monkeypatch.setattr(launch_archive_module.sys, "platform", "win32")
+        called: list[list[str]] = []
+
+        def fake_spawn(args, **kwargs):
+            called.append(args)
+            return mock.MagicMock(pid=99999)
+
+        monkeypatch.setattr(launch_archive_module, "spawn_detached", fake_spawn)
         result = launch_archive_module._spawn_archive_job()
-        assert result is None
+        assert result is not None
+        assert len(called) == 1
+        assert "archive_usage.py" in called[0][1]
 
 
 # ---------------------------------------------------------------------------
@@ -256,7 +271,6 @@ class TestSpawnLogic:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="POSIX 限定")
 class TestSmokeIntegration:
     def test_session_start_invocation_spawns_archive_job(self, tmp_path):
         """launch_archive を subprocess.run で起動 → archive_usage が detach 起動 →

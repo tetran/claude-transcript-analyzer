@@ -24,6 +24,8 @@ PROJECT_ROOT = Path(__file__).parent.parent
 HOOKS_DIR = PROJECT_ROOT / "hooks"
 sys.path.insert(0, str(HOOKS_DIR))
 
+import _lock  # noqa: E402  — Issue #44 cross-platform lock helper
+
 
 @pytest.fixture(name="fresh_append_module")
 def _fresh_append_module_fixture(monkeypatch, tmp_path):
@@ -79,13 +81,20 @@ class TestSharedLockAcquire:
 
 
 def _archive_holds_ex_lock(lock_path: str, hold_seconds: float, ready_event, done_event):
-    """archive job 役: LOCK_EX を hold_seconds 保持してから release。"""
-    import fcntl
-    with open(lock_path, "a") as f:
-        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+    """archive job 役: EX を hold_seconds 保持してから release。
+
+    Issue #44: lock 取得は `_lock` 経由で POSIX/Windows 両対応。
+    spawn context で別プロセスとして起動されるため module-level の `_lock` が
+    新プロセスで fresh import される (再 import 不要)。
+    """
+    fd = _lock.open_lock_file(Path(lock_path))
+    try:
+        _lock.acquire_exclusive(fd, blocking=True)
         ready_event.set()
         time.sleep(hold_seconds)
-        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        _lock.release(fd)
+    finally:
+        os.close(fd)
     done_event.set()
 
 
@@ -105,10 +114,6 @@ def _hook_appends_with_lock(data_file: str, lock_path: str, alerts_path: str, ev
     result_queue.put(elapsed)
 
 
-@pytest.mark.skipif(
-    sys.platform == "win32",
-    reason="POSIX flock 限定 — Windows は lock なし degrade パス (TestFcntlMissing 参照)",
-)
 class TestArchiveContention:
     def test_hook_waits_then_succeeds_when_archive_releases(self, tmp_path):
         """archive が短時間 EX 保持 → hook は blocking で待ち release 後に append する。"""
@@ -157,10 +162,6 @@ class TestArchiveContention:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skipif(
-    sys.platform == "win32",
-    reason="POSIX flock 限定",
-)
 class TestBlockingThroughLongHold:
     def test_hook_blocks_through_long_archive_hold_no_drop(self, tmp_path):
         """codex 5th review P1: archive が長時間 (500ms 超) EX を保持しても、
@@ -225,30 +226,45 @@ class TestBlockingThroughLongHold:
 # ---------------------------------------------------------------------------
 
 
-class TestFcntlMissing:
-    def test_no_fcntl_falls_back_to_lockless_append(self, tmp_path, monkeypatch):
-        # fcntl import を ImportError にする
-        monkeypatch.setitem(sys.modules, "fcntl", None)
+class TestNoLockingDegrade:
+    """Issue #44: fcntl も msvcrt も両方 import 不能な特殊環境での degrade 経路。
 
-        # _append を reload して _HAS_FCNTL = False を効かせる
+    通常配布の Python では POSIX なら fcntl、Windows なら msvcrt のいずれかが必ず
+    存在するため、in-house Python build や embedded 環境への保険として degrade
+    path を維持する。両方とも ImportError のとき `_lock` は no-op (lockless) に
+    fall back し、`_append.append_event` も正常に append する。
+    """
+
+    def test_lockless_degrade_when_neither_module_available(self, tmp_path, monkeypatch):
+        # fcntl と msvcrt の両方を ImportError にする
+        monkeypatch.setitem(sys.modules, "fcntl", None)
+        monkeypatch.setitem(sys.modules, "msvcrt", None)
+
+        # _lock を reload して _HAS_FCNTL=False, _HAS_MSVCRT=False を効かせる
+        sys.modules.pop("_lock", None)
         sys.modules.pop("_append", None)
-        import _append
-        importlib.reload(_append)
+        import _lock as fresh_lock  # noqa: E402
+        importlib.reload(fresh_lock)
+        import _append as fresh_append  # noqa: E402
+        importlib.reload(fresh_append)
 
         try:
-            assert _append._HAS_FCNTL is False, (
-                "fcntl ImportError simulate しても _HAS_FCNTL=True のまま"
-            )
+            assert fresh_lock._HAS_FCNTL is False
+            assert fresh_lock._HAS_MSVCRT is False
 
             data_file = tmp_path / "usage.jsonl"
-            _append.append_event(data_file, {"event_type": "x", "session_id": "s"})
+            fresh_append.append_event(
+                data_file, {"event_type": "x", "session_id": "s"}
+            )
 
             events = _read_lines(data_file)
             assert events == [{"event_type": "x", "session_id": "s"}]
         finally:
-            # 後続テストのため _append を本来の状態に戻す
+            # 後続テストのため module を本来の状態に戻す
             sys.modules.pop("_append", None)
+            sys.modules.pop("_lock", None)
             monkeypatch.delitem(sys.modules, "fcntl", raising=False)
+            monkeypatch.delitem(sys.modules, "msvcrt", raising=False)
 
 
 # ---------------------------------------------------------------------------
@@ -298,10 +314,6 @@ class TestEnvOverride:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skipif(
-    sys.platform == "win32",
-    reason="POSIX flock 限定 (Windows degrade path は別経路)",
-)
 class TestNonContentionPerformance:
     def test_p99_under_10ms_no_contention(self, tmp_path, fresh_append_module):
         """1 hook の append が < 10ms (非競合)。lock acquire + write + release を含む。"""

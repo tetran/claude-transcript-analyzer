@@ -21,15 +21,14 @@ import contextlib
 import gzip
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Iterator, Optional
 
-try:
-    import fcntl  # type: ignore[import]
-    _HAS_FCNTL = True
-except ImportError:  # pragma: no cover (Windows のみ)
-    fcntl = None  # type: ignore[assignment]
-    _HAS_FCNTL = False
+# `_lock` を import するため hooks/ を sys.path に追加 (Issue #44)
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "hooks"))
+
+import _lock  # noqa: E402
 
 _DEFAULT_DATA_DIR = Path.home() / ".claude" / "transcript-analyzer"
 _DEFAULT_DATA_FILE = _DEFAULT_DATA_DIR / "usage.jsonl"
@@ -70,56 +69,55 @@ def _resolve_lock_path() -> Path:
 
 
 def _acquire_archive_read_lock() -> Optional[int]:
-    """archive 読み取り用 LOCK_SH を **blocking** で取得する。
+    """archive 読み取り用 SH lock を **blocking** で取得する。
 
     設計判断 (codex P2 #1):
     旧実装は LOCK_NB で取れなければ archive を silent skip していたが、
     `--include-archive` を明示したユーザーに対して archive を 0 件として返すと
     全期間集計を silent に偽装することになる。CLI 起動の reports は hooks と
-    違って `< 100ms` 制約が無く、archive job の LOCK_EX 保持はサブ秒で終わる
+    違って `< 100ms` 制約が無く、archive job の EX 保持はサブ秒で終わる
     (rewrite + state marker 書き込み程度) ため、blocking で **archive job 完了を
     待ってから一貫した状態で読む** 意味論に固定する。
 
-    旧 codex P3 (archive job 中の二重カウント window) は LOCK_SH (blocking) でも
+    旧 codex P3 (archive job 中の二重カウント window) は SH (blocking) でも
     解消される — EX 解除を待ってから読み始めるので、hot tier と archive の両方に
     同 event が transient で見える window 自体が closed になる。
 
+    Issue #44: lock 層は `_lock` モジュールが POSIX/Windows を吸収する。Windows
+    では SH 概念が無いため EX 相当に degrade する (concurrency 落ちるが
+    correctness は保たれる)。
+
     Returns:
-        - None: lock 不要 / 取得不能 (fcntl 不在 / lock file 不在 / open 失敗) → そのまま読む
+        - None: 取得不能 (open 失敗 / signal 起因等) → そのまま読む (旧来 fallback)
         - fd:  SH 取得成功 → 読み終わったら fd を release/close
     """
-    if not _HAS_FCNTL:
-        return None  # Windows / fcntl 不在 — 保護できないが進める
     lock_path = _resolve_lock_path()
     try:
         # codex 6th P3: O_RDWR | O_CREAT で create-on-open に統一。
         # 旧実装は `lock_path.exists()` で early return していたため、check と
-        # archive_usage の lock file 作成 + LOCK_EX 取得の間に reader が unlocked
-        # で archive を読む TOCTOU window があった。create-on-open でこの window を
-        # 構造的に閉じる (lock file は archive_usage 側も同じ path を見るため
-        # SH/EX が正しく coordinate する)。
-        lock_path.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o644)
+        # archive_usage の lock file 作成 + EX 取得の間に reader が unlocked で
+        # archive を読む TOCTOU window があった。create-on-open でこの window を
+        # 構造的に閉じる。`_lock.open_lock_file` 経由で OS 別の binary fd 要件
+        # (msvcrt.locking) も吸収される。
+        fd = _lock.open_lock_file(lock_path)
     except OSError:
         return None  # 保護できないが進める
     try:
-        fcntl.flock(fd, fcntl.LOCK_SH)  # blocking — EX 保持中なら release を待つ
+        _lock.acquire_shared(fd, blocking=True)  # EX 保持中なら release を待つ
     except OSError:
-        # blocking 中の OSError は実運用ではほぼ起きない (signal 起因等の異常系)。
-        # silent skip より「読みに行って失敗した」を選ぶ — fd は閉じて lock 取得を諦め、
-        # 後段の glob 経路で archive を読みに行かせる (lock 無し読み出しは旧来挙動)。
+        # blocking 中の OSError は実運用ではほぼ起きない (signal 起因等の異常系 /
+        # Windows LK_LOCK 10 秒超 retry 失敗)。silent skip より「読みに行って
+        # 失敗した」を選ぶ — fd は閉じて lock 取得を諦め、後段の glob 経路で
+        # archive を読みに行かせる (lock 無し読み出しは旧来挙動)。
         os.close(fd)
         return None
     return fd
 
 
 def _release_archive_read_lock(fd: Optional[int]) -> None:
-    if fd is None or not _HAS_FCNTL:
+    if fd is None:
         return
-    try:
-        fcntl.flock(fd, fcntl.LOCK_UN)
-    except OSError:
-        pass
+    _lock.release(fd)
     try:
         os.close(fd)
     except OSError:

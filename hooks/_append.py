@@ -1,41 +1,43 @@
 """hooks/_append.py
 
-usage.jsonl への lock 付き append (Issue #30 Phase A1 + codex 5th review P1)。
+usage.jsonl への lock 付き append (Issue #30 Phase A1 + codex 5th review P1
++ Issue #44 Windows 対応)。
 
 並列耐性:
-- archive job が LOCK_EX 中の場合、append 側は **blocking LOCK_SH** で release を待つ
-- archive_usage.py は context manager で必ず LOCK_EX を release するため、待機は
+- archive job が LOCK_EX 中の場合、append 側は **blocking SH** で release を待つ
+- archive_usage.py は context manager で必ず EX を release するため、待機は
   archive 実行時間で bounded (典型サブ秒、worst case で gzip rewrite 時間)
-- fcntl OSError (signal 起因等の異常系) のみ silent drop + alert で observability 確保
-- fcntl 不在環境 (Windows) では lock なしで append (POSIX O_APPEND の atomic 性に依拠)
+- POSIX (`fcntl.flock`) / Windows (`msvcrt.locking`) どちらも `_lock` モジュールが
+  吸収するため OS による分岐はこのファイルから消えている (Issue #44)
+- lock acquire 自体が `OSError` (signal 起因等の異常系) で失敗した場合のみ silent
+  drop + alert で observability を確保
 
 設計判断 (codex 5th review P1):
-- 旧実装は LOCK_SH | LOCK_NB × 5 retry × 100ms = 500ms upper-bound で、それを
+- 旧実装は `LOCK_SH | LOCK_NB × 5 retry × 100ms = 500ms upper-bound` で、それを
   超えると `_record_drop_alert` 経由で event を silent drop していた。これは
   launch_archive auto-launcher (Phase C) が SessionStart で archive_usage を
   起動するようになったあと、長期運用された大きな usage.jsonl の gzip rewrite
   が 500ms を超える現実的なケースで append-only 不変条件を破っていた。
 - 設計判断: hook latency vs data loss のトレードオフで data loss を回避する側を
   選択。非競合時はマイクロ秒、競合時のみ archive 完了まで blocking 待ちで bounded。
-- reports/_archive_loader.py の blocking LOCK_SH (codex 4th P2 #1) と意味論統一。
+- reports/_archive_loader.py の blocking SH (codex 4th P2 #1) と意味論統一。
 
 設計上の不変条件:
 - 非競合 hot path の overhead は ~µs オーダー (lock acquire + write + release)
-- 競合時の wait は archive_usage.py の LOCK_EX hold duration で bounded
+- 競合時の wait は archive_usage.py の EX hold duration で bounded
 - record_*.py 全てがこのモジュール経由で append することで lock の取りこぼしを防ぐ
 """
 import json
 import os
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-try:
-    import fcntl  # type: ignore[import]
-    _HAS_FCNTL = True
-except ImportError:  # pragma: no cover (Windows のみ)
-    fcntl = None  # type: ignore[assignment]
-    _HAS_FCNTL = False
+# `_lock` を import するため hooks/ を sys.path に追加
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import _lock  # noqa: E402
 
 
 _DEFAULT_ALERTS_PATH = (
@@ -98,39 +100,30 @@ def append_event(
 ) -> None:
     """usage.jsonl に event を 1 行追記する (lock 越し)。
 
-    archive job (LOCK_EX) と並行時は **blocking LOCK_SH** で release を待ってから
-    append する。archive_usage.py は context manager で必ず EX を release するため
-    待機は archive 実行時間で bounded。
+    archive job (EX) と並行時は **blocking SH** で release を待ってから append する。
+    archive_usage.py は context manager で必ず EX を release するため、待機は
+    archive 実行時間で bounded。
 
-    flock 自体が OSError で失敗した場合 (signal 起因等の異常系) のみ
+    lock acquire が `OSError` で失敗した場合 (signal 起因等の異常系) のみ
     health_alerts.jsonl に drop alert を 1 行記録して silent return する。
     """
     data_file.parent.mkdir(parents=True, exist_ok=True)
 
-    if not _HAS_FCNTL:
-        # Windows: lock なしで append (POSIX O_APPEND の atomic 性に依拠できない代わり、
-        # fcntl 経路と挙動を揃えるため try/except で OSError は silent drop)
-        try:
-            _write_event_line(data_file, event)
-        except OSError:
-            pass
-        return
-
     lock_file = _resolve_lock_path(data_file, lock_path)
-    lock_file.parent.mkdir(parents=True, exist_ok=True)
 
-    with open(lock_file, "a") as lock_fp:
+    fd = _lock.open_lock_file(lock_file)
+    try:
         try:
-            fcntl.flock(lock_fp.fileno(), fcntl.LOCK_SH)  # blocking — EX release を待つ
+            _lock.acquire_shared(fd, blocking=True)
         except OSError:
-            # 異常系: signal 起因等。silent drop よりは alert で観測可能にする。
+            # 異常系: signal 起因等 / Windows LK_LOCK 10 秒超 retry 失敗。
+            # silent drop よりは alert で観測可能にする。
             _record_drop_alert(event)
             return
 
         try:
             _write_event_line(data_file, event)
         finally:
-            try:
-                fcntl.flock(lock_fp.fileno(), fcntl.LOCK_UN)
-            except OSError:
-                pass
+            _lock.release(fd)
+    finally:
+        os.close(fd)
