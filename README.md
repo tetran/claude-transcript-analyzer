@@ -127,25 +127,6 @@ git clone https://github.com/tetran/claude-transcript-analyzer ~/.claude/plugins
 
 Claude Code が `~/.claude/plugins/` 以下のプラグインを自動認識して hooks を登録する。
 
-### install.sh を使う（レガシー）
-
-```bash
-git clone https://github.com/tetran/claude-transcript-analyzer ~/claude-transcript-analyzer
-cd ~/claude-transcript-analyzer
-chmod +x install.sh
-./install.sh
-# → Claude Code を再起動する
-```
-
-`install.sh` は `~/.claude/settings.json` に hooks エントリを追加する。
-既存の設定は保持され、実行前にバックアップ（`settings.json.bak`）が作成される。
-何度実行しても安全（べき等）。
-
-アンインストールするときは `~/.claude/settings.json` から以下のエントリを削除して Claude Code を再起動する：
-
-- `hooks.PostToolUse` の `"Skill"` と `"Task"` matcher エントリ
-- `hooks.UserPromptSubmit` のエントリ
-
 ### 旧バージョンからのデータ移行
 
 以前のバージョン（`data/usage.jsonl` に保存していた場合）はデータを移行できる：

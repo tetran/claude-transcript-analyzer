@@ -38,6 +38,16 @@ def write_events(path: Path, events: list[dict]) -> None:
             f.write(json.dumps(ev) + "\n")
 
 
+def start_server_in_thread(server) -> threading.Thread:
+    """サーバーをデーモンスレッドで起動する共通ヘルパ (Issue #28)。
+
+    test_dashboard_live.py / test_dashboard_sse.py から再利用する。
+    """
+    t = threading.Thread(target=server.serve_forever, daemon=True)
+    t.start()
+    return t
+
+
 class TestBuildDashboardData:
     def test_empty_events_returns_valid_structure(self, tmp_path):
         mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")

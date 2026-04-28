@@ -1,80 +1,39 @@
 # claude-transcript-analyzer
 
-## プロジェクトの目的
+> このリポジトリの正規 AI エージェント向けガイドは **[CLAUDE.md](CLAUDE.md)** です。
+> AGENTS.md は CLAUDE.md と内容を重複させないために、全エージェントに適用される
+> 最低限の規約のみを保持します。データフロー / event_type 一覧 / ファイル構成 /
+> Hook 配置などの詳細仕様は CLAUDE.md を参照してください。
 
-Claude Code のトランスクリプト（`.jsonl`）を解析し、**Skills と Subagents の使用状況を自動収集・集計・可視化する**ツール。
+## プロジェクトの目的（要約）
 
-Claude Code Hooks を使ってリアルタイムにイベントを収集し、`data/usage.jsonl` に蓄積する。
-それをブラウザダッシュボードで見やすく表示する。
+Claude Code の Skills と Subagents の使用状況を Hooks で自動収集・可視化するツール。
+イベントログは `~/.claude/transcript-analyzer/usage.jsonl`（テスト時のみ
+プロジェクト内 `data/usage.jsonl`）に append-only で蓄積され、
+ダッシュボード / ターミナルレポート / HTML エクスポートで参照する。
 
-## データフロー
-
-```
-Claude Code の動作
-  │  PostToolUse(Skill)         →  hooks/record_skill.py
-  │  UserPromptSubmit           →  hooks/record_skill.py
-  │  PostToolUse(Task)          →  hooks/record_subagent.py
-  │  SessionStart / UserPromptExpansion / UserPromptSubmit / PostToolUse
-  │                             →  hooks/launch_dashboard.py  (べき等 launcher)
-  ↓
-data/usage.jsonl          ← append-only イベントログ（単一ファイルに集約）
-  │
-  ├── reports/summary.py  →  ターミナル集計レポート
-  └── dashboard/server.py →  ブラウザダッシュボード（自動起動・空きポート bind）
-```
-
-## ファイル構成
-
-```
-claude-transcript-analyzer/
-├── hooks/
-│   ├── record_skill.py       # PostToolUse(Skill) + UserPromptSubmit 処理
-│   └── record_subagent.py    # PostToolUse(Task) 処理
-├── dashboard/
-│   └── server.py             # ローカル HTTP ダッシュボードサーバー
-├── data/
-│   └── usage.jsonl           # append-only イベントログ（自動生成）
-├── install/
-│   └── merge_settings.py     # settings.json マージスクリプト（べき等）
-├── reports/
-│   └── summary.py            # 集計レポート表示
-├── tests/
-├── install.sh                # セットアップスクリプト
-├── docs/
-│   ├── transcript-format.md  # トランスクリプトファイルの場所と構造
-│   └── specs/                # 仕様
-```
-
-## data/usage.jsonl のイベント形式
-
-3種類のイベントが1ファイルに混在する（JSONL 形式）。
-
-```jsonc
-// Skill ツール呼び出し
-{"event_type": "skill_tool", "skill": "user-story-creation", "args": "6", "project": "chirper", "session_id": "...", "timestamp": "2026-02-28T10:00:00+00:00"}
-
-// ユーザーの slash コマンド
-{"event_type": "user_slash_command", "skill": "/insights", "args": "", "project": "chirper", "session_id": "...", "timestamp": "2026-02-28T10:05:00+00:00"}
-
-// Subagent 起動
-{"event_type": "subagent_start", "subagent_type": "Explore", "project": "chirper", "session_id": "...", "timestamp": "2026-02-28T10:06:00+00:00"}
-```
-
-## 開発規約
+## 全 AI エージェント共通の規約
 
 - **TDD** で実装する（テストを先に書く）
 - **外部ライブラリ不使用**（stdlib のみ）
-- テスト隔離: `USAGE_JSONL` 環境変数で `DATA_FILE` をオーバーライドする
+- テスト隔離:
+  - `USAGE_JSONL` で `DATA_FILE` をオーバーライド
+  - `HEALTH_ALERTS_JSONL` で `verify_session.py` の `ALERTS_FILE` をオーバーライド
 - 組み込みコマンドは記録しない: `/exit /clear /help /compact /mcp /config /model /resume /context /skills /hooks /fast`
 
 ## よく使うコマンド
 
 ```bash
-# テスト実行
 python3 -m pytest tests/
 ```
 
-## トランスクリプトのソースファイル
+## さらに詳しく
 
-処理元となる Claude Code のトランスクリプトは `~/.claude/projects/` 以下にある。
-詳細は `docs/transcript-format.md` を参照。
+| 知りたいこと | 参照先 |
+|------------|-------|
+| プロジェクト全体仕様（データフロー / 観測対象 Hook / event_type） | [`CLAUDE.md`](CLAUDE.md) |
+| トランスクリプト形式 + Hook 入力 JSON スキーマ | [`docs/transcript-format.md`](docs/transcript-format.md) |
+| 仕様書 / 実装計画 | `docs/specs/` / `docs/plans/` |
+| レビューメモ | `docs/review/` |
+
+処理元の Claude Code トランスクリプト（`.jsonl`）は `~/.claude/projects/` 以下に保存される。

@@ -1,0 +1,11 @@
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+# ruff デフォルト (E + F) のみ。isort (I) や pep8 warning (W) は導入時の差分が大きく
+# 旧 pylint の検出範囲とも乖離するため見送り。必要になった時点で個別に opt-in する。
+ignore = [
+    # 旧 .pylintrc の wrong-import-position に対応 (sys.path 操作後 import を許容)
+    "E402",
+]
