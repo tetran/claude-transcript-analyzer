@@ -1,4 +1,5 @@
 """reports/summary.py — usage.jsonl の集計レポートを表示する。"""
+import argparse
 import json
 import os
 import sys
@@ -7,6 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from subagent_metrics import aggregate_subagent_metrics
+from reports._archive_loader import archive_read_lock, iter_archive_events_unlocked
 
 _DEFAULT_PATH = Path.home() / ".claude" / "transcript-analyzer" / "usage.jsonl"
 DATA_FILE = Path(os.environ.get("USAGE_JSONL", str(_DEFAULT_PATH)))
@@ -16,18 +18,36 @@ DATA_FILE = Path(os.environ.get("USAGE_JSONL", str(_DEFAULT_PATH)))
 _PERMISSION_NOTIFICATION_TYPES = frozenset({"permission", "permission_prompt"})
 
 
-def load_events() -> list[dict]:
-    if not DATA_FILE.exists():
-        return []
-    events = []
-    for line in DATA_FILE.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            events.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
+def _read_hot_events() -> list[dict]:
+    """usage.jsonl を 1 行 1 event でロード。parse 失敗行は silent skip。"""
+    events: list[dict] = []
+    if DATA_FILE.exists():
+        for line in DATA_FILE.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                events.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return events
+
+
+def load_events(include_archive: bool = False) -> list[dict]:
+    """hot tier (usage.jsonl) + 必要なら archive を集計用にロード。
+
+    codex 5th review P2: include_archive=True のときは hot と archive を
+    **同じ SH lock 下で読む** ことで archive job との atomic snapshot を実現。
+    旧実装は hot を lock 外で読んでから archive 用 lock を取っていたため、
+    その間に archive job が走ると event が hot + archive 両方に見えて
+    double count する race window があった。
+    """
+    if not include_archive:
+        return _read_hot_events()
+
+    with archive_read_lock():
+        events = _read_hot_events()
+        events.extend(iter_archive_events_unlocked())
     return events
 
 
@@ -147,7 +167,17 @@ def print_report(events: list[dict]) -> None:
         print("  (no data)")
 
 
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description="Skills/Subagents 使用状況の集計レポート")
+    parser.add_argument(
+        "--include-archive",
+        action="store_true",
+        help="archive/*.jsonl.gz を読み込んで集計に含める (default: hot tier のみ)",
+    )
+    args = parser.parse_args(argv)
+    print_report(load_events(include_archive=args.include_archive))
+
+
 if __name__ == "__main__":
-    all_events = load_events()
-    print_report(all_events)
+    main()
 
