@@ -180,12 +180,11 @@ def _needs_archive(
 def _spawn_archive_job() -> Optional[object]:
     """archive_usage.py を fork-and-detach で起動。失敗時 None。
 
-    codex P2: Windows では archive_usage.py が POSIX fcntl 不在で state を書かずに
-    即 exit するため、spawn し続けると永久 spawn ループ (毎セッション detached
-    child を払うが archive は永遠に走らない) になる。launcher 側で構造的に skip。
+    Issue #44: 旧実装は Windows で archive_usage.py が POSIX fcntl 不在で state を
+    書かずに即 exit する仕様だったため、spawn し続けると永久 spawn ループになる
+    のを構造的に skip していた。`hooks/_lock` で msvcrt.locking 経路が入ったため
+    Windows でも archive_usage は state を更新できる → skip 撤廃。
     """
-    if sys.platform == "win32":
-        return None
     if not _ARCHIVE_USAGE_SCRIPT.exists():
         return None
     return spawn_detached(

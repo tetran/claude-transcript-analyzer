@@ -40,7 +40,7 @@ Claude Code の動作
   │  SessionStart                     →  hooks/launch_archive.py    (べき等 launcher)
   ↓
 data/usage.jsonl          ← append-only イベントログ (hot tier / 直近 180 日)
-  │  ├ hooks/_append.py          ← lock 付き append (LOCK_SH × 5 retry × 100ms)
+  │  ├ hooks/_append.py          ← lock 付き append (blocking SH / cross-platform)
   │  └ scripts/archive_usage.py  ← 180 日超を月次 .jsonl.gz に gzip 圧縮で移動
   │       ↓
   │   archive/YYYY-MM.jsonl.gz   ← cold tier / immutable / opt-in で reader が読む
@@ -303,10 +303,15 @@ python3 ${CLAUDE_PLUGIN_ROOT}/reports/export_html.py --include-archive
 
 ### 並列耐性 / observability
 
-- archive job: `LOCK_EX` を取得して直列化、state marker 再 read で race-free 二重起動回避
-- hook (`record_*.py`): `LOCK_SH | LOCK_NB` × 5 retry × 100ms。取得失敗時は
-  `health_alerts.jsonl` に `{"alert": "append_skipped_due_to_archive_lock", ...}` を
-  1 行記録して silent drop (drop の root cause が後から特定できる)
+- archive job: `EX` を取得して直列化、state marker 再 read で race-free 二重起動回避
+- hook (`record_*.py`): **blocking SH** で archive の `EX` release を待ってから append
+  (codex 5th review P1 で旧 `SH | NB × 5 retry × 100ms = 500ms upper-bound` の data
+  loss 経路を撤廃)。取得失敗時は `health_alerts.jsonl` に
+  `{"alert": "append_skipped_due_to_archive_lock", ...}` を 1 行記録して silent drop
+  (実運用ではほぼ起きない / signal 起因等の異常系)
+- lock 層 (`hooks/_lock.py` / Issue #44): POSIX (`fcntl.flock`) と Windows
+  (`msvcrt.locking`) の差を吸収。Windows は SH 概念無しのため SH も EX 相当で動作
+  (concurrency 落ちるが correctness は保たれる)
 
 ### `rescan_transcripts.py` との運用注意
 

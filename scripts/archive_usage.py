@@ -40,12 +40,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import IO, Optional
 
-try:
-    import fcntl  # type: ignore[import]
-    _HAS_FCNTL = True
-except ImportError:  # pragma: no cover (Windows のみ)
-    fcntl = None  # type: ignore[assignment]
-    _HAS_FCNTL = False
+# `_lock` を import するため hooks/ を sys.path に追加 (Issue #44)
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "hooks"))
+
+import _lock  # noqa: E402
 
 
 DEFAULT_RETENTION_DAYS = 180
@@ -668,23 +666,16 @@ def main(argv: Optional[list[str]] = None) -> int:
     close_log = log_target is not sys.stderr
 
     try:
-        if not _HAS_FCNTL:
-            print(
-                "archive_usage.py: requires POSIX fcntl (Windows is not supported)",
-                file=log_target,
-            )
-            return 0
-
         now = datetime.now(timezone.utc)
-        paths.lock_file.parent.mkdir(parents=True, exist_ok=True)
 
         try:
-            with open(paths.lock_file, "a") as lock_fp:
+            lock_fd = _lock.open_lock_file(paths.lock_file)
+            try:
                 try:
-                    fcntl.flock(lock_fp.fileno(), fcntl.LOCK_EX)
+                    _lock.acquire_exclusive(lock_fd, blocking=True)
                 except OSError as e:
                     print(
-                        f"archive_usage.py: failed to acquire LOCK_EX: {e}",
+                        f"archive_usage.py: failed to acquire exclusive lock: {e}",
                         file=log_target,
                     )
                     return 1
@@ -699,10 +690,9 @@ def main(argv: Optional[list[str]] = None) -> int:
                     )
                     return 0
                 finally:
-                    try:
-                        fcntl.flock(lock_fp.fileno(), fcntl.LOCK_UN)
-                    except OSError:
-                        pass
+                    _lock.release(lock_fd)
+            finally:
+                os.close(lock_fd)
         except (OSError, ValueError) as e:  # pragma: no cover (defensive top-level catch)
             # OSError は file/lock I/O 系 (ArchiveReadError も含む)、
             # ValueError は parse 系 (json.JSONDecodeError 等)。

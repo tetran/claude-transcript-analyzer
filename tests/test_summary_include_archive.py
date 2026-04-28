@@ -22,6 +22,9 @@ import pytest
 
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(PROJECT_ROOT / "hooks"))
+
+import _lock  # noqa: E402  — Issue #44 cross-platform lock helper
 
 
 @pytest.fixture(name="summary_module")
@@ -191,12 +194,12 @@ def _archive_simulation(
     手順 (本物の archive job と同じ): EX 取得 → archive .gz 書き込み →
     hot tier rewrite → EX release。途中の sleep で main 側が「lock 外で
     hot を読む旧バグ経路」を踏める時間を確保する。
-    """
-    import fcntl  # POSIX 限定の thread (skipif で win32 を排除)
 
-    fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
+    Issue #44: lock 取得は `_lock` 経由で POSIX/Windows 両対応。
+    """
+    fd = _lock.open_lock_file(lock_path)
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX)
+        _lock.acquire_exclusive(fd, blocking=True)
         ex_acquired.set()
         time.sleep(hold_seconds)
         with gzip.open(archive_dir / "2025-08.jsonl.gz", "wt", encoding="utf-8") as f:
@@ -205,7 +208,7 @@ def _archive_simulation(
         with tmp_hot.open("w", encoding="utf-8") as f:
             f.write(json.dumps(b_event, ensure_ascii=False) + "\n")
         os.replace(tmp_hot, hot_path)
-        fcntl.flock(fd, fcntl.LOCK_UN)
+        _lock.release(fd)
     finally:
         os.close(fd)
 
@@ -224,8 +227,14 @@ class TestAtomicSnapshot:
         archive 読み出しを blocking にしたが、read 順序を atomic 化していなかった
         ことで誘発)。修正後は load_events 全体が同じ SH lock 下で実行されるので、
         archive job 完了後の consistent snapshot で A はちょうど 1 回だけ見える。
+
+        Issue #44: thread-based contention は POSIX 限定 (msvcrt.locking は
+        同一プロセス内で SH/EX を区別せず thread 越しで blocking しない)。
+        Windows での cross-process atomic snapshot は test_archive_smoke の
+        実 subprocess 経路で確認する。
         """
-        pytest.importorskip("fcntl")
+        if not _lock._HAS_FCNTL:
+            pytest.skip("requires POSIX fcntl for thread-based contention test")
 
         a_old = _skill_event("/A_old", "2025-08-01T00:00:00+00:00")
         b_recent = _skill_event("/B_recent", "2026-04-20T00:00:00+00:00")
