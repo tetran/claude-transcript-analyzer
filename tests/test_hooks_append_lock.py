@@ -315,8 +315,16 @@ class TestEnvOverride:
 
 
 class TestNonContentionPerformance:
-    def test_p99_under_10ms_no_contention(self, tmp_path, fresh_append_module):
-        """1 hook の append が < 10ms (非競合)。lock acquire + write + release を含む。"""
+    def test_p99_under_budget_no_contention(self, tmp_path, fresh_append_module):
+        """1 hook の append が budget 内 (非競合)。lock acquire + write + release を含む。
+
+        Issue #44: Windows は `msvcrt.locking` + NTFS + Defender の I/O オーバーヘッド
+        により POSIX より構造的に遅い。GitHub Actions `windows-latest` runner では
+        p99 が ~30ms まで伸びることが観測されたため OS 別に budget を分ける:
+
+        - POSIX (`fcntl.flock` + ext4/APFS): 20ms (元の budget 維持)
+        - Windows (`msvcrt.locking` + NTFS + Defender): 60ms (~2x の余裕)
+        """
         data_file = tmp_path / "usage.jsonl"
         event = {"event_type": "skill_tool", "session_id": "s_perf"}
 
@@ -332,4 +340,8 @@ class TestNonContentionPerformance:
 
         durations.sort()
         p99 = durations[int(len(durations) * 0.99)]
-        assert p99 < 0.020, f"p99 {p99 * 1000:.2f}ms exceeds 20ms budget"
+        budget = 0.060 if sys.platform == "win32" else 0.020
+        assert p99 < budget, (
+            f"p99 {p99 * 1000:.2f}ms exceeds {budget * 1000:.0f}ms budget"
+            f" ({sys.platform})"
+        )
