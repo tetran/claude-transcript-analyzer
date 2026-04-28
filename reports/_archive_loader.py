@@ -61,37 +61,44 @@ def _resolve_lock_path() -> Path:
     return Path(str(_DEFAULT_DATA_FILE) + ".lock")
 
 
-def _try_acquire_archive_read_lock() -> tuple[bool, Optional[int]]:
-    """archive 読み取り用 LOCK_SH | LOCK_NB を non-blocking で取得試行。
+def _acquire_archive_read_lock() -> Optional[int]:
+    """archive 読み取り用 LOCK_SH を **blocking** で取得する。
 
-    codex P3 対策: archive_usage.py の run_archive 中は archive .gz が
-    rewrite される前に既に書かれており、reader が割り込むと hot tier と
-    archive の両方に同 event が見える二重カウント window がある。
-    reader 側で LOCK_SH を試み、取れない (= archive job が LOCK_EX 保持中) なら
-    archive を読まずスキップする。
+    設計判断 (codex P2 #1):
+    旧実装は LOCK_NB で取れなければ archive を silent skip していたが、
+    `--include-archive` を明示したユーザーに対して archive を 0 件として返すと
+    全期間集計を silent に偽装することになる。CLI 起動の reports は hooks と
+    違って `< 100ms` 制約が無く、archive job の LOCK_EX 保持はサブ秒で終わる
+    (rewrite + state marker 書き込み程度) ため、blocking で **archive job 完了を
+    待ってから一貫した状態で読む** 意味論に固定する。
+
+    旧 codex P3 (archive job 中の二重カウント window) は LOCK_SH (blocking) でも
+    解消される — EX 解除を待ってから読み始めるので、hot tier と archive の両方に
+    同 event が transient で見える window 自体が closed になる。
 
     Returns:
-        (should_read, fd_to_release)
-        - (True, None): lock 不要 (fcntl 不在 / lock file 不在 / open 失敗) → 普通に読む
-        - (True, fd): SH 取得成功 → 読み終わったら fd を release/close
-        - (False, None): LOCK_EX 保持中 → archive を読まない
+        - None: lock 不要 / 取得不能 (fcntl 不在 / lock file 不在 / open 失敗) → そのまま読む
+        - fd:  SH 取得成功 → 読み終わったら fd を release/close
     """
     if not _HAS_FCNTL:
-        return True, None  # Windows / fcntl 不在 — 保護できないが進める
+        return None  # Windows / fcntl 不在 — 保護できないが進める
     lock_path = _resolve_lock_path()
     if not lock_path.exists():
         # archive_usage.py が一度も走ってない → 競合相手不在で読んで OK
-        return True, None
+        return None
     try:
         fd = os.open(str(lock_path), os.O_RDONLY)
     except OSError:
-        return True, None  # 保護できないが進める
+        return None  # 保護できないが進める
     try:
-        fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
-    except (OSError, BlockingIOError):
+        fcntl.flock(fd, fcntl.LOCK_SH)  # blocking — EX 保持中なら release を待つ
+    except OSError:
+        # blocking 中の OSError は実運用ではほぼ起きない (signal 起因等の異常系)。
+        # silent skip より「読みに行って失敗した」を選ぶ — fd は閉じて lock 取得を諦め、
+        # 後段の glob 経路で archive を読みに行かせる (lock 無し読み出しは旧来挙動)。
         os.close(fd)
-        return False, None  # archive job が LOCK_EX 保持中 → archive を読まない
-    return True, fd
+        return None
+    return fd
 
 
 def _release_archive_read_lock(fd: Optional[int]) -> None:
@@ -113,16 +120,14 @@ def load_archive_events(archive_dir: Path | None = None) -> Iterator[dict]:
     - `.tmp` 系は glob pattern で自動除外される (`*.jsonl.gz` が拾うのは完成形のみ)
     - archive_dir 不在時は空 iterator
     - JSON parse error 行は silent skip (人手修復に委ねる、人間の jq で読める前提を維持)
-    - codex P3: archive job が LOCK_EX 保持中なら archive を読まずスキップ
-      (hot tier との二重カウントを構造的に防ぐ)
+    - codex P2 #1: archive job が LOCK_EX 保持中なら blocking で release を待ってから読む
+      (silent skip だと `--include-archive` の意図に反して全期間集計が偽装される)
     """
     if archive_dir is None:
         archive_dir = resolve_archive_dir()
     if not archive_dir.exists():
         return
-    should_read, lock_fd = _try_acquire_archive_read_lock()
-    if not should_read:
-        return
+    lock_fd = _acquire_archive_read_lock()
     try:
         for path in sorted(archive_dir.glob("*.jsonl.gz")):
             try:

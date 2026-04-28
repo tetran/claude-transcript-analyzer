@@ -389,6 +389,70 @@ class TestArchiveMergeAndDedup:
         )
         assert len(merged) == 1
 
+    def test_malformed_existing_line_preserved_in_merge(self, archive_module, tmp_path):
+        """codex P2 #2: 既存 archive の malformed 行は merge 結果に raw のまま残る。
+
+        archive immutability 契約 — silent discard すると既存履歴が rewrite で
+        永久消失する。preserve することで「壊れた行は手で見えるまま残す」を担保。
+        """
+        archive_dir = tmp_path / "archive"
+        archive_dir.mkdir()
+        valid_event = _make_event("skill_tool", _utc(2025, 8, 1), tool_use_id="t_old")
+        valid_line = json.dumps(valid_event, ensure_ascii=False)
+        malformed_line = '{"event_type": "skill_tool", "broken'
+        with gzip.open(archive_dir / "2025-08.jsonl.gz", "wt", encoding="utf-8") as f:
+            f.write(valid_line + "\n")
+            f.write(malformed_line + "\n")
+
+        new_event = _make_event("skill_tool", _utc(2025, 8, 2), tool_use_id="t_new")
+        new_line = json.dumps(new_event, ensure_ascii=False)
+        merged = archive_module._merge_with_existing_archive(
+            archive_module.YearMonth(2025, 8),
+            [(new_event, new_line)],
+            archive_dir,
+        )
+        raw_lines = [line for _ev, line in merged]
+        assert valid_line in raw_lines
+        assert malformed_line in raw_lines
+        assert new_line in raw_lines
+
+    def test_malformed_archive_line_survives_re_archive(self, archive_module, tmp_path):
+        """end-to-end: malformed 行を持つ archive を再 archive (backfill) しても消えない。
+
+        rescan_transcripts.py --append 等で同月の event が hot tier に再出現し
+        run_archive が走るシナリオ。既存 archive を再 rewrite するパスで malformed
+        行が消えると immutability 契約違反になる (codex P2 #2)。
+        """
+        data_file = tmp_path / "usage.jsonl"
+        archive_dir = tmp_path / "archive"
+        archive_dir.mkdir()
+
+        existing_event = _make_event("skill_tool", _utc(2025, 8, 1), tool_use_id="t_old")
+        existing_line = json.dumps(existing_event, ensure_ascii=False)
+        malformed_line = '{"broken json'
+        with gzip.open(archive_dir / "2025-08.jsonl.gz", "wt", encoding="utf-8") as f:
+            f.write(existing_line + "\n")
+            f.write(malformed_line + "\n")
+
+        backfill_event = _make_event("skill_tool", _utc(2025, 8, 5), tool_use_id="t_back")
+        _write_hot_tier(data_file, [backfill_event])
+
+        paths = archive_module.ArchivePaths(
+            data_file=data_file,
+            archive_dir=archive_dir,
+            state_file=tmp_path / "state.json",
+            lock_file=tmp_path / "usage.jsonl.lock",
+        )
+        archive_module.run_archive(_utc(2026, 4, 27), paths, retention_days=180)
+
+        with gzip.open(archive_dir / "2025-08.jsonl.gz", "rt", encoding="utf-8") as f:
+            raw_lines = [line.rstrip("\n") for line in f if line.strip()]
+        assert existing_line in raw_lines
+        assert malformed_line in raw_lines, (
+            "malformed line must survive re-archive (immutability contract)"
+        )
+        assert json.dumps(backfill_event, ensure_ascii=False) in raw_lines
+
 
 # ---------------------------------------------------------------------------
 # TestRunArchiveIntegration: 主要シナリオ

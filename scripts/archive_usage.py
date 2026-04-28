@@ -295,6 +295,19 @@ def _merge_with_existing_archive(
                 try:
                     ev = json.loads(line)
                 except json.JSONDecodeError:
+                    # codex P2 #2: malformed 行は raw のまま保持して rewrite で書き戻す。
+                    # silent discard だと既存 archive を再 rewrite するパス
+                    # (`rescan_transcripts.py --append` 後の再 archive 等) で
+                    # 履歴が永久消失する → archive immutability 契約違反になる。
+                    # halt 案 (ArchiveReadError と同列扱い) は 1 行壊れただけで
+                    # その月の archive が無限に止まる運用詰みリスクがあるため不採用。
+                    # preserve は壊れたデータを増やさず、次回も rewrite で raw のまま
+                    # 残るので「人手 jq で読んで直す」前提の運用と整合する。
+                    sys.stderr.write(
+                        f"archive_usage: preserving malformed line in {archive_path}\n"
+                    )
+                    existing.append((None, line))
+                    existing_lines.add(line)
                     continue
                 existing.append((ev, line))
                 existing_lines.add(line)

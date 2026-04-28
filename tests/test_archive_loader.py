@@ -92,23 +92,29 @@ class TestResolveArchiveDir:
 
 
 # ---------------------------------------------------------------------------
-# archive lock fallback — codex P3
+# archive lock — codex P2 #1 (blocking 契約) / 旧 codex P3 (silent skip → 廃止)
 # ---------------------------------------------------------------------------
 
 
-class TestArchiveLockFallback:
-    def test_loader_skips_archive_when_archive_job_holds_lock(
+class TestArchiveLockBlocking:
+    def test_loader_blocks_until_lock_released(
         self, loader_module, monkeypatch, tmp_path
     ):
-        """codex P3: archive job が LOCK_EX を保持中に reader が走ると
-        archive .gz と hot tier の両方に同 event が見える transient window で
-        二重カウントが起きる。reader は LOCK_SH | LOCK_NB を試み、取得できない
-        ときは archive を読まずに空 iterator を返してフォールバックする。
+        """codex P2 #1: archive job が LOCK_EX を保持中に loader を呼ぶと、
+        archive を silent skip せず blocking で待ち、release 後に events を読む。
+
+        旧 codex P3 fix は LOCK_SH | LOCK_NB で「取れなければ archive を読まない」
+        だったが、`--include-archive` を明示したユーザーに「archive 0 件」を返すと
+        全期間集計の silent な嘘になる。CLI 起動の reports は < 100ms 制約が無く、
+        archive job の EX 保持はサブ秒で終わるため blocking が正解。
         """
         try:
-            import fcntl  # noqa: F401
+            import fcntl
         except ImportError:
             pytest.skip("requires POSIX fcntl")
+
+        import threading
+        import time as _time
 
         archive_dir = tmp_path / "archive"
         _write_archive(
@@ -123,27 +129,43 @@ class TestArchiveLockFallback:
                 }
             ],
         )
-
-        # archive lock を別プロセスで保持しているのを模擬: 同プロセスで
-        # LOCK_EX を取った fd を生かしたまま load_archive_events を呼ぶ。
         lock_path = tmp_path / "usage.jsonl.lock"
         monkeypatch.setenv("USAGE_JSONL", str(tmp_path / "usage.jsonl"))
         monkeypatch.setenv("ARCHIVE_DIR", str(archive_dir))
         monkeypatch.setenv("USAGE_JSONL_LOCK", str(lock_path))
 
-        import fcntl
+        HOLD_SECONDS = 0.4
+        lock_acquired = threading.Event()
 
-        lock_fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
-        try:
-            fcntl.flock(lock_fd, fcntl.LOCK_EX)
-            events = list(loader_module.load_archive_events())
-            assert events == [], "reader must not read archive while LOCK_EX is held"
-        finally:
+        def hold_lock_briefly():
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
             try:
-                fcntl.flock(lock_fd, fcntl.LOCK_UN)
-            except OSError:
-                pass
-            os.close(lock_fd)
+                fcntl.flock(fd, fcntl.LOCK_EX)
+                lock_acquired.set()
+                _time.sleep(HOLD_SECONDS)
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            finally:
+                os.close(fd)
+
+        holder = threading.Thread(target=hold_lock_briefly, daemon=True)
+        holder.start()
+        assert lock_acquired.wait(timeout=2.0), "holder thread failed to acquire lock"
+
+        start = _time.monotonic()
+        events = list(loader_module.load_archive_events())
+        elapsed = _time.monotonic() - start
+
+        holder.join(timeout=2.0)
+
+        # blocking していれば holder の保持時間付近まで待つ。
+        # silent skip 実装だと < 50ms で 0 件を返してしまうので、
+        # `events 取得 + 待機時間 >= ホールド時間の大半` で blocking 契約を固定。
+        assert len(events) == 1, "loader must read archive after lock release"
+        assert events[0]["skill"] == "/old"
+        assert elapsed >= HOLD_SECONDS * 0.7, (
+            f"loader returned in {elapsed:.3f}s — should have blocked "
+            f"until lock release (holder held for {HOLD_SECONDS}s)"
+        )
 
     def test_loader_reads_archive_when_lock_is_free(
         self, loader_module, monkeypatch, tmp_path
