@@ -50,7 +50,19 @@ SERVER_JSON_PATH = Path(
 # graceful shutdown を待つ最大秒数。`server.py` の SIGTERM ハンドラは即座に
 # `serve_forever` を抜けるので通常 < 1s で死ぬが、SSE 接続が切れるのを待つ余裕で 5s。
 GRACEFUL_TIMEOUT_SECONDS = 5.0
+# SIGKILL は OS レベルで即時終了するので graceful timeout を使い回す必要なし。
+# 0.5s で十分 (codex / claude[bot] review #53)。
+KILL_TIMEOUT_SECONDS = 0.5
 _POLL_INTERVAL_SECONDS = 0.05
+
+# spawn 後に launcher の子プロセスが server.json を書くまでの待ち時間。
+# launcher の `_wait_for_self_server_json_url` の budget (0.25s) よりも余裕を持つ。
+# launcher の systemMessage 経路は restart 時には機能しない (input=b"{}" で
+# hook_event_name 不明 → silent return / capture_output で読み捨て) ため、
+# restart_dashboard 側で server.json から URL を読んで stderr に出力する
+# (PR #53 review 対応)。
+SPAWN_URL_WAIT_TIMEOUT_SECONDS = 2.0
+_SPAWN_URL_POLL_INTERVAL_SECONDS = 0.05
 
 _LAUNCHER_PATH = _PROJECT_ROOT / "hooks" / "launch_dashboard.py"
 
@@ -136,7 +148,8 @@ def _terminate_existing_server() -> bool:
         )
         if not _send_signal(pid, signal.SIGKILL):
             return False
-        if _wait_for_pid_exit(pid, GRACEFUL_TIMEOUT_SECONDS):
+        # SIGKILL は即時終了なので短い timeout で十分 (review #53)
+        if _wait_for_pid_exit(pid, KILL_TIMEOUT_SECONDS):
             _remove_server_json(SERVER_JSON_PATH, expected_pid=pid)
             return True
         return False
@@ -146,15 +159,37 @@ def _terminate_existing_server() -> bool:
     return False
 
 
+def _wait_for_url(timeout: float = SPAWN_URL_WAIT_TIMEOUT_SECONDS) -> Optional[str]:
+    """spawn 後に server.json から URL を読む。timeout 内に出現しなければ None。
+
+    launcher の `_wait_for_self_server_json_url` と違い、ここでは self_pid の
+    一致確認はしない (restart 経路では launcher が spawn した子の pid は
+    別プロセス越しで把握できないため)。代わりに server.json が出現した時点で
+    最新の URL を採用する (terminate 後は古い json を消してから launcher を
+    呼んでいるので、出現する json は新 spawn 由来と見做せる)。
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        info = _launcher._read_server_json(SERVER_JSON_PATH)
+        if info is not None:
+            url = info.get("url")
+            if isinstance(url, str) and url:
+                return url
+        time.sleep(_SPAWN_URL_POLL_INTERVAL_SECONDS)
+    return None
+
+
 def _run_launcher() -> int:
     """`hooks/launch_dashboard.py` を subprocess で叩いて新 spawn を発生させる。
 
     launcher は idempotent で既起動チェックをするため、`_terminate_existing_server`
     が成功した後に呼ぶと **必ず spawn が走る** (server.json は既に消えているため)。
 
-    launcher は stdin から hook payload を読もうとするので、空の stdin を渡す
-    (`{}` を送って未知 event 扱い → silent path)。これは silent path だが launcher の
-    spawn 処理自体は実行される。
+    launcher は stdin から hook payload を読もうとするので、空の stdin (`{}`) を
+    渡す。launcher は `hook_event_name` を取れず silent path に入るため
+    systemMessage URL emit はされない。restart は明示的な手動操作なので、
+    launcher 戻り後に `server.json` を直接読んで URL を **stderr に出力する**
+    (PR #53 review 対応 / docs と挙動を整合)。
 
     `RESTART_DASHBOARD_DRYRUN=1` のときは spawn を抑止してテスト用にだけ exit 0 する。
     """
@@ -174,6 +209,14 @@ def _run_launcher() -> int:
             sys.stderr.write(
                 f"[restart] launcher exit={proc.returncode} stderr={proc.stderr!r}\n"
             )
+            return proc.returncode
+        # launcher 成功 → 新 spawn 子が server.json を書くのを待って URL を出力。
+        # 子の起動 race window で server.json が遅れて出てくることがあるので poll。
+        url = _wait_for_url()
+        if url:
+            sys.stderr.write(f"[restart] dashboard available at {url}\n")
+        # URL 不明でも exit 0 (spawn 自体は launcher 経由で発生済み / docs にも
+        # `cat ~/.claude/transcript-analyzer/server.json` のフォールバック手順あり)
         return proc.returncode
     except subprocess.TimeoutExpired:
         sys.stderr.write("[restart] launcher timeout\n")

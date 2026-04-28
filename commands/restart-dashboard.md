@@ -20,8 +20,13 @@ Restart the running claude-transcript-analyzer dashboard server.
 
 ## 出力
 
-- 状態は stderr に 1 行ずつ出力される (例: `[restart] sending SIGTERM to dashboard pid=12345`)
-- 新サーバーの URL は launcher の systemMessage 経由で表示される
+すべて stderr に 1 行ずつ出力される:
+
+- 進捗: `[restart] sending SIGTERM to dashboard pid=12345`
+- 起動完了 URL: `[restart] dashboard available at http://localhost:9999`
+
+URL が timeout 内に取れない (spawn 失敗等) ときは silent。その場合は
+`cat ~/.claude/transcript-analyzer/server.json` でも確認できる。
 
 ## 失敗時
 
