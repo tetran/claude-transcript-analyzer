@@ -67,7 +67,7 @@ def _parse_month_string(s: str) -> Optional[tuple[int, int]]:
     try:
         y_str, m_str = s.split("-")
         y, m = int(y_str), int(m_str)
-        if not (1 <= m <= 12):
+        if not 1 <= m <= 12:
             return None
         return (y, m)
     except (ValueError, AttributeError):

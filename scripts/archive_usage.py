@@ -469,6 +469,99 @@ def _write_state(
 # ---------------------------------------------------------------------------
 
 
+def _read_last_archived_month(state_file: Path) -> Optional[str]:
+    """state.last_archived_month を読む。
+
+    NOTE (codex P1 / Issue #30): この値を target_months の skip フィルタとしては
+    **使わない**。理由:
+    1. LOCK_EX で archive job が直列化されているため、再 run でも結果は idempotent
+    2. 既存 archive との dedup は _merge_with_existing_archive (line equality fast
+       path → 構造的 fingerprint → 既存尊重) が担い、衝突は構造的に解消される
+    3. state 経由でフィルタすると `rescan_transcripts.py --append` 等の backfill
+       で過去月が hot tier に再出現したとき、永続的に archive されない bug になる
+    state は launch_archive 側の skip 判定 (= spawn 不要判定) と監査ログだけに用いる。
+    """
+    return _read_state(state_file).get("last_archived_month")
+
+
+def _archive_buckets_to_gz(
+    archive_buckets: dict,
+    archive_dir: Path,
+    hot_remainder: list,
+) -> tuple[list[str], list[YearMonth], int]:
+    """archive 対象月の event を .gz に書き出す。失敗月は hot_remainder に戻す。
+
+    codex P1: 既存 archive が読めない月は archive せず hot tier に保留。
+    既存 archive ファイル自体は触らず (silent 上書き消失を防ぐ)、次回以降の
+    ジョブで人手修復後に正しく merge できる状態を維持する。
+    """
+    archived_months: list[str] = []
+    successfully_archived_yms: list[YearMonth] = []
+    archived_count = 0
+    for ym in sorted(archive_buckets.keys()):
+        new_entries = archive_buckets[ym]
+        try:
+            merged = _merge_with_existing_archive(ym, new_entries, archive_dir)
+        except ArchiveReadError:
+            hot_remainder.extend(new_entries)
+            continue
+        _atomic_write_gzip(
+            archive_dir / f"{ym}.jsonl.gz",
+            [line for _ev, line in merged],
+        )
+        archived_months.append(str(ym))
+        successfully_archived_yms.append(ym)
+        archived_count += len(new_entries)
+    return archived_months, successfully_archived_yms, archived_count
+
+
+def _compute_new_last_archived(
+    successfully_archived_yms: list[YearMonth],
+    last_archived_str: Optional[str],
+) -> Optional[str]:
+    """new last_archived_month を計算する。
+
+    state は **これまでの最大値** と「今回 archive した最大値」の max を採用する
+    (backfill 経路で古い月を archive しても last_archived_month を逆行させない)。
+    codex P2 #2: archive に **成功した** 月だけから max を取る。failed 月
+    (ArchiveReadError) を含めると state が失敗月を飛び越して進み、launcher が
+    `last_archived >= prev_month` で同月内 retry を短絡してしまう。
+    """
+    candidate = max(successfully_archived_yms) if successfully_archived_yms else None
+    if candidate is None:
+        return last_archived_str
+    if not last_archived_str:
+        return str(candidate)
+    try:
+        prev_ym = YearMonth.from_string(last_archived_str)
+        return str(max(prev_ym, candidate))
+    except ValueError:
+        return str(candidate)
+
+
+def _finalize_state(
+    state_file: Path,
+    now_iso: str,
+    last_archived_str: Optional[str],
+    horizon_str: str,
+    successfully_archived_yms: list[YearMonth],
+    archive_buckets_count: int,
+) -> None:
+    """state marker を atomic 更新する。
+
+    codex 8th P2-A: target に失敗があれば horizon は出さない (= None を書く)。
+    current 値で記録すると launcher は次セッションで `last_horizon >= current` を
+    見て skip してしまい、ユーザーが .gz 修復しても次月まで retry できない。
+    全成功なら horizon を記録、失敗があれば None で出して launcher の同月内 retry を許す。
+    """
+    new_last_str = _compute_new_last_archived(
+        successfully_archived_yms, last_archived_str
+    )
+    all_targets_succeeded = len(successfully_archived_yms) == archive_buckets_count
+    horizon_to_write = horizon_str if all_targets_succeeded else None
+    _write_state(state_file, now_iso, new_last_str, horizon_to_write)
+
+
 def run_archive(
     now: datetime,
     paths: ArchivePaths,
@@ -488,26 +581,16 @@ def run_archive(
     """
     parsed_entries, broken_lines = _read_hot_tier(paths.data_file)
 
-    available_months = {
-        ym
-        for ym in (_event_year_month(ev) for ev, _line in parsed_entries)
-        if ym is not None
-    }
     target_months = _calculate_archive_target_months(
-        now, retention_days, available_months
+        now,
+        retention_days,
+        {
+            ym
+            for ym in (_event_year_month(ev) for ev, _line in parsed_entries)
+            if ym is not None
+        },
     )
-
-    # NOTE (codex P1 / Issue #30): state.last_archived_month を target_months の
-    # skip フィルタとしては **使わない**。理由:
-    # 1. LOCK_EX で archive job が直列化されているため、再 run でも結果は idempotent
-    # 2. 既存 archive との dedup は _merge_with_existing_archive (line equality fast
-    #    path → 構造的 fingerprint → 既存尊重) が担い、衝突は構造的に解消される
-    # 3. state 経由でフィルタすると `rescan_transcripts.py --append` 等の backfill
-    #    で過去月が hot tier に再出現したとき、永続的に archive されない bug になる
-    # state は launch_archive 側の skip 判定 (= spawn 不要判定) と監査ログだけに用いる。
-    state = _read_state(paths.state_file)
-    last_archived_str = state.get("last_archived_month")
-
+    last_archived_str = _read_last_archived_month(paths.state_file)
     # codex 6th P2: 実行ごとに archivable horizon を計算して state に記録する。
     # launcher が「horizon が advance してなければ skip」を gate にできる。
     horizon_str = str(_calculate_archivable_horizon(now, retention_days))
@@ -522,54 +605,22 @@ def run_archive(
         )
 
     archive_buckets, hot_remainder = _partition_events(parsed_entries, target_months)
+    archived_months, successfully_archived_yms, archived_count = _archive_buckets_to_gz(
+        archive_buckets, paths.archive_dir, hot_remainder
+    )
 
-    archived_months: list[str] = []
-    successfully_archived_yms: list[YearMonth] = []
-    archived_count = 0
-    for ym in sorted(archive_buckets.keys()):
-        new_entries = archive_buckets[ym]
-        try:
-            merged = _merge_with_existing_archive(ym, new_entries, paths.archive_dir)
-        except ArchiveReadError:
-            # codex P1: 既存 archive が読めない月は archive せず hot tier に保留。
-            # 既存 archive ファイル自体は触らず (silent 上書き消失を防ぐ)、
-            # 次回以降のジョブで人手修復後に正しく merge できる状態を維持する。
-            hot_remainder.extend(new_entries)
-            continue
-        merged_lines = [line for _ev, line in merged]
-        _atomic_write_gzip(paths.archive_dir / f"{ym}.jsonl.gz", merged_lines)
-        archived_months.append(str(ym))
-        successfully_archived_yms.append(ym)
-        archived_count += len(new_entries)
-
-    hot_lines = [line for _ev, line in hot_remainder] + broken_lines
-    _atomic_rewrite_hot(paths.data_file, hot_lines)
-
-    # state は **これまでの最大値** と「今回 archive した最大値」の max を採用する
-    # (backfill 経路で古い月を archive しても last_archived_month を逆行させない)。
-    # codex P2 #2: archive に **成功した** 月だけから max を取る。failed 月
-    # (ArchiveReadError) を含めると state が失敗月を飛び越して進み、launcher が
-    # `last_archived >= prev_month` で同月内 retry を短絡してしまう。
-    candidate = max(successfully_archived_yms) if successfully_archived_yms else None
-    new_last_str = last_archived_str
-    if candidate is not None:
-        if last_archived_str:
-            try:
-                prev_ym = YearMonth.from_string(last_archived_str)
-                new_last_str = str(max(prev_ym, candidate))
-            except ValueError:
-                new_last_str = str(candidate)
-        else:
-            new_last_str = str(candidate)
-
-    # codex 8th P2-A: target に失敗があれば horizon は出さない (= state に書かない)。
-    # current 値で記録すると launcher は次セッションで `last_horizon >= current` を
-    # 見て skip してしまい、ユーザーが .gz 修復しても次月まで retry できない。
-    # 失敗があるなら None で出して launcher の同月内 retry を許す。
-    # 「全成功」= 全 archive_buckets が successfully_archived に乗った状態。
-    all_targets_succeeded = len(successfully_archived_yms) == len(archive_buckets)
-    horizon_to_write = horizon_str if all_targets_succeeded else None
-    _write_state(paths.state_file, now.isoformat(), new_last_str, horizon_to_write)
+    _atomic_rewrite_hot(
+        paths.data_file,
+        [line for _ev, line in hot_remainder] + broken_lines,
+    )
+    _finalize_state(
+        paths.state_file,
+        now.isoformat(),
+        last_archived_str,
+        horizon_str,
+        successfully_archived_yms,
+        len(archive_buckets),
+    )
 
     return ArchiveResult(
         archived_months=archived_months,
@@ -652,7 +703,10 @@ def main(argv: Optional[list[str]] = None) -> int:
                         fcntl.flock(lock_fp.fileno(), fcntl.LOCK_UN)
                     except OSError:
                         pass
-        except Exception as e:  # pragma: no cover (defensive top-level catch)
+        except (OSError, ValueError) as e:  # pragma: no cover (defensive top-level catch)
+            # OSError は file/lock I/O 系 (ArchiveReadError も含む)、
+            # ValueError は parse 系 (json.JSONDecodeError 等)。
+            # programming error (TypeError, AttributeError 等) は propagate して可視化。
             print(f"archive_usage.py: unexpected error: {e}", file=log_target)
             return 1
     finally:
