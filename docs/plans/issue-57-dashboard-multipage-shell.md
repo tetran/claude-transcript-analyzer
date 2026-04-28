@@ -365,11 +365,17 @@ class TestBackwardCompatibility:
 - `TestBackwardCompatibility` (2 tests)
 
 **期待 RED 状態の精度**:
-- 計 16 tests 中 **15 tests fail / 1 test pass** が期待値
-- pass する 1 件: `test_existing_widget_ids_preserved` (現 template に既存 ID あり)
-- fail する 15 件の **fail reason** を Phase 1 完了時に記録 (assertion error の
-  message を 1 行ずつ plan 末尾に追記)。Phase 2 完了時に「予想 reason 通りに
-  GREEN 化されたか」を 16 件すべて re-run して objective に判定する
+- 計 16 tests 中 **14 tests fail / 2 tests pass** が実測 (plan 当初予想 15/1
+  に対して `test_window_data_fallback_still_works` も既存 template で既に
+  pass していた)
+- pass する 2 件:
+  - `test_existing_widget_ids_preserved` (現 template に既存 ID あり)
+  - `test_window_data_fallback_still_works` (既存 template で `window.__DATA__`
+    は既に `fetch` より前 — `render_static_html` 注入経路の保護として正しい)
+- fail する 14 件の fail reason は **すべて新構造未追加ゆえの substring not
+  found / count<2 / 順序不一致** で、構造判断の正しさを示している (assertion
+  内容ではなく構造そのものが不在で fail している)。Phase 2 完了時に 16 件
+  すべて re-run し、14 件全 GREEN 化を objective に判定
 
 ### Phase 2: template.html 構造変更 (GREEN)
 
