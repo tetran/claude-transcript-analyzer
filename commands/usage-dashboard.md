@@ -39,6 +39,16 @@ DASHBOARD_PORT=9090 "$(command -v python3 || command -v python)" ${CLAUDE_PLUGIN
 
 idle 停止後は次の Claude Code 操作で hook 経由で **自動復活** する。
 
+## 再起動 (UI 変更を反映したいとき)
+
+`/plugin update` で `dashboard/template.html` 等の UI ファイルが更新されても、
+launcher は idempotent な spawn なので既存サーバーは古い HTML をメモリに保持し続ける。
+明示的に再起動するには `/restart-dashboard` を使う:
+
+```bash
+"$(command -v python3 || command -v python)" ${CLAUDE_PLUGIN_ROOT}/scripts/restart_dashboard.py
+```
+
 ## デバッグ用 fg 起動 (上級ユーザー向け)
 
 サーバーログを foreground で見たい場合は `dashboard/server.py` を直接叩ける：
