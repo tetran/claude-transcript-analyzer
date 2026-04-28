@@ -179,6 +179,15 @@ kill $(jq -r .pid ~/.claude/transcript-analyzer/server.json)
 として残す。Overview 以外のページが widget を持つ場合は page-scoped early-out
 で no-op 化する設計。
 
+page-scoped early-out (`if (document.body.dataset.activePage !== '<page>') return;`)
+を持つ widget は、page 切替直後に render される必要があるため main IIFE に
+`window.addEventListener('hashchange', () => loadAndRender().catch(...))` の
+hashchange listener を 1 本持つ。router IIFE は先に登録されているため
+`body.dataset.activePage` が更新されてから main IIFE の listener が走り、新 page
+の renderer が正しく動く。
+
+`/api/data` レスポンスの schema 詳細は `docs/spec/dashboard-api.md` を参照。
+
 ## ファイル構成
 
 ```

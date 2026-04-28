@@ -654,6 +654,62 @@
     margin: 0 8px;
     opacity: 0.5;
   }
+
+  /* ---------- hourly heatmap (Issue #58) ---------- */
+  /* 7 weekday rows × 24 hour cols + 1 列の row label。ヘッダ軸 (00..23) は contents 子。 */
+  .heatmap {
+    display: grid;
+    grid-template-columns: 36px repeat(24, 1fr);
+    gap: 2px;
+    margin-top: 8px;
+    font-family: var(--ff-mono);
+    font-size: 10.5px;
+  }
+  .heatmap-col-axis {
+    display: contents;
+  }
+  .heatmap-col-axis > span {
+    color: var(--ink-faint);
+    text-align: center;
+    padding-bottom: 4px;
+  }
+  .heatmap-row-label {
+    color: var(--ink-soft);
+    text-align: right;
+    padding-right: 6px;
+    align-self: center;
+  }
+  .heatmap-cell {
+    aspect-ratio: 1 / 1;
+    min-height: 18px;
+    border-radius: 3px;
+    border: 1px solid var(--line);
+    background: transparent;
+    cursor: default;
+    transition: outline 100ms ease;
+  }
+  .heatmap-cell:hover,
+  .heatmap-cell:focus-visible {
+    outline: 2px solid var(--peri);
+    outline-offset: 1px;
+  }
+  .heatmap-legend {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 14px;
+    font-family: var(--ff-mono);
+    font-size: 10.5px;
+    color: var(--ink-faint);
+  }
+  .heatmap-legend-bar {
+    flex: 0 0 200px;
+    height: 10px;
+    border-radius: var(--r-sm);
+    background: linear-gradient(to right, rgba(111, 227, 200, 0.06), rgba(111, 227, 200, 1));
+    border: 1px solid var(--line);
+  }
+  .data-tip[data-kind="heatmap"] { border-left-color: var(--mint); }
 </style>
 </head>
 <body>
@@ -760,12 +816,37 @@
 
     </section><!-- /data-page="overview" -->
 
-    <!-- Patterns ページ (Issue #58 / #59 で本実装) -->
-    <section data-page="patterns" class="page page-placeholder" aria-labelledby="page-patterns-title" hidden>
-      <h2 id="page-patterns-title"><span class="accent">Patterns</span> — Coming soon</h2>
-      <p class="placeholder-body">
-        利用パターンを可視化するページです。<br>
-        時間帯ヒートマップ (<code>#58</code>) / cross-tab 共起・project×skill (<code>#59</code>) を順次追加予定。
+    <!-- Patterns ページ (Issue #58 で heatmap 実装。#59 で cross-skill / project×skill 追加予定) -->
+    <section data-page="patterns" class="page" aria-labelledby="page-patterns-title" hidden>
+      <header class="header">
+        <div>
+          <h1 id="page-patterns-title"><span class="accent">Patterns</span></h1>
+          <p class="lede">利用パターンを可視化します。</p>
+        </div>
+      </header>
+
+      <div class="panel" id="patterns-heatmap-panel">
+        <div class="panel-head c-peri">
+          <div class="ttl-wrap">
+            <span class="ttl"><span class="dot"></span>時間帯ヒートマップ</span>
+            <span class="help-host">
+              <button class="help-btn" type="button" aria-label="説明を表示" aria-expanded="false" aria-describedby="hp-heatmap" data-help-id="hp-heatmap">?</button>
+              <span class="help-pop" id="hp-heatmap" role="tooltip" data-place="right">
+                <span class="pop-ttl">時間帯ヒートマップ</span>
+                <span class="pop-body">usage 系イベント (<code>skill_tool</code> / <code>user_slash_command</code> / subagent invocation) を曜日 × 時間帯のグリッドで集計。色が濃いほど件数が多い。タイムゾーンはブラウザ local。subagent は invocation 単位に dedup 済み。</span>
+              </span>
+            </span>
+          </div>
+          <span class="sub" id="patterns-heatmap-sub"></span>
+        </div>
+        <div class="panel-body">
+          <div class="heatmap" id="patterns-heatmap" role="img" aria-label="時間帯ヒートマップ"></div>
+          <div class="heatmap-legend" id="patterns-heatmap-legend"></div>
+        </div>
+      </div>
+
+      <p class="placeholder-body" style="text-align:center; margin-top:24px; color:var(--ink-faint); font-size:11.5px;">
+        cross-skill 共起 / project × skill (<code>#59</code>) は今後追加予定。
       </p>
     </section>
 
@@ -1082,10 +1163,74 @@
   }).join('');
   document.getElementById('projSub').textContent = projs.length + ' projects · Σ ' + fmtN(projTotal);
 
+  // ---- hourly heatmap (Issue #58) ----
+  renderHourlyHeatmap(data.hourly_heatmap);
+
   // dynamic re-render 後の help-pop 再配置 (Issue #41)。kpiRow を含む全 popup を
   // walk して、右端 KPI tooltip の viewport overflow を防ぐ。
   placeAllPops();
   } // end loadAndRender
+
+  // ============================================================
+  //  Hourly heatmap renderer (Issue #58)
+  //  server は UTC hour bucket を返し、ここで local TZ 変換 + (Mon=0..Sun=6) bin。
+  //  page-scoped early-out で Patterns 非表示中は skip (#59〜#62 規範)。
+  //  hashchange listener (下) が page 切替時に loadAndRender を再実行するので、
+  //  navigate 直後でも空のままにはならない。
+  // ============================================================
+  function renderHourlyHeatmap(payload) {
+    if (document.body.dataset.activePage !== 'patterns') return;
+    const root = document.getElementById('patterns-heatmap');
+    if (!root) return;
+    const buckets = (payload && payload.buckets) || [];
+    const matrix = Array.from({ length: 7 }, () => Array(24).fill(0));
+    let max = 0;
+    for (const b of buckets) {
+      const d = new Date(b.hour_utc);
+      if (isNaN(d.getTime())) continue;
+      const wd = (d.getDay() + 6) % 7; // Mon=0..Sun=6
+      const h = d.getHours();
+      matrix[wd][h] += b.count;
+      if (matrix[wd][h] > max) max = matrix[wd][h];
+    }
+    const labels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    let html = '<div class="heatmap-col-axis"><span></span>';
+    for (let h = 0; h < 24; h++) html += '<span>' + pad(h, 2) + '</span>';
+    html += '</div>';
+    for (let wd = 0; wd < 7; wd++) {
+      html += '<div class="heatmap-row-label">' + labels[wd] + '</div>';
+      for (let h = 0; h < 24; h++) {
+        const c = matrix[wd][h];
+        const intensity = max ? c / max : 0;
+        const bg = c
+          ? 'background: rgba(111, 227, 200, ' + (0.08 + intensity * 0.92).toFixed(3) + ')'
+          : '';
+        const al = labels[wd] + ' ' + pad(h, 2) + ':00 — ' + c + ' events';
+        html += '<div class="heatmap-cell" style="' + bg + '"' +
+          ' data-tip="heatmap" data-wd="' + labels[wd] + '" data-h="' + pad(h, 2) +
+          '" data-c="' + c + '" tabindex="0" role="img" aria-label="' + al + '"></div>';
+      }
+    }
+    root.innerHTML = html;
+    const legend = document.getElementById('patterns-heatmap-legend');
+    if (legend) {
+      legend.innerHTML =
+        '<span>0</span><span class="heatmap-legend-bar" aria-hidden="true"></span>' +
+        '<span>peak ' + fmtN(max) + '</span>';
+    }
+    const sub = document.getElementById('patterns-heatmap-sub');
+    if (sub) {
+      const total = buckets.reduce((s, b) => s + b.count, 0);
+      sub.textContent = fmtN(total) + ' events · ' + fmtN(buckets.length) + ' hour buckets';
+    }
+  }
+
+  // hashchange → loadAndRender 再実行 (Issue #58 Q2)。router IIFE が先に
+  // body.dataset.activePage を更新し、main IIFE の本リスナーが loadAndRender を
+  // 呼び直すことで、page navigate 直後の page-scoped widget が即時描画される。
+  window.addEventListener('hashchange', () => {
+    loadAndRender().catch((err) => console.error('route change render 失敗', err));
+  });
 
   // ---- 初回描画 + EventSource (live refresh) ----
   await loadAndRender();
@@ -1247,6 +1392,17 @@
               '<span class="lbl">events</span><span class="val">' + fmtN(c) + '</span>' +
               '<span class="sep">·</span>' +
               '<span class="lbl">share</span><span class="val">' + esc(pct) + '</span>'
+      };
+    }
+    if (kind === 'heatmap') {
+      // 時間帯ヒートマップ (Issue #58)。曜日 × hour cell の hover tooltip。
+      const wd = el.getAttribute('data-wd') || '';
+      const h = el.getAttribute('data-h') || '00';
+      const c = el.getAttribute('data-c') || '0';
+      return {
+        kind: 'heatmap',
+        html: '<span class="ttl">' + esc(wd) + ' ' + esc(h) + ':00</span>' +
+              '<span class="lbl">events</span><span class="val">' + fmtN(c) + '</span>'
       };
     }
     if (kind === 'rank') {
