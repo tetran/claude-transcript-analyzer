@@ -28,10 +28,17 @@ jobs:
         run: python -m pytest tests/ -q
 
   pytest-no-python-alias:
-    # Issue #33: `python3` のみ存在し `python` alias が無い環境 (Ubuntu 22+ /
-    # macOS Homebrew のデフォルト) で hook の bash POSIX `command -v` fallback が
-    # 動くことを常時回帰防止する専用ジョブ。
-    name: pytest (Ubuntu, python alias absent — Issue #33 regression guard)
+    # `python3` のみ存在し `python` alias が無い環境 (Ubuntu 22+ / macOS Homebrew
+    # のデフォルト) で hook の bash POSIX `command -v` fallback が動くことを
+    # 常時回帰防止する専用ジョブ (Issue #33 で導入)。
+    #
+    # job 名から `Issue #33 regression guard` を削除した経緯:
+    # GitHub Actions が check 名内の `#` を URL fragment として処理する関係で
+    # 43 文字目で truncate → branch protection rule で完全一致 match できず
+    # main への merge が永久 BLOCKED になる罠を踏んだ。`#` を含む job 名は
+    # protection rule 上で扱いづらいため、 ここでは「what」のみ短く記述し、
+    # 「why (regression guard for Issue #33)」は本コメントで永続化する。
+    name: pytest (Ubuntu, no python alias)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
