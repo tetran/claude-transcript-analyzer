@@ -143,3 +143,13 @@ class TestPhase30Files:
     def test_usage_archive_command_exists(self):
         assert (PROJECT_ROOT / "commands" / "usage-archive.md").exists()
 
+
+class TestIssue52Files:
+    """Issue #52 (ライブダッシュボード再起動) で追加された主要ファイルの存在確認。"""
+
+    def test_restart_dashboard_script_exists(self):
+        assert (PROJECT_ROOT / "scripts" / "restart_dashboard.py").exists()
+
+    def test_usage_dashboard_restart_command_exists(self):
+        assert (PROJECT_ROOT / "commands" / "usage-dashboard-restart.md").exists()
+
