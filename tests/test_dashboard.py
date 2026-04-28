@@ -759,6 +759,140 @@ class TestGraphDataTooltip:
         assert "aria-label" in template
 
 
+class TestSparklineWiderHoverBand:
+    """Issue #50: 日別利用件数推移の hover 判定領域拡張 + 値 0 の日も tooltip 表示。
+
+    旧仕様では `<circle class="dot-hit" r="6">` のみが hover 対象だったため
+    判定領域が狭く、また `if (d.count <= 0) return ''` で 0 件の日はそもそも
+    レンダリングされず tooltip が出なかった。
+
+    修正方針: 各日に対して全高 `<rect class="day-band">` を `data-tip="daily"`
+    付きで配置し、0 件の日でも tooltip を出す。可視 dot は count>0 のみ残す
+    （0 を可視化すると視覚的ノイズが大きいため）。
+    """
+
+    def test_sparkline_has_day_band_class(self, tmp_path):
+        """sparkline に各日 1 つの全高 hit-band 要素 (.day-band) が存在する。"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        template = mod._HTML_TEMPLATE
+        assert 'class="day-band"' in template
+
+    def test_sparkline_zero_count_day_emits_band(self, tmp_path):
+        """`d.count <= 0` で band を return '' する旧スキップが残っていない。
+
+        従来の dots 生成にあった早期 return ('') の文字列が、新しい band 生成
+        パスから取り除かれていることを構造的にチェックする。
+        """
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        template = mod._HTML_TEMPLATE
+        # bands の生成ブロックを抽出
+        # `const bands = days.map(` を起点に、対応する `).join('');` までを取り出して
+        # その中に「count <= 0 で空文字 return」の早期 return が無いことを確認する
+        bands_start = template.find("const bands = days.map(")
+        assert bands_start > 0, "bands generation block が見つからない"
+        bands_end = template.find(").join('');", bands_start)
+        assert bands_end > bands_start
+        bands_block = template[bands_start:bands_end]
+        # 早期 return が残っていない（dot 用 visible 早期 return と区別するため band ブロックのみ）
+        assert "d.count <= 0" not in bands_block, (
+            "band 生成ブロックに 0 件スキップが残っている (Issue #50)"
+        )
+
+    def test_sparkline_band_uses_full_chart_height(self, tmp_path):
+        """band の height は SVG の chart 領域全体（ticks 部除く）をカバーする。
+
+        旧: r=6 の circle → 直径 12px の hit area。
+        新: y=0 〜 height=H-pad_y の rect → 130px+ の full-height 帯。
+        """
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        template = mod._HTML_TEMPLATE
+        # rect 生成は band 本体に含まれる
+        bands_start = template.find("const bands = days.map(")
+        bands_end = template.find(").join('');", bands_start)
+        bands_block = template[bands_start:bands_end]
+        assert "<rect" in bands_block
+        # height は (H - pad_y) を使う（chart 下端まで）
+        assert "H - pad_y" in bands_block or "(H-pad_y)" in bands_block.replace(" ", "")
+
+    def test_sparkline_band_carries_data_tip_daily(self, tmp_path):
+        """band は data-tip="daily" + data-d / data-c で tooltip 経由できる。"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        template = mod._HTML_TEMPLATE
+        bands_start = template.find("const bands = days.map(")
+        bands_end = template.find(").join('');", bands_start)
+        bands_block = template[bands_start:bands_end]
+        assert 'data-tip="daily"' in bands_block
+        assert "data-d=" in bands_block
+        assert "data-c=" in bands_block
+
+    def test_sparkline_visible_dot_still_skipped_for_zero(self, tmp_path):
+        """可視 dot (r=1.7 円) は count>0 のみ。0 件の日に dot を打つと視覚ノイズ。"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        template = mod._HTML_TEMPLATE
+        # dots block には d.count <= 0 のスキップが残る（band と区別）
+        dots_start = template.find("const dots = days.map(")
+        assert dots_start > 0
+        dots_end = template.find(").join('');", dots_start)
+        dots_block = template[dots_start:dots_end]
+        assert "d.count <= 0" in dots_block, (
+            "可視 dot は count>0 のみ描画する想定（旧スキップを保持）"
+        )
+
+
+class TestRankingRowHover:
+    """Issue #50: スキル利用 / サブエージェント呼び出しランキングのグラフ部分にも
+    hover tooltip を出す。
+
+    旧仕様では `.rn` に native `title=` 属性があるだけで、`.gauge-bar`（バー）
+    や行全体には hover で出る情報が無かった。floating data-tip 経由で
+    名前 + count + failure 率 + avg duration をリッチに表示する。
+    """
+
+    def _render_rank_body(self, template):
+        """renderRank 関数の本体（function 開始 → 末尾の `}` まで）を抽出する。"""
+        start = template.find("function renderRank(elId, items, kind)")
+        assert start > 0, "renderRank 関数が見つからない"
+        # 次の関数 (renderRank 直後の renderRank caller) までで打ち切る
+        end = template.find("renderRank('skillBody'", start)
+        assert end > start, "renderRank の終端マーカーが見つからない"
+        return template[start:end]
+
+    def test_rank_row_has_data_tip_rank(self, tmp_path):
+        """rank-row に data-tip="rank" 属性が付く。"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        template = mod._HTML_TEMPLATE
+        body = self._render_rank_body(template)
+        assert 'data-tip="rank"' in body, "renderRank 内に data-tip='rank' がない"
+
+    def test_rank_row_carries_data_attributes(self, tmp_path):
+        """rank-row に tooltip 用 data-name / data-c / data-kind が付く。"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        template = mod._HTML_TEMPLATE
+        body = self._render_rank_body(template)
+        assert "data-name=" in body
+        assert "data-c=" in body
+        assert "data-kind=" in body
+
+    def test_dtip_build_handles_rank_kind(self, tmp_path):
+        """dtipBuild が kind === 'rank' を handle するブランチを持つ。"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        template = mod._HTML_TEMPLATE
+        build_idx = template.find("function dtipBuild")
+        assert build_idx > 0
+        # function 終わり ('}') までを抽出するのは雑だが、十分な範囲を切り出して確認
+        snippet = template[build_idx:build_idx + 2000]
+        assert "kind === 'rank'" in snippet, "dtipBuild に rank kind の分岐がない"
+
+    def test_rank_row_drops_native_title(self, tmp_path):
+        """`.rn` の native `title=` 属性は削除済み（floating tooltip と二重表示を回避）。"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        template = mod._HTML_TEMPLATE
+        # 旧コード: `'<div class="rn" title="' + esc(it.name) + '">'`
+        assert "'<div class=\"rn\" title=\"'" not in template, (
+            "rank-row .rn に native title= が残っている (Issue #50)"
+        )
+
+
 class TestHelpPopupOverflow:
     """Issue #41: 右端 KPI (PERMISSION GATE) の help-pop が data-place="right"
     のまま viewport 外に飛び出して横スクロールを誘発するバグへの対策。

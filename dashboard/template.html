@@ -506,6 +506,8 @@
   }
   .data-tip[data-show="true"] { visibility: visible; opacity: 1; }
   .data-tip[data-kind="proj"] { border-left-color: var(--peach); }
+  .data-tip[data-kind="rank-skill"] { border-left-color: var(--mint); }
+  .data-tip[data-kind="rank-subagent"] { border-left-color: var(--coral); }
   .data-tip .lbl {
     color: var(--ink-faint);
     font-size: 10px;
@@ -530,8 +532,10 @@
   }
   .stack .seg { cursor: default; }
   .stack-legend .leg-row { cursor: default; }
-  /* sparkline 用の hit-area circle はマウスを受ける */
-  .spark-svg .dot-hit { cursor: default; }
+  /* sparkline 用の day-band rect はマウスを受ける（Issue #50: 旧 .dot-hit を置換） */
+  .spark-svg .day-band { cursor: default; }
+  /* ranking 行も hover で data-tip を出す */
+  .rank-row[data-tip] { cursor: default; }
 </style>
 </head>
 <body>
@@ -743,9 +747,19 @@
       if (it.failure_count > 0) meta.push('<span class="fail">FAIL ' + it.failure_count + ' (' + Math.round((it.failure_rate||0)*100) + '%)</span>');
       if (it.avg_duration_ms != null) meta.push('avg ' + (it.avg_duration_ms>=1000? (it.avg_duration_ms/1000).toFixed(1)+'s':Math.round(it.avg_duration_ms)+'ms'));
       const metaHtml = meta.length ? '<div class="meta">' + meta.join(' · ') + '</div>' : '';
-      return '<div class="rank-row ' + kind + '">' +
+      // data-tip="rank" で行全体（gauge-bar / 名前 / meta 含む）を hover 対象にする
+      // (Issue #50)。native title= は floating tooltip と重複するため削除。
+      const dataAttrs =
+        ' data-tip="rank" data-name="' + esc(it.name) + '" data-c="' + it.count + '"' +
+        ' data-kind="' + kind + '"' +
+        (it.failure_count != null ? ' data-fail="' + it.failure_count + '"' : '') +
+        (it.failure_rate != null ? ' data-fail-rate="' + it.failure_rate + '"' : '') +
+        (it.avg_duration_ms != null ? ' data-avg="' + it.avg_duration_ms + '"' : '');
+      const al = it.name + ': ' + it.count + (kind === 'subagent' ? ' invocations' : ' uses');
+      return '<div class="rank-row ' + kind + '"' + dataAttrs +
+        ' tabindex="0" role="img" aria-label="' + esc(al) + '">' +
         '<div class="rk">' + pad(i+1,2) + '</div>' +
-        '<div class="rn" title="' + esc(it.name) + '">' + nameHtml + '</div>' +
+        '<div class="rn">' + nameHtml + '</div>' +
         '<div class="rv">' + fmtN(it.count) + '</div>' +
         '<div class="gauge-bar"><div class="gb" style="width:' + pct + '%"></div></div>' +
         metaHtml +
@@ -779,15 +793,30 @@
     const peakIdx = days.findIndex(d => d.count === max);
     const peakDate = days[peakIdx].date;
 
+    // 可視 dot は count>0 のみ（0 を打つと視覚ノイズ）。data 属性を持たない pure
+    // visual。hover 判定は後段の day-band rect が持つので分離している。
     const dots = days.map((d,i) => {
       if (d.count <= 0) return '';
       const cx = xs(i).toFixed(2);
       const cy = ys(d.count).toFixed(2);
+      return '<circle cx="' + cx + '" cy="' + cy + '" r="1.7" fill="#8aa6ff" fill-opacity="0.85"/>';
+    }).join('');
+
+    // 各日に対する全高 hit-band（透明な rect / 0 件の日も含む / Issue #50）。
+    // dot 直径 12px から chart 全高 (~130px) へ判定領域を拡張し、value=0 でも
+    // tooltip を出せるよう band 単位で構成する。bands は SVG の最後に rendering
+    // して z-order 上 line / dots / peak line より前面に置く（透明だが pointer-events
+    // を受ける）。
+    const bandHalfW = days.length > 1
+      ? (W - 2*pad_x) / (days.length - 1) / 2
+      : (W - 2*pad_x) / 2;
+    const bands = days.map((d,i) => {
+      const cx = xs(i);
+      const x = Math.max(0, cx - bandHalfW).toFixed(2);
+      const w = Math.min(W - parseFloat(x), bandHalfW * 2).toFixed(2);
       const al = d.date + ': ' + d.count + ' events';
-      // 可視 dot + 透明な hit-area circle（hover usability 向上 + data 属性キャリア）
-      return '<circle cx="' + cx + '" cy="' + cy + '" r="1.7" fill="#8aa6ff" fill-opacity="0.85"/>' +
-        '<circle class="dot-hit" cx="' + cx + '" cy="' + cy + '" r="6" fill="transparent" ' +
-        'data-tip="daily" data-d="' + d.date + '" data-c="' + d.count + '" ' +
+      return '<rect class="day-band" x="' + x + '" y="0" width="' + w + '" height="' + (H - pad_y) + '" ' +
+        'fill="transparent" data-tip="daily" data-d="' + d.date + '" data-c="' + d.count + '" ' +
         'tabindex="0" role="img" aria-label="' + al + '"/>';
     }).join('');
 
@@ -814,7 +843,8 @@
         '<line x1="' + xs(peakIdx) + '" y1="' + pad_y + '" x2="' + xs(peakIdx) + '" y2="' + (H-pad_y) + '" stroke="#ffc97a" stroke-dasharray="3,3" stroke-width="1" stroke-opacity="0.75"/>' +
         '<text x="' + xs(peakIdx) + '" y="' + (pad_y - 5) + '" font-size="9.5" font-family="JetBrains Mono, monospace" fill="#ffc97a" text-anchor="middle">peak ' + max + '</text>'
       ) : '') +
-      ticks;
+      ticks +
+      bands;
 
     const total = days.reduce((s,d)=>s+d.count, 0);
     const avg = total / days.length;
@@ -1023,6 +1053,32 @@
               '<span class="sep">·</span>' +
               '<span class="lbl">share</span><span class="val">' + esc(pct) + '</span>'
       };
+    }
+    if (kind === 'rank') {
+      // skill / subagent ランキング行 (Issue #50)。kind サフィックスで accent 色を分岐。
+      const name = el.getAttribute('data-name') || '';
+      const c = el.getAttribute('data-c') || '0';
+      const subKind = el.getAttribute('data-kind') || 'skill';
+      const fail = el.getAttribute('data-fail');
+      const failRate = el.getAttribute('data-fail-rate');
+      const avg = el.getAttribute('data-avg');
+      const countLabel = subKind === 'subagent' ? 'invocations' : 'uses';
+      let body = '<span class="ttl">' + esc(name) + '</span>' +
+        '<span class="lbl">' + countLabel + '</span>' +
+        '<span class="val">' + fmtN(c) + '</span>';
+      if (fail != null && parseInt(fail, 10) > 0) {
+        const rate = failRate != null ? Math.round(parseFloat(failRate) * 100) : 0;
+        body += '<span class="sep">·</span>' +
+                '<span class="lbl">fail</span>' +
+                '<span class="val">' + fmtN(fail) + ' (' + rate + '%)</span>';
+      }
+      if (avg != null) {
+        const a = parseFloat(avg);
+        const fmt = a >= 1000 ? (a / 1000).toFixed(1) + 's' : Math.round(a) + 'ms';
+        body += '<span class="sep">·</span>' +
+                '<span class="lbl">avg</span><span class="val">' + fmt + '</span>';
+      }
+      return { kind: 'rank-' + subKind, html: body };
     }
     return null;
   }
