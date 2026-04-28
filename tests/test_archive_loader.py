@@ -24,8 +24,8 @@ PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 
-@pytest.fixture
-def loader_module(monkeypatch):
+@pytest.fixture(name="loader_module")
+def _loader_module_fixture(monkeypatch):
     """env 隔離した状態で _archive_loader を再 import。"""
     monkeypatch.delenv("ARCHIVE_DIR", raising=False)
     monkeypatch.delenv("USAGE_JSONL", raising=False)
@@ -178,10 +178,7 @@ class TestArchiveLockBlocking:
         archive を読む TOCTOU window があった。`os.O_RDWR | os.O_CREAT` で
         create-on-open に変えることで window を構造的に閉じる。
         """
-        try:
-            import fcntl  # noqa: F401
-        except ImportError:
-            pytest.skip("requires POSIX fcntl")
+        pytest.importorskip("fcntl")
 
         archive_dir = tmp_path / "archive"
         _write_archive(

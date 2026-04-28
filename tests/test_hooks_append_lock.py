@@ -25,8 +25,8 @@ HOOKS_DIR = PROJECT_ROOT / "hooks"
 sys.path.insert(0, str(HOOKS_DIR))
 
 
-@pytest.fixture
-def fresh_append_module(monkeypatch, tmp_path):
+@pytest.fixture(name="fresh_append_module")
+def _fresh_append_module_fixture(monkeypatch, tmp_path):
     """_append モジュールをクリーンに reload。"""
     monkeypatch.setenv("USAGE_JSONL_LOCK", str(tmp_path / "custom.lock"))
     monkeypatch.setenv("HEALTH_ALERTS_JSONL", str(tmp_path / "health_alerts.jsonl"))

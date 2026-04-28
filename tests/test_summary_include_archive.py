@@ -8,10 +8,14 @@ reports/summary.py の `--include-archive` flag (Issue #30 Phase B) のテスト
 - archive_dir/*.jsonl.gz.tmp を glob から除外
 - archive_dir 不在でも crash しない
 - archive 内の壊れた行は silent skip
+- atomic snapshot (codex 5th P2): hot+archive を同じ SH lock 下で読む
 """
 import gzip
 import json
+import os
 import sys
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -20,8 +24,8 @@ PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 
-@pytest.fixture
-def summary_module(monkeypatch, tmp_path):
+@pytest.fixture(name="summary_module")
+def _summary_module_fixture(monkeypatch, tmp_path):
     """summary モジュールを env 隔離した状態で再 import + DATA_FILE 直接上書き。
 
     module-level DATA_FILE は import 時に env evaluate されるため、テスト間で
@@ -35,6 +39,15 @@ def summary_module(monkeypatch, tmp_path):
     from reports import summary
     monkeypatch.setattr(summary, "DATA_FILE", tmp_path / "usage.jsonl")
     return summary
+
+
+def _skill_event(skill: str, timestamp: str) -> dict:
+    return {
+        "event_type": "skill_tool",
+        "skill": skill,
+        "timestamp": timestamp,
+        "session_id": "s",
+    }
 
 
 def _write_hot(tmp_path: Path, events: list[dict]) -> None:
@@ -61,14 +74,10 @@ def _write_archive(tmp_path: Path, month: str, events: list[dict]) -> None:
 
 class TestIncludeArchiveFlag:
     def test_load_events_default_returns_hot_only(self, summary_module, tmp_path):
-        _write_hot(
-            tmp_path,
-            [{"event_type": "skill_tool", "skill": "/foo", "timestamp": "2026-04-20T00:00:00+00:00", "session_id": "s"}],
-        )
+        _write_hot(tmp_path, [_skill_event("/foo", "2026-04-20T00:00:00+00:00")])
         _write_archive(
-            tmp_path,
-            "2025-08",
-            [{"event_type": "skill_tool", "skill": "/old", "timestamp": "2025-08-01T00:00:00+00:00", "session_id": "s"}],
+            tmp_path, "2025-08",
+            [_skill_event("/old", "2025-08-01T00:00:00+00:00")],
         )
 
         events = summary_module.load_events()
@@ -76,19 +85,14 @@ class TestIncludeArchiveFlag:
         assert events[0]["skill"] == "/foo"
 
     def test_load_events_include_archive_merges_both(self, summary_module, tmp_path):
-        _write_hot(
-            tmp_path,
-            [{"event_type": "skill_tool", "skill": "/recent", "timestamp": "2026-04-20T00:00:00+00:00", "session_id": "s"}],
+        _write_hot(tmp_path, [_skill_event("/recent", "2026-04-20T00:00:00+00:00")])
+        _write_archive(
+            tmp_path, "2025-08",
+            [_skill_event("/old1", "2025-08-01T00:00:00+00:00")],
         )
         _write_archive(
-            tmp_path,
-            "2025-08",
-            [{"event_type": "skill_tool", "skill": "/old1", "timestamp": "2025-08-01T00:00:00+00:00", "session_id": "s"}],
-        )
-        _write_archive(
-            tmp_path,
-            "2025-09",
-            [{"event_type": "skill_tool", "skill": "/old2", "timestamp": "2025-09-15T00:00:00+00:00", "session_id": "s"}],
+            tmp_path, "2025-09",
+            [_skill_event("/old2", "2025-09-15T00:00:00+00:00")],
         )
 
         events = summary_module.load_events(include_archive=True)
@@ -107,20 +111,10 @@ class TestArchiveTmpExclusion:
         archive_dir.mkdir()
         # 正常 .gz
         with gzip.open(archive_dir / "2025-08.jsonl.gz", "wt", encoding="utf-8") as f:
-            f.write(
-                json.dumps(
-                    {"event_type": "skill_tool", "skill": "/proper", "timestamp": "2025-08-01T00:00:00+00:00", "session_id": "s"}
-                )
-                + "\n"
-            )
+            f.write(json.dumps(_skill_event("/proper", "2025-08-01T00:00:00+00:00")) + "\n")
         # .tmp 残骸 — load されないはず
         with gzip.open(archive_dir / "2025-08.jsonl.gz.99999.tmp", "wt", encoding="utf-8") as f:
-            f.write(
-                json.dumps(
-                    {"event_type": "skill_tool", "skill": "/leftover", "timestamp": "2025-08-01T00:00:00+00:00", "session_id": "s"}
-                )
-                + "\n"
-            )
+            f.write(json.dumps(_skill_event("/leftover", "2025-08-01T00:00:00+00:00")) + "\n")
 
         events = summary_module.load_events(include_archive=True)
         skills = [ev["skill"] for ev in events]
@@ -135,10 +129,7 @@ class TestArchiveTmpExclusion:
 
 class TestArchiveDirNotExist:
     def test_no_archive_dir_with_flag_does_not_crash(self, summary_module, tmp_path):
-        _write_hot(
-            tmp_path,
-            [{"event_type": "skill_tool", "skill": "/x", "timestamp": "2026-04-20T00:00:00+00:00", "session_id": "s"}],
-        )
+        _write_hot(tmp_path, [_skill_event("/x", "2026-04-20T00:00:00+00:00")])
         # archive_dir は作らない
         events = summary_module.load_events(include_archive=True)
         assert len(events) == 1
@@ -154,19 +145,9 @@ class TestArchiveBrokenLineSkip:
         archive_dir = tmp_path / "archive"
         archive_dir.mkdir()
         with gzip.open(archive_dir / "2025-08.jsonl.gz", "wt", encoding="utf-8") as f:
-            f.write(
-                json.dumps(
-                    {"event_type": "skill_tool", "skill": "/ok", "timestamp": "2025-08-01T00:00:00+00:00", "session_id": "s"}
-                )
-                + "\n"
-            )
+            f.write(json.dumps(_skill_event("/ok", "2025-08-01T00:00:00+00:00")) + "\n")
             f.write("not valid json {{{ \n")
-            f.write(
-                json.dumps(
-                    {"event_type": "skill_tool", "skill": "/also_ok", "timestamp": "2025-08-02T00:00:00+00:00", "session_id": "s"}
-                )
-                + "\n"
-            )
+            f.write(json.dumps(_skill_event("/also_ok", "2025-08-02T00:00:00+00:00")) + "\n")
 
         events = summary_module.load_events(include_archive=True)
         skills = sorted(ev["skill"] for ev in events)
@@ -180,14 +161,10 @@ class TestArchiveBrokenLineSkip:
 
 class TestCliFlag:
     def test_main_with_include_archive_flag_uses_archive_events(self, summary_module, tmp_path, capsys):
-        _write_hot(
-            tmp_path,
-            [{"event_type": "skill_tool", "skill": "/recent", "timestamp": "2026-04-20T00:00:00+00:00", "session_id": "s"}],
-        )
+        _write_hot(tmp_path, [_skill_event("/recent", "2026-04-20T00:00:00+00:00")])
         _write_archive(
-            tmp_path,
-            "2025-08",
-            [{"event_type": "skill_tool", "skill": "/old", "timestamp": "2025-08-01T00:00:00+00:00", "session_id": "s"}],
+            tmp_path, "2025-08",
+            [_skill_event("/old", "2025-08-01T00:00:00+00:00")],
         )
 
         summary_module.main(["--include-archive"])
@@ -198,6 +175,39 @@ class TestCliFlag:
 # ---------------------------------------------------------------------------
 # TestAtomicSnapshot — codex 5th review P2: hot+archive を同じ SH lock 下で読む
 # ---------------------------------------------------------------------------
+
+
+def _archive_simulation(
+    lock_path: Path,
+    archive_dir: Path,
+    hot_path: Path,
+    a_event: dict,
+    b_event: dict,
+    ex_acquired: threading.Event,
+    hold_seconds: float,
+) -> None:
+    """archive_usage.run_archive 相当の動作を直列で実行する thread 本体。
+
+    手順 (本物の archive job と同じ): EX 取得 → archive .gz 書き込み →
+    hot tier rewrite → EX release。途中の sleep で main 側が「lock 外で
+    hot を読む旧バグ経路」を踏める時間を確保する。
+    """
+    import fcntl  # POSIX 限定の thread (skipif で win32 を排除)
+
+    fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        ex_acquired.set()
+        time.sleep(hold_seconds)
+        with gzip.open(archive_dir / "2025-08.jsonl.gz", "wt", encoding="utf-8") as f:
+            f.write(json.dumps(a_event, ensure_ascii=False) + "\n")
+        tmp_hot = hot_path.with_name(hot_path.name + ".tmp")
+        with tmp_hot.open("w", encoding="utf-8") as f:
+            f.write(json.dumps(b_event, ensure_ascii=False) + "\n")
+        os.replace(tmp_hot, hot_path)
+        fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
 
 
 class TestAtomicSnapshot:
@@ -215,64 +225,25 @@ class TestAtomicSnapshot:
         ことで誘発)。修正後は load_events 全体が同じ SH lock 下で実行されるので、
         archive job 完了後の consistent snapshot で A はちょうど 1 回だけ見える。
         """
-        try:
-            import fcntl
-        except ImportError:
-            pytest.skip("requires POSIX fcntl")
+        pytest.importorskip("fcntl")
 
-        import threading
-        import time as _time
-        import os as _os
-
-        a_old = {
-            "event_type": "skill_tool",
-            "skill": "/A_old",
-            "timestamp": "2025-08-01T00:00:00+00:00",
-            "session_id": "s",
-        }
-        b_recent = {
-            "event_type": "skill_tool",
-            "skill": "/B_recent",
-            "timestamp": "2026-04-20T00:00:00+00:00",
-            "session_id": "s",
-        }
+        a_old = _skill_event("/A_old", "2025-08-01T00:00:00+00:00")
+        b_recent = _skill_event("/B_recent", "2026-04-20T00:00:00+00:00")
         _write_hot(tmp_path, [a_old, b_recent])
         archive_dir = tmp_path / "archive"
         archive_dir.mkdir(parents=True, exist_ok=True)
 
         # USAGE_JSONL fixture が tmp_path/usage.jsonl を設定済 → lock は <data>.lock
         lock_path = tmp_path / "usage.jsonl.lock"
-        # 念のため明示 (env 経由で _archive_loader / _append が同じ lock を見るように)
         monkeypatch.setenv("USAGE_JSONL_LOCK", str(lock_path))
 
         ex_acquired = threading.Event()
-        HOLD_SECONDS = 0.3
-
-        def archive_job_simulation():
-            """archive_usage.run_archive 相当の動作を直列で実行する thread。
-
-            手順 (本物の archive job と同じ): EX 取得 → archive .gz 書き込み →
-            hot tier rewrite → EX release。途中の sleep で main 側が「lock 外で
-            hot を読む旧バグ経路」を踏める時間を確保する。
-            """
-            fd = _os.open(str(lock_path), _os.O_CREAT | _os.O_RDWR, 0o600)
-            try:
-                fcntl.flock(fd, fcntl.LOCK_EX)
-                ex_acquired.set()
-                _time.sleep(HOLD_SECONDS)
-                # archive .gz に A_old を書き、hot を [B_recent] に rewrite
-                with gzip.open(archive_dir / "2025-08.jsonl.gz", "wt", encoding="utf-8") as f:
-                    f.write(json.dumps(a_old, ensure_ascii=False) + "\n")
-                hot_path = tmp_path / "usage.jsonl"
-                tmp_hot = hot_path.with_name(hot_path.name + ".tmp")
-                with tmp_hot.open("w", encoding="utf-8") as f:
-                    f.write(json.dumps(b_recent, ensure_ascii=False) + "\n")
-                _os.replace(tmp_hot, hot_path)
-                fcntl.flock(fd, fcntl.LOCK_UN)
-            finally:
-                _os.close(fd)
-
-        t = threading.Thread(target=archive_job_simulation, daemon=True)
+        t = threading.Thread(
+            target=_archive_simulation,
+            args=(lock_path, archive_dir, tmp_path / "usage.jsonl",
+                  a_old, b_recent, ex_acquired, 0.3),
+            daemon=True,
+        )
         t.start()
         assert ex_acquired.wait(timeout=2.0), "archive thread failed to acquire LOCK_EX"
 

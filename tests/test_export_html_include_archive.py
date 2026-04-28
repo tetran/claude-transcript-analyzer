@@ -61,33 +61,35 @@ def _run_export(tmp_path: Path, *, include_archive: bool) -> Path:
     return output
 
 
+def _ev(skill: str, timestamp: str, tool_use_id: str) -> dict:
+    return {
+        "event_type": "skill_tool",
+        "skill": skill,
+        "timestamp": timestamp,
+        "session_id": "s",
+        "tool_use_id": tool_use_id,
+    }
+
+
 class TestExportHtmlIncludeArchive:
     def test_default_excludes_archive(self, tmp_path):
-        _write_hot(
-            tmp_path,
-            [{"event_type": "skill_tool", "skill": "/recent", "timestamp": "2026-04-20T00:00:00+00:00", "session_id": "s", "tool_use_id": "t1"}],
-        )
+        _write_hot(tmp_path, [_ev("/recent", "2026-04-20T00:00:00+00:00", "t1")])
         _write_archive(
-            tmp_path,
-            "2025-08",
-            [{"event_type": "skill_tool", "skill": "/old", "timestamp": "2025-08-01T00:00:00+00:00", "session_id": "s", "tool_use_id": "t_old"}],
+            tmp_path, "2025-08",
+            [_ev("/old", "2025-08-01T00:00:00+00:00", "t_old")],
         )
 
         output = _run_export(tmp_path, include_archive=False)
-        total = _extract_total_events(output.read_text())
+        total = _extract_total_events(output.read_text(encoding="utf-8"))
         assert total == 1
 
     def test_include_archive_flag_merges_both(self, tmp_path):
-        _write_hot(
-            tmp_path,
-            [{"event_type": "skill_tool", "skill": "/recent", "timestamp": "2026-04-20T00:00:00+00:00", "session_id": "s", "tool_use_id": "t1"}],
-        )
+        _write_hot(tmp_path, [_ev("/recent", "2026-04-20T00:00:00+00:00", "t1")])
         _write_archive(
-            tmp_path,
-            "2025-08",
-            [{"event_type": "skill_tool", "skill": "/old", "timestamp": "2025-08-01T00:00:00+00:00", "session_id": "s", "tool_use_id": "t_old"}],
+            tmp_path, "2025-08",
+            [_ev("/old", "2025-08-01T00:00:00+00:00", "t_old")],
         )
 
         output = _run_export(tmp_path, include_archive=True)
-        total = _extract_total_events(output.read_text())
+        total = _extract_total_events(output.read_text(encoding="utf-8"))
         assert total == 2

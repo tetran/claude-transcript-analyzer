@@ -11,7 +11,6 @@ build_dashboard_data() は events 引数を全部使う pure 関数 (内部で�
 """
 import gzip
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -37,8 +36,8 @@ def _write_archive(tmp_path: Path, month: str, events: list[dict]) -> None:
             f.write(json.dumps(ev, ensure_ascii=False) + "\n")
 
 
-@pytest.fixture
-def server_module(monkeypatch, tmp_path):
+@pytest.fixture(name="server_module")
+def _server_module_fixture(monkeypatch, tmp_path):
     monkeypatch.setenv("USAGE_JSONL", str(tmp_path / "usage.jsonl"))
     monkeypatch.setenv("ARCHIVE_DIR", str(tmp_path / "archive"))
     monkeypatch.setenv("HEALTH_ALERTS_JSONL", str(tmp_path / "health_alerts.jsonl"))

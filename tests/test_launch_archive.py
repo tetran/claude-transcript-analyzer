@@ -9,7 +9,6 @@ hooks/launch_archive.py の SessionStart hook 経由 archive job auto-launcher
 - 月跨ぎ判定: state 不在 / 壊れた JSON / 古い月 → spawn、当月 / 前月以降 → skip
 - spawn は fork-and-detach で start_new_session=True
 """
-import importlib
 import json
 import os
 import subprocess
@@ -28,8 +27,8 @@ sys.path.insert(0, str(HOOKS_DIR))
 LAUNCH_ARCHIVE_PY = HOOKS_DIR / "launch_archive.py"
 
 
-@pytest.fixture
-def launch_archive_module(monkeypatch, tmp_path):
+@pytest.fixture(name="launch_archive_module")
+def _launch_archive_module_fixture(monkeypatch, tmp_path):
     monkeypatch.setenv("ARCHIVE_STATE_FILE", str(tmp_path / ".archive_state.json"))
     sys.modules.pop("launch_archive", None)
     import launch_archive
@@ -208,7 +207,7 @@ class TestSilentExitZero:
         monkeypatch.setattr(launch_archive_module, "_needs_archive", boom)
         assert launch_archive_module.main() == 0
 
-    def test_main_returns_zero_on_spawn_failure(self, launch_archive_module, monkeypatch, tmp_path):
+    def test_main_returns_zero_on_spawn_failure(self, launch_archive_module, monkeypatch):
         # state 不在 → needs True path、ただし spawn は失敗する想定
         monkeypatch.setattr(launch_archive_module, "_spawn_archive_job", lambda: None)
         assert launch_archive_module.main() == 0
