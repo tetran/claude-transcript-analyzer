@@ -13,5 +13,7 @@ data/usage.jsonl
 # macOS
 .DS_Store
 
-# Claude Code local settings (not shared)
-.claude/
+# Claude Code: shared な settings.json (hook 等のチーム共有設定) のみチェックイン、
+# local 個人設定 (settings.local.json) と skills 等はローカル専用として除外
+.claude/*
+!.claude/settings.json

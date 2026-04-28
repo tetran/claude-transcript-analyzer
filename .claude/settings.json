@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=$(jq -r '.tool_input.file_path // .tool_response.filePath // empty'); if echo \"$f\" | grep -qE '\\.py$'; then result=$(uvx ruff check \"$f\" 2>&1); rc=$?; if [ $rc -ne 0 ]; then safe_result=$(printf '%s' \"$result\" | tr -cd '\\11\\12\\15\\40-\\176'); snippet=$(printf '%s' \"$safe_result\" | sed -n '1,40p'); jq -n --arg hdr \"Ruff issues in $f (exit $rc). Fix them:\" --arg body \"$snippet\" '{\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUse\",\"additionalContext\":($hdr + \"\\n\" + $body)}}'; fi; fi; true",
+            "statusMessage": "Running ruff..."
+          }
+        ]
+      }
+    ]
+  }
+}
