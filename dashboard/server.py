@@ -174,6 +174,38 @@ def aggregate_projects(events: list[dict], top_n: int = TOP_N) -> list[dict]:
     return [{"project": project, "count": count} for project, count in counter.most_common(top_n)]
 
 
+def aggregate_hourly_heatmap(usage_events: list[dict]) -> dict:
+    """usage 系 events を UTC hour bucket に集計する (Issue #58)。
+
+    呼び出し慣習: `_filter_usage_events()` で usage 系のみ + subagent invocation
+    dedup 済みの list を受け取る (= aggregate_daily / aggregate_projects と同じ)。
+
+    server 側は UTC のまま hour-truncate して返し、browser 側で local TZ 変換 +
+    (weekday, hour) bin する設計 (option 3 hour-bucketed UTC)。
+
+    parse 失敗 (空文字 / not parseable / `timestamp` キー不在) は silent skip。
+    """
+    counter: Counter = Counter()
+    for ev in usage_events:
+        ts = ev.get("timestamp", "")
+        if not ts:
+            continue
+        try:
+            dt = datetime.fromisoformat(ts)
+        except (TypeError, ValueError):
+            continue
+        if dt.tzinfo is None:
+            # naive datetime は仕様外 (hooks は必ず +00:00 / +HH:MM 付き)。silent skip。
+            continue
+        hour_dt = dt.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)
+        counter[hour_dt.isoformat()] += 1
+    buckets = [
+        {"hour_utc": hour_utc, "count": count}
+        for hour_utc, count in sorted(counter.items())
+    ]
+    return {"timezone": "UTC", "buckets": buckets}
+
+
 def aggregate_session_stats(events: list[dict]) -> dict:
     total_sessions = 0
     resume_count = 0
@@ -226,6 +258,7 @@ def build_dashboard_data(events: list[dict]) -> dict:
         "subagent_ranking": aggregate_subagents(events),
         "daily_trend": aggregate_daily(usage_events),
         "project_breakdown": aggregate_projects(usage_events),
+        "hourly_heatmap": aggregate_hourly_heatmap(usage_events),
         "session_stats": aggregate_session_stats(events),
         "health_alerts": load_health_alerts(),
     }
