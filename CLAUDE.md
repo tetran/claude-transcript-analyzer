@@ -140,6 +140,45 @@ python3 dashboard/server.py
 kill $(jq -r .pid ~/.claude/transcript-analyzer/server.json)
 ```
 
+## ダッシュボード複数ページ構成
+
+ダッシュボードは **ハッシュベース router で 4 ページ** に分割。
+
+### ページ構成
+
+| Path | data-page | 名前 | 主な目的 |
+|------|-----------|------|----------|
+| `#/` | `overview` | Overview | KPI / skill ranking / subagent ranking / project breakdown / daily trend / health alerts |
+| `#/patterns` | `patterns` | Patterns | 利用パターン (時間帯 / 共起 / project×skill) |
+| `#/quality` | `quality` | Quality | 実行品質と摩擦シグナル (permission / compact / percentile) |
+| `#/surface` | `surface` | Surface | スキル surface (発見性 / 想起性) |
+
+### 共通 chrome と Overview 専用 chrome の分離
+
+- **共通頂部 nav** (`<nav class="page-nav">`): 4 タブ。`.app` 直下、全ページに表示
+- **共通 footer** (`<footer class="app-footer">`): conn-status / lastRx / sessVal /
+  クレジット行。全ページに表示（接続バッジは Overview 以外のページからも見える）
+- **Overview 専用 header** (`<header class="header">`): h1「Claude Code Usage
+  Overview」+ lede。`<section data-page="overview">` の中に閉じる
+
+### Router の動作仕様
+
+- **DOM 構造**: 4 つの `<section data-page="...">` を DOM に常駐させ、`hidden`
+  属性切替でページ表示を切り替える（DOM tree から削除しない）
+- **router IIFE**: `<script>` ブロック内に独立した IIFE で実装。`HASH_TO_PAGE`
+  テーブル + `applyRoute(rawHash)` + `hashchange` listener。SSE refresh 経路と
+  独立して動作（Overview 以外のページ表示中も `loadAndRender()` は走り続け、
+  戻ってきたときに最新データが見える）
+- **不正 hash fallback**: 未知 hash (`#/foo`, percent-encoded, `#` 単体) は
+  `'overview'` に倒れる
+- **`body[data-active-page="<page>"]`**: 各 widget renderer が
+  `if (document.body.dataset.activePage !== '<page>') return;` で page-scoped
+  early-out できるよう active page 名を expose
+
+`loadAndRender()` は Overview 専用 renderer (absolute `getElementById` lookup)
+として残す。Overview 以外のページが widget を持つ場合は page-scoped early-out
+で no-op 化する設計。
+
 ## ファイル構成
 
 ```

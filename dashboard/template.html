@@ -536,23 +536,146 @@
   .spark-svg .day-band { cursor: default; }
   /* ranking 行も hover で data-tip を出す */
   .rank-row[data-tip] { cursor: default; }
+
+  /* ---------- multipage shell (Issue #57) ---------- */
+  /* 4 タブの頂部 nav。`.app` 直下、全ページ共通。 */
+  .page-nav {
+    display: flex;
+    gap: 4px;
+    padding: 0 0 14px;
+    margin-bottom: 18px;
+    border-bottom: 1px solid var(--line);
+    flex-wrap: wrap;
+  }
+  .page-nav a {
+    padding: 8px 14px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--ink-soft);
+    text-decoration: none;
+    border-radius: var(--r-md) var(--r-md) 0 0;
+    transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
+    border: 1px solid transparent;
+    border-bottom: none;
+    margin-bottom: -1px;
+  }
+  .page-nav a:hover {
+    color: var(--ink);
+    background: var(--bg-panel);
+  }
+  .page-nav a.active {
+    color: var(--mint);
+    background: var(--bg-panel);
+    border-color: var(--line);
+    border-bottom: 2px solid var(--mint);
+  }
+  .page-nav a:focus-visible {
+    outline: 2px solid var(--peri);
+    outline-offset: 2px;
+  }
+
+  /* `<section data-page="...">` は hidden 切替で常駐。 */
+  .page[hidden] { display: none; }
+
+  /* 後続 PR (#58〜#62) で本実装するページの placeholder。 */
+  .page-placeholder {
+    padding: 80px 24px;
+    text-align: center;
+    background: var(--bg-panel);
+    border: 1px solid var(--line);
+    border-radius: var(--r-lg);
+    margin-top: 8px;
+  }
+  .page-placeholder h2 {
+    margin: 0 0 10px;
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--ink);
+  }
+  .page-placeholder h2 .accent {
+    color: var(--mint);
+    font-weight: 700;
+  }
+  .page-placeholder .placeholder-body {
+    margin: 0;
+    font-size: 13px;
+    color: var(--ink-soft);
+    line-height: 1.7;
+  }
+  .page-placeholder .placeholder-body code {
+    font-family: var(--ff-mono);
+    font-size: 12px;
+    background: var(--bg-elevated);
+    padding: 1px 6px;
+    border-radius: var(--r-sm);
+    color: var(--ink);
+  }
+
+  /* 全ページ共通の app-footer。conn-status / lastRx / sessVal を集約。 */
+  .app-footer {
+    margin-top: 32px;
+    padding-top: 16px;
+    border-top: 1px solid var(--line);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 14px;
+    font-size: 11.5px;
+    color: var(--ink-faint);
+  }
+  .app-footer .meta {
+    display: flex;
+    gap: 16px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .app-footer .meta-item {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 4px;
+  }
+  .app-footer .meta-item .k {
+    color: var(--ink-faint);
+  }
+  .app-footer .meta-item .v {
+    color: var(--ink-soft);
+    font-family: var(--ff-mono);
+  }
+  .app-footer .credits {
+    color: var(--ink-faint);
+    font-size: 11px;
+  }
+  .app-footer .credits .accent {
+    color: var(--mint);
+    font-weight: 600;
+  }
+  .app-footer .credits .sep {
+    margin: 0 8px;
+    opacity: 0.5;
+  }
 </style>
 </head>
 <body>
   <div class="app">
+    <!-- 共通: 4 ページ切替 nav (Issue #57) -->
+    <nav class="page-nav" role="navigation" aria-label="ダッシュボードページ">
+      <a href="#/" data-page-link="overview" tabindex="0">Overview</a>
+      <a href="#/patterns" data-page-link="patterns" tabindex="0">Patterns</a>
+      <a href="#/quality" data-page-link="quality" tabindex="0">Quality</a>
+      <a href="#/surface" data-page-link="surface" tabindex="0">Surface</a>
+    </nav>
+
+    <!-- Overview ページ (現状互換) -->
+    <section data-page="overview" class="page" aria-labelledby="page-overview-title">
     <header class="header">
       <div>
-        <h1><span class="accent">Claude Code</span> Usage Overview</h1>
+        <h1 id="page-overview-title"><span class="accent">Claude Code</span> Usage Overview</h1>
         <div class="lede">
           <span class="num" id="ledeEvents">—</span> events ·
           <span class="num" id="ledeDays">—</span> days observed ·
           <span class="num" id="ledeProjects">—</span> projects
         </div>
-      </div>
-      <div class="meta">
-        <div><span class="conn-status" id="connStatus" data-state="reconnect" role="status" aria-live="polite">○ 接続準備中</span></div>
-        <div><span class="k">最終更新</span><span class="v" id="lastRx">—</span></div>
-        <div><span class="k">セッション</span><span class="v" id="sessVal">—</span></div>
       </div>
     </header>
 
@@ -635,13 +758,85 @@
       </div>
     </div>
 
-    <footer>
-      <span><span class="accent">claude-transcript-analyzer</span> · v0.6</span>
-      <span>stdlib only · no third-party js</span>
+    </section><!-- /data-page="overview" -->
+
+    <!-- Patterns ページ (Issue #58 / #59 で本実装) -->
+    <section data-page="patterns" class="page page-placeholder" aria-labelledby="page-patterns-title" hidden>
+      <h2 id="page-patterns-title"><span class="accent">Patterns</span> — Coming soon</h2>
+      <p class="placeholder-body">
+        利用パターンを可視化するページです。<br>
+        時間帯ヒートマップ (<code>#58</code>) / cross-tab 共起・project×skill (<code>#59</code>) を順次追加予定。
+      </p>
+    </section>
+
+    <!-- Quality ページ (Issue #60 / #61 で本実装) -->
+    <section data-page="quality" class="page page-placeholder" aria-labelledby="page-quality-title" hidden>
+      <h2 id="page-quality-title"><span class="accent">Quality</span> — Coming soon</h2>
+      <p class="placeholder-body">
+        実行品質と摩擦シグナルを可視化するページです。<br>
+        Subagent percentile / weekly trend (<code>#60</code>) と permission/skill / compact 密度 (<code>#61</code>) を順次追加予定。
+      </p>
+    </section>
+
+    <!-- Surface ページ (Issue #62 で本実装) -->
+    <section data-page="surface" class="page page-placeholder" aria-labelledby="page-surface-title" hidden>
+      <h2 id="page-surface-title"><span class="accent">Surface</span> — Coming soon</h2>
+      <p class="placeholder-body">
+        スキル surface (発見性 / 想起性) を可視化するページです。<br>
+        expansion 比率 / instructions_loaded 分析 (<code>#62</code>) を追加予定。
+      </p>
+    </section>
+
+    <!-- 全ページ共通の app-footer (Issue #57): 接続バッジ + 最終更新 + セッション数 + クレジット -->
+    <footer class="app-footer">
+      <div class="meta">
+        <span class="conn-status" id="connStatus" data-state="reconnect" role="status" aria-live="polite">○ 接続準備中</span>
+        <span class="meta-item"><span class="k">最終更新</span><span class="v" id="lastRx">—</span></span>
+        <span class="meta-item"><span class="k">セッション</span><span class="v" id="sessVal">—</span></span>
+      </div>
+      <div class="credits">
+        <span class="accent">claude-transcript-analyzer</span> · v0.7<span class="sep">·</span>stdlib only · no third-party js
+      </div>
     </footer>
   </div>
 
   <div class="data-tip" id="dataTooltip" role="tooltip" aria-hidden="true"></div>
+
+<script>
+// ============================================================
+//  Hash router (Issue #57) — loadAndRender とは独立した IIFE。
+//  副作用は (1) `<section data-page="X">` の hidden 切替、
+//  (2) `<a data-page-link>` の active class / aria-current、
+//  (3) `body[data-active-page]` 属性 (後続 PR の page-scoped early-out 用)。
+//  SSE refresh 経路と独立しているため、Overview 以外のページ表示中も
+//  loadAndRender() は走り続け、戻ってきたときに最新データが見える。
+// ============================================================
+(function(){
+  const HASH_TO_PAGE = {
+    '': 'overview', '#': 'overview', '#/': 'overview',
+    '#/patterns': 'patterns',
+    '#/quality': 'quality',
+    '#/surface': 'surface',
+  };
+  function applyRoute(rawHash) {
+    // 未知 hash (`#/foo`, `#bar`, percent-encoded など) は overview に倒す
+    const page = HASH_TO_PAGE[rawHash] || 'overview';
+    document.querySelectorAll('.page').forEach(el => {
+      el.hidden = (el.dataset.page !== page);
+    });
+    document.querySelectorAll('[data-page-link]').forEach(a => {
+      const isActive = a.dataset.pageLink === page;
+      a.classList.toggle('active', isActive);
+      a.setAttribute('aria-current', isActive ? 'page' : 'false');
+    });
+    // 後続 PR (#58〜#62) はこの属性を読んで page-scoped early-out:
+    //   if (document.body.dataset.activePage !== 'patterns') return;
+    document.body.dataset.activePage = page;
+  }
+  window.addEventListener('hashchange', function(){ applyRoute(location.hash); });
+  applyRoute(location.hash);
+})();
+</script>
 
 <script>
 (async function(){
