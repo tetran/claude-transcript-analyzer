@@ -461,6 +461,7 @@ def run_archive(
     archive_buckets, hot_remainder = _partition_events(parsed_entries, target_months)
 
     archived_months: list[str] = []
+    successfully_archived_yms: list[YearMonth] = []
     archived_count = 0
     for ym in sorted(archive_buckets.keys()):
         new_entries = archive_buckets[ym]
@@ -475,6 +476,7 @@ def run_archive(
         merged_lines = [line for _ev, line in merged]
         _atomic_write_gzip(paths.archive_dir / f"{ym}.jsonl.gz", merged_lines)
         archived_months.append(str(ym))
+        successfully_archived_yms.append(ym)
         archived_count += len(new_entries)
 
     hot_lines = [line for _ev, line in hot_remainder] + broken_lines
@@ -482,7 +484,10 @@ def run_archive(
 
     # state は **これまでの最大値** と「今回 archive した最大値」の max を採用する
     # (backfill 経路で古い月を archive しても last_archived_month を逆行させない)。
-    candidate = max(archive_buckets.keys()) if archive_buckets else None
+    # codex P2 #2: archive に **成功した** 月だけから max を取る。failed 月
+    # (ArchiveReadError) を含めると state が失敗月を飛び越して進み、launcher が
+    # `last_archived >= prev_month` で同月内 retry を短絡してしまう。
+    candidate = max(successfully_archived_yms) if successfully_archived_yms else None
     new_last_str = last_archived_str
     if candidate is not None:
         if last_archived_str:

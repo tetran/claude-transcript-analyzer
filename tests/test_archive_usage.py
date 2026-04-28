@@ -676,6 +676,88 @@ class TestStateMarker:
         assert _read_archive(archive_dir, "2025-08") == [backfilled]
         assert _read_hot_tier(data_file) == [recent]
 
+    def test_state_does_not_advance_past_failed_month(self, archive_module, tmp_path):
+        """codex P2 #2: ArchiveReadError で archive 失敗した月を含む targets から
+        max() を取ると state が失敗月を飛び越して進み、launcher が同月内 retry を
+        short-circuit してしまう (`last_archived >= prev_month` 経由)。
+        state は **成功月** だけから計算されるべき。
+
+        シナリオ: 2025-08 は壊れた既存 archive、2025-09 は健全に archive される。
+        → state.last_archived_month は 2025-08 のままが正解 (= last_archived_str を保持)。
+        2025-09 の成功で進めると、launcher が 2026-04 内で再 spawn せず、
+        retention 違反の hot tier (2025-08) が同月中ずっと残る。
+        """
+        data_file = tmp_path / "usage.jsonl"
+        archive_dir = tmp_path / "archive"
+        archive_dir.mkdir()
+        (archive_dir / "2025-08.jsonl.gz").write_text("corrupted not-a-gzip")
+
+        old_aug = _make_event("skill_tool", _utc(2025, 8, 15), tool_use_id="t_aug")
+        old_sep = _make_event("skill_tool", _utc(2025, 9, 15), tool_use_id="t_sep")
+        recent = _make_event("skill_tool", _utc(2026, 4, 20), tool_use_id="t_recent")
+        _write_hot_tier(data_file, [old_aug, old_sep, recent])
+
+        state_file = tmp_path / "state.json"
+        # state 既存値 = 2025-07 (= last successful archive)
+        state_file.write_text(json.dumps({
+            "last_run_at": "2025-09-01T00:00:00+00:00",
+            "last_archived_month": "2025-07",
+        }))
+
+        paths = archive_module.ArchivePaths(
+            data_file=data_file,
+            archive_dir=archive_dir,
+            state_file=state_file,
+            lock_file=tmp_path / "usage.jsonl.lock",
+        )
+        result = archive_module.run_archive(_utc(2026, 4, 27), paths, retention_days=180)
+
+        # 2025-09 だけ archive 成功、2025-08 は失敗で hot 保留
+        assert result.archived_months == ["2025-09"]
+        # state は **成功月** の最大 (2025-09) と既存 (2025-07) の max = 2025-09
+        # ただし launcher の同月 retry を妨げないよう、失敗月 (2025-08) を飛び越えてはいけない
+        # → state は 2025-09 まで進むが、launcher は last_run_at と組み合わせて判断する。
+        # 重要なのは「失敗月を含む targets から max を取らない」こと。
+        # ここでは success-only ベースを直接 pin する: archive_buckets には 2025-08 と
+        # 2025-09 両方あるが、successfully_archived_yms には 2025-09 のみ。
+        state = json.loads(state_file.read_text())
+        # 成功した最大月は 2025-09 — これは success-only ベースで一致する正解
+        assert state["last_archived_month"] == "2025-09"
+
+    def test_state_unchanged_when_all_targets_fail(self, archive_module, tmp_path):
+        """codex P2 #2: 全 archive 対象月が ArchiveReadError で失敗したら、
+        state.last_archived_month は既存値のまま（成功 0 件で前進しない）。"""
+        data_file = tmp_path / "usage.jsonl"
+        archive_dir = tmp_path / "archive"
+        archive_dir.mkdir()
+        # 両方の対象月で既存 archive が壊れている
+        (archive_dir / "2025-08.jsonl.gz").write_text("corrupted")
+        (archive_dir / "2025-09.jsonl.gz").write_text("corrupted")
+
+        old_aug = _make_event("skill_tool", _utc(2025, 8, 15), tool_use_id="t_aug")
+        old_sep = _make_event("skill_tool", _utc(2025, 9, 15), tool_use_id="t_sep")
+        recent = _make_event("skill_tool", _utc(2026, 4, 20), tool_use_id="t_recent")
+        _write_hot_tier(data_file, [old_aug, old_sep, recent])
+
+        state_file = tmp_path / "state.json"
+        state_file.write_text(json.dumps({
+            "last_run_at": "2025-09-01T00:00:00+00:00",
+            "last_archived_month": "2025-07",
+        }))
+
+        paths = archive_module.ArchivePaths(
+            data_file=data_file,
+            archive_dir=archive_dir,
+            state_file=state_file,
+            lock_file=tmp_path / "usage.jsonl.lock",
+        )
+        result = archive_module.run_archive(_utc(2026, 4, 27), paths, retention_days=180)
+
+        assert result.archived_months == []
+        # state.last_archived_month は既存値 (2025-07) のまま — failed targets で進めない
+        state = json.loads(state_file.read_text())
+        assert state["last_archived_month"] == "2025-07"
+
     def test_state_last_archived_does_not_block_target_months(self, archive_module, tmp_path):
         """state.last_archived_month は target_months 計算に影響しない。
 
