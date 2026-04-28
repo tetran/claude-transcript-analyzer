@@ -758,3 +758,57 @@ class TestGraphDataTooltip:
         # ranking 系（既存の `title=` 付き）はスコープ外。daily / proj に aria-label を付ける
         assert "aria-label" in template
 
+
+class TestHelpPopupOverflow:
+    """Issue #41: 右端 KPI (PERMISSION GATE) の help-pop が data-place="right"
+    のまま viewport 外に飛び出して横スクロールを誘発するバグへの対策。
+
+    旧仕様では placePop の auto-flip (`data-place="left"` への切替) は **click 時のみ**
+    呼ばれていた。hover 表示は CSS `:hover` で発火するため flip されず、初期描画 /
+    SSE refresh / resize 後に右端 popup が overflow したままになっていた。
+
+    修正方針:
+      1. `placeAllPops()` 共通 helper で全 popup を walk して placePop を呼ぶ
+      2. loadAndRender 末尾で呼ぶ（kpiRow dynamic re-render に追従）
+      3. resize handler を `data-open="true"` フィルタ無しの全 popup 対象に変更
+    """
+
+    def test_template_defines_place_all_pops_helper(self, tmp_path):
+        """placeAllPops() helper が定義されている。"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        template = mod._HTML_TEMPLATE
+        assert "function placeAllPops()" in template
+
+    def test_resize_handler_replaces_all_popups(self, tmp_path):
+        """resize handler は全 popup を再配置する（旧 data-open="true" フィルタを撤廃）。
+
+        旧仕様では hover 経由で表示される popup は data-open 属性を持たないため
+        resize 時に flip されず、viewport 縮小で右端 popup が overflow したままだった。
+        """
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        template = mod._HTML_TEMPLATE
+        resize_marker = "addEventListener('resize'"
+        idx = template.find(resize_marker)
+        assert idx > 0, "resize handler が見つからない"
+        # resize handler の body は短いので 400 char で十分カバーできる
+        snippet = template[idx:idx + 400]
+        assert "placeAllPops" in snippet, "resize handler から placeAllPops が呼ばれていない"
+        # 旧フィルタが残っていないこと
+        assert ".help-pop[data-open=\"true\"]" not in snippet, (
+            "resize handler 内に旧 data-open フィルタが残存している"
+        )
+
+    def test_initial_render_invokes_place_all_pops(self, tmp_path):
+        """kpiRow render 後・loadAndRender 末尾までに placeAllPops が呼ばれる
+        （dynamic re-render 後の再配置）。"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        template = mod._HTML_TEMPLATE
+        kpi_idx = template.find("getElementById('kpiRow').innerHTML")
+        assert kpi_idx > 0, "kpiRow render 箇所が見つからない"
+        end_marker = template.find("// end loadAndRender", kpi_idx)
+        assert end_marker > kpi_idx, "loadAndRender 末尾マーカーが見つからない"
+        body = template[kpi_idx:end_marker]
+        assert "placeAllPops()" in body, (
+            "kpiRow render 後 / loadAndRender 末尾までに placeAllPops() の呼び出しがない"
+        )
+

@@ -856,6 +856,10 @@
     '</div>';
   }).join('');
   document.getElementById('projSub').textContent = projs.length + ' projects · Σ ' + fmtN(projTotal);
+
+  // dynamic re-render 後の help-pop 再配置 (Issue #41)。kpiRow を含む全 popup を
+  // walk して、右端 KPI tooltip の viewport overflow を防ぐ。
+  placeAllPops();
   } // end loadAndRender
 
   // ---- 初回描画 + EventSource (live refresh) ----
@@ -919,6 +923,18 @@
     if (!prevOpen) pop.removeAttribute('data-open');
   }
 
+  // 全 popup に対して placePop を呼んで data-place を再計算する。
+  // hover 表示は CSS `:hover` が直接 visibility を切り替えるため click 経路の
+  // placePop が呼ばれず、右端 KPI (PERMISSION GATE) の tooltip が viewport を
+  // 飛び出して横スクロールを誘発していた (Issue #41)。dynamic re-render 後と
+  // resize 後にこれを呼んで、hover 表示前に正しい data-place を確定させる。
+  function placeAllPops() {
+    document.querySelectorAll('.help-pop').forEach(pop => {
+      const btn = document.querySelector('button[data-help-id="' + pop.id + '"]');
+      if (btn) placePop(pop, btn);
+    });
+  }
+
   document.addEventListener('click', function(e) {
     const btn = e.target.closest('.help-btn');
     if (btn) {
@@ -954,12 +970,7 @@
     }
   });
 
-  window.addEventListener('resize', function() {
-    document.querySelectorAll('.help-pop[data-open="true"]').forEach(pop => {
-      const btn = document.querySelector('button[data-help-id="' + pop.id + '"]');
-      if (btn) placePop(pop, btn);
-    });
-  });
+  window.addEventListener('resize', placeAllPops);
 
   // ============================================================
   //  Data tooltip (graph data points, [data-tip] elements)
