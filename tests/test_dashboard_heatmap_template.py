@@ -74,13 +74,6 @@ class TestPatternsHeatmapDOM:
         assert 'renderHourlyHeatmap(data.hourly_heatmap)' in template, \
             "renderHourlyHeatmap call from loadAndRender missing"
 
-    def test_patterns_section_keeps_issue_59_reference(self):
-        """heatmap が主役になっても、Issue #59 への follow-up 言及は section 内に残す。"""
-        template = _load_template()
-        section = _extract_section(template, 'patterns')
-        assert '#59' in section, "Patterns section should still mention #59 follow-up"
-
-
 # ============================================================
 #  TestPatternsRouterIntegration (2 tests)
 # ============================================================

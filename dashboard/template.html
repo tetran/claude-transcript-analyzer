@@ -710,6 +710,113 @@
     border: 1px solid var(--line);
   }
   .data-tip[data-kind="heatmap"] { border-left-color: var(--mint); }
+
+  /* ---------- skill cooccurrence (Issue #59 / B1) ---------- */
+  .cooc-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+    font-family: var(--ff-mono);
+    margin-top: 4px;
+  }
+  .cooc-table th {
+    text-align: left;
+    color: var(--ink-faint);
+    font-weight: 500;
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--line);
+  }
+  .cooc-table th.num,
+  .cooc-table td.num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  .cooc-table tbody tr {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    transition: background 100ms ease;
+  }
+  .cooc-table tbody tr:hover,
+  .cooc-table tbody tr:focus-visible {
+    background: var(--bg-panel-2);
+    outline: none;
+  }
+  .cooc-table td {
+    padding: 5px 8px;
+    color: var(--ink);
+  }
+  .cooc-table td.skill { color: var(--mint); }
+  .cooc-table .empty {
+    text-align: center;
+    color: var(--ink-faint);
+    padding: 24px 0;
+  }
+  .data-tip[data-kind="cooc"] { border-left-color: var(--coral); }
+
+  /* ---------- project × skill heatmap (Issue #59 / B2) ---------- */
+  .projskill {
+    display: grid;
+    /* grid-template-columns は JS で skills 数に応じて動的設定 */
+    gap: 2px;
+    margin-top: 8px;
+    font-family: var(--ff-mono);
+    font-size: 10.5px;
+    overflow-x: auto;
+  }
+  .projskill-col-axis { display: contents; }
+  .projskill-col-axis > span {
+    color: var(--ink-faint);
+    text-align: center;
+    padding-bottom: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100px;
+  }
+  .projskill-row-label {
+    color: var(--ink-soft);
+    text-align: right;
+    padding-right: 6px;
+    align-self: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .projskill-cell {
+    aspect-ratio: 1 / 1;
+    min-height: 22px;
+    border-radius: 3px;
+    border: 1px solid var(--line);
+    background: transparent;
+    cursor: default;
+    transition: outline 100ms ease;
+  }
+  .projskill-cell:hover,
+  .projskill-cell:focus-visible {
+    outline: 2px solid var(--peach);
+    outline-offset: 1px;
+  }
+  .projskill-empty {
+    padding: 24px 0;
+    text-align: center;
+    color: var(--ink-faint);
+  }
+  .projskill-legend {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 14px;
+    font-family: var(--ff-mono);
+    font-size: 10.5px;
+    color: var(--ink-faint);
+  }
+  .projskill-legend-bar {
+    flex: 0 0 200px;
+    height: 10px;
+    border-radius: var(--r-sm);
+    background: linear-gradient(to right, rgba(255, 201, 122, 0.06), rgba(255, 201, 122, 1));
+    border: 1px solid var(--line);
+  }
+  .data-tip[data-kind="projskill"] { border-left-color: var(--peach); }
 </style>
 </head>
 <body>
@@ -845,9 +952,49 @@
         </div>
       </div>
 
-      <p class="placeholder-body" style="text-align:center; margin-top:24px; color:var(--ink-faint); font-size:11.5px;">
-        cross-skill 共起 / project × skill (<code>#59</code>) は今後追加予定。
-      </p>
+      <div class="panel" id="patterns-cooccurrence-panel">
+        <div class="panel-head c-coral">
+          <div class="ttl-wrap">
+            <span class="ttl"><span class="dot"></span>スキル共起マトリクス</span>
+            <span class="help-host">
+              <button class="help-btn" type="button" aria-label="説明を表示" aria-expanded="false" aria-describedby="hp-cooc" data-help-id="hp-cooc">?</button>
+              <span class="help-pop" id="hp-cooc" role="tooltip" data-place="right">
+                <span class="pop-ttl">スキル共起</span>
+                <span class="pop-body">同じセッション内で一緒に使われた skill / slash command のペアを集計。<strong>カウント単位はセッション数</strong> (同一セッション内の重複呼び出しは 1 とみなす)。subagent は対象外。多い順に上位 100 ペアを表示。</span>
+              </span>
+            </span>
+          </div>
+          <span class="sub" id="patterns-cooccurrence-sub"></span>
+        </div>
+        <div class="panel-body">
+          <table class="cooc-table" id="patterns-cooccurrence">
+            <thead>
+              <tr><th>Skill A</th><th>Skill B</th><th class="num">Sessions</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="panel" id="patterns-projskill-panel">
+        <div class="panel-head c-peach">
+          <div class="ttl-wrap">
+            <span class="ttl"><span class="dot"></span>プロジェクト × スキル</span>
+            <span class="help-host">
+              <button class="help-btn" type="button" aria-label="説明を表示" aria-expanded="false" aria-describedby="hp-projskill" data-help-id="hp-projskill">?</button>
+              <span class="help-pop" id="hp-projskill" role="tooltip" data-place="right">
+                <span class="pop-ttl">プロジェクト × スキル</span>
+                <span class="pop-body">プロジェクト (上位 10) × スキル (上位 10) のクロス利用件数。色が濃いほど件数が多い。subagent は対象外。上位漏れは表示しないが、サブラベルに上位 10×10 の<strong>カバー率</strong>を表示。</span>
+              </span>
+            </span>
+          </div>
+          <span class="sub" id="patterns-projskill-sub"></span>
+        </div>
+        <div class="panel-body">
+          <div class="projskill" id="patterns-projskill" role="img" aria-label="プロジェクト × スキル ヒートマップ"></div>
+          <div class="projskill-legend" id="patterns-projskill-legend"></div>
+        </div>
+      </div>
     </section>
 
     <!-- Quality ページ (Issue #60 / #61 で本実装) -->
@@ -1166,6 +1313,12 @@
   // ---- hourly heatmap (Issue #58) ----
   renderHourlyHeatmap(data.hourly_heatmap);
 
+  // ---- skill cooccurrence (Issue #59 / B1) ----
+  renderSkillCooccurrence(data.skill_cooccurrence);
+
+  // ---- project × skill heatmap (Issue #59 / B2) ----
+  renderProjectSkillMatrix(data.project_skill_matrix);
+
   // dynamic re-render 後の help-pop 再配置 (Issue #41)。kpiRow を含む全 popup を
   // walk して、右端 KPI tooltip の viewport overflow を防ぐ。
   placeAllPops();
@@ -1222,6 +1375,108 @@
     if (sub) {
       const total = buckets.reduce((s, b) => s + b.count, 0);
       sub.textContent = fmtN(total) + ' events · ' + fmtN(buckets.length) + ' hour buckets';
+    }
+  }
+
+  // ============================================================
+  //  Skill cooccurrence renderer (Issue #59 / B1)
+  //  page-scoped early-out + 空配列時の empty state 表示。pair は server から
+  //  すでに count 降順 + lexicographic 昇順で並んでおり、再 sort 不要。
+  // ============================================================
+  function renderSkillCooccurrence(items) {
+    if (document.body.dataset.activePage !== 'patterns') return;
+    const tbody = document.querySelector('#patterns-cooccurrence tbody');
+    if (!tbody) return;
+    const list = Array.isArray(items) ? items : [];
+    if (list.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="3" class="empty">共起データなし</td></tr>';
+    } else {
+      tbody.innerHTML = list.map((it) => {
+        const a = (it.pair && it.pair[0]) || '';
+        const b = (it.pair && it.pair[1]) || '';
+        const c = it.count || 0;
+        const al = a + ' ⨉ ' + b + ': ' + c + ' sessions';
+        return '<tr data-tip="cooc" data-a="' + esc(a) + '" data-b="' + esc(b) + '"' +
+          ' data-c="' + c + '" tabindex="0" aria-label="' + esc(al) + '">' +
+          '<td class="skill">' + esc(a) + '</td>' +
+          '<td class="skill">' + esc(b) + '</td>' +
+          '<td class="num">' + fmtN(c) + '</td>' +
+          '</tr>';
+      }).join('');
+    }
+    const sub = document.getElementById('patterns-cooccurrence-sub');
+    if (sub) {
+      sub.textContent = list.length + ' pairs (top 100)';
+    }
+  }
+
+  // ============================================================
+  //  Project × Skill heatmap renderer (Issue #59 / B2)
+  //  server は dense matrix + covered_count + total_count を返し、ここで描画。
+  //  カバー率 (covered/total) を sub label に出して top 漏れの量を可視化 (Proposal 2)。
+  // ============================================================
+  function renderProjectSkillMatrix(payload) {
+    if (document.body.dataset.activePage !== 'patterns') return;
+    const root = document.getElementById('patterns-projskill');
+    if (!root) return;
+    const projects = (payload && Array.isArray(payload.projects)) ? payload.projects : [];
+    const skills = (payload && Array.isArray(payload.skills)) ? payload.skills : [];
+    const counts = (payload && Array.isArray(payload.counts)) ? payload.counts : [];
+
+    const legend = document.getElementById('patterns-projskill-legend');
+    const sub = document.getElementById('patterns-projskill-sub');
+
+    if (projects.length === 0 || skills.length === 0) {
+      root.style.gridTemplateColumns = '';
+      root.innerHTML = '<div class="projskill-empty">データなし</div>';
+      if (legend) legend.innerHTML = '';
+      if (sub) sub.textContent = '';
+      return;
+    }
+
+    let max = 0;
+    for (const row of counts) {
+      for (const c of row) if (c > max) max = c;
+    }
+
+    // dynamic grid: row label 列 + N skill 列
+    root.style.gridTemplateColumns = '160px repeat(' + skills.length + ', minmax(40px, 1fr))';
+
+    let html = '<div class="projskill-col-axis"><span></span>';
+    for (const s of skills) html += '<span title="' + esc(s) + '">' + esc(s) + '</span>';
+    html += '</div>';
+    for (let i = 0; i < projects.length; i++) {
+      const p = projects[i];
+      html += '<div class="projskill-row-label" title="' + esc(p) + '">' + esc(p) + '</div>';
+      const row = counts[i] || [];
+      for (let j = 0; j < skills.length; j++) {
+        const c = row[j] || 0;
+        const intensity = max ? c / max : 0;
+        const bg = c
+          ? 'background: rgba(255, 201, 122, ' + (0.08 + intensity * 0.92).toFixed(3) + ')'
+          : '';
+        const al = p + ' × ' + skills[j] + ': ' + c + ' events';
+        html += '<div class="projskill-cell" style="' + bg + '"' +
+          ' data-tip="projskill" data-p="' + esc(p) + '" data-s="' + esc(skills[j]) +
+          '" data-c="' + c + '" tabindex="0" role="img" aria-label="' + esc(al) + '"></div>';
+      }
+    }
+    root.innerHTML = html;
+
+    if (legend) {
+      legend.innerHTML =
+        '<span>0</span><span class="projskill-legend-bar" aria-hidden="true"></span>' +
+        '<span>peak ' + fmtN(max) + '</span>';
+    }
+    if (sub) {
+      const covered = (payload && payload.covered_count) || 0;
+      const total = (payload && payload.total_count) || 0;
+      let s = projects.length + ' projects × ' + skills.length + ' skills';
+      if (total > 0) {
+        const pct = Math.round((covered / total) * 100);
+        s += ' · ' + pct + '% covered (' + fmtN(covered) + '/' + fmtN(total) + ')';
+      }
+      sub.textContent = s;
     }
   }
 
@@ -1430,6 +1685,28 @@
                 '<span class="lbl">avg</span><span class="val">' + fmt + '</span>';
       }
       return { kind: 'rank-' + subKind, html: body };
+    }
+    if (kind === 'cooc') {
+      // skill 共起テーブル行 (Issue #59 / B1)。count 単位は session 数。
+      const a = el.getAttribute('data-a') || '';
+      const b = el.getAttribute('data-b') || '';
+      const c = el.getAttribute('data-c') || '0';
+      return {
+        kind: 'cooc',
+        html: '<span class="ttl">' + esc(a) + ' ⨉ ' + esc(b) + '</span>' +
+              '<span class="lbl">sessions</span><span class="val">' + fmtN(c) + '</span>'
+      };
+    }
+    if (kind === 'projskill') {
+      // project × skill heatmap cell (Issue #59 / B2)。count 単位は events。
+      const p = el.getAttribute('data-p') || '';
+      const s = el.getAttribute('data-s') || '';
+      const c = el.getAttribute('data-c') || '0';
+      return {
+        kind: 'projskill',
+        html: '<span class="ttl">' + esc(p) + ' × ' + esc(s) + '</span>' +
+              '<span class="lbl">events</span><span class="val">' + fmtN(c) + '</span>'
+      };
     }
     return null;
   }

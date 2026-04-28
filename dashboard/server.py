@@ -1,4 +1,5 @@
 """dashboard/server.py — ローカル HTTP サーバーでダッシュボードを提供する。"""
+import itertools
 import json
 import os
 import select
@@ -174,6 +175,97 @@ def aggregate_projects(events: list[dict], top_n: int = TOP_N) -> list[dict]:
     return [{"project": project, "count": count} for project, count in counter.most_common(top_n)]
 
 
+def aggregate_skill_cooccurrence(events: list[dict], top_n: int = 100) -> list[dict]:
+    """同一 session 内の skill pair を集計し top_n 件返す (Issue #59 / B1)。
+
+    入力 events は **未 filter** (build_dashboard_data からは raw events を渡す)。
+    内部で `skill_tool` / `user_slash_command` のみに絞り、subagent は除外
+    (= aggregate_skills と同じ filter 慣習)。
+
+    挙動:
+      - session_id ごとに skill 名を unique 集合化 (空 session_id / 空 skill は skip)
+      - 各 session の skill 集合に対して itertools.combinations で 2-pair 列挙
+      - Counter で全 session 合算
+      - count 降順 + pair lexicographic 昇順で **明示 sort**
+        (`Counter.most_common` の暗黙順序 = insertion order 依存を避ける)
+      - top_n で切る (default 100)
+
+    出力 list[{"pair": [a, b], "count": N}]
+      - pair は a <= b で正規化済み
+      - count は session 数 (両 skill が両方登場した unique session_id 数)。
+        同 session 内の重複呼び出しは 1 回扱い
+    """
+    sessions: dict[str, set[str]] = {}
+    for ev in events:
+        if ev.get("event_type") not in ("skill_tool", "user_slash_command"):
+            continue
+        session_id = ev.get("session_id", "")
+        if not session_id:
+            continue
+        skill = ev.get("skill", "")
+        if not skill:
+            continue
+        sessions.setdefault(session_id, set()).add(skill)
+
+    pair_counter: Counter = Counter()
+    for skill_set in sessions.values():
+        for a, b in itertools.combinations(sorted(skill_set), 2):
+            pair_counter[(a, b)] += 1
+
+    ranked = sorted(pair_counter.items(), key=lambda kv: (-kv[1], kv[0]))[:top_n]
+    return [{"pair": [a, b], "count": count} for (a, b), count in ranked]
+
+
+def aggregate_project_skill_matrix(
+    events: list[dict],
+    top_projects: int = TOP_N,
+    top_skills: int = TOP_N,
+) -> dict:
+    """project × skill の dense 2D matrix を返す (Issue #59 / B2)。
+
+    入力 events は **未 filter** (build_dashboard_data からは raw events を渡す)。
+    内部で `skill_tool` / `user_slash_command` のみに絞る (subagent 除外)。
+
+    挙動:
+      - skill_tool / user_slash_command のみ対象、空 project / 空 skill は skip
+      - project / skill それぞれ count 降順で top_projects / top_skills に切る
+      - (project, skill) ペアの count を 2D dense matrix で組み立てる (cell 0 含む)
+      - "other" 集約は採用しない (top 漏れは drop) が、covered_count / total_count
+        を返してカバー率の可視化を可能にする
+    """
+    cell_counter: Counter = Counter()
+    project_counter: Counter = Counter()
+    skill_counter: Counter = Counter()
+    total_count = 0
+    for ev in events:
+        if ev.get("event_type") not in ("skill_tool", "user_slash_command"):
+            continue
+        project = ev.get("project", "")
+        skill = ev.get("skill", "")
+        if not project or not skill:
+            continue
+        cell_counter[(project, skill)] += 1
+        project_counter[project] += 1
+        skill_counter[skill] += 1
+        total_count += 1
+
+    top_project_names = [name for name, _ in project_counter.most_common(top_projects)]
+    top_skill_names = [name for name, _ in skill_counter.most_common(top_skills)]
+
+    counts = [
+        [cell_counter.get((project, skill), 0) for skill in top_skill_names]
+        for project in top_project_names
+    ]
+    covered_count = sum(sum(row) for row in counts)
+    return {
+        "projects": top_project_names,
+        "skills": top_skill_names,
+        "counts": counts,
+        "covered_count": covered_count,
+        "total_count": total_count,
+    }
+
+
 def aggregate_hourly_heatmap(usage_events: list[dict]) -> dict:
     """usage 系 events を UTC hour bucket に集計する (Issue #58)。
 
@@ -259,6 +351,8 @@ def build_dashboard_data(events: list[dict]) -> dict:
         "daily_trend": aggregate_daily(usage_events),
         "project_breakdown": aggregate_projects(usage_events),
         "hourly_heatmap": aggregate_hourly_heatmap(usage_events),
+        "skill_cooccurrence": aggregate_skill_cooccurrence(events),
+        "project_skill_matrix": aggregate_project_skill_matrix(events),
         "session_stats": aggregate_session_stats(events),
         "health_alerts": load_health_alerts(),
     }
