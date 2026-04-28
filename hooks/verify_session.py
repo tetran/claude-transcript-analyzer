@@ -99,6 +99,36 @@ def _existing_fingerprints(alerts_file: Path) -> set[str]:
     return fps
 
 
+def _project_from_cwd(cwd: str) -> str:
+    """cwd の basename を project 名として返す (空 cwd は空文字)。"""
+    if not cwd:
+        return ""
+    return Path(cwd).name
+
+
+def _build_missing_samples(
+    transcript_counter: Counter,
+    usage_counter: Counter,
+    missing_types: list[str],
+) -> list[dict]:
+    """欠損 type ごとに transcript_count / usage_count / delta を返す。
+
+    Issue #51: 「skill_tool が 1 件欠けた」だけでなく「transcript には 3 件あったが
+    usage には 2 件しかない」と分かるようにする。
+    """
+    samples: list[dict] = []
+    for et in missing_types:
+        t = transcript_counter.get(et, 0)
+        u = usage_counter.get(et, 0)
+        samples.append({
+            "event_type": et,
+            "transcript_count": t,
+            "usage_count": u,
+            "delta": t - u,
+        })
+    return samples
+
+
 def handle_stop(
     session_id: str,
     cwd: str,
@@ -137,11 +167,25 @@ def handle_stop(
     if fingerprint in _existing_fingerprints(alerts_file):
         return
 
+    # Issue #51: alert に actionable な raw data を載せる。
+    # - kind: 種別 enum (drop alert と区別 / consumer 側 dispatch 用)
+    # - project / cwd: どこで起きたか即座に分かる
+    # - transcript_path: 直接該当トランスクリプトを開ける
+    # - missing_samples: 欠損 type ごとの transcript vs usage 件数比較
+    # 人間向けの hint 文は **consumer 側 (dashboard / reports / docs)** に
+    # `kind` ベースの mapping として持たせる方針。jsonl は raw data に徹する。
     alert = {
+        "kind": "transcript_mismatch",
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "session_id": session_id,
+        "project": _project_from_cwd(cwd),
+        "cwd": cwd,
+        "transcript_path": str(transcript_path),
         "missing_count": missing_count,
         "missing_types": missing_types,
+        "missing_samples": _build_missing_samples(
+            transcript_counter, usage_counter, missing_types
+        ),
     }
     # newline="\n" 固定で Windows text mode の \r\n 変換を抑止 (Issue #24)。
     alerts_file.parent.mkdir(parents=True, exist_ok=True)
