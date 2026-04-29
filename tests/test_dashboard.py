@@ -328,15 +328,17 @@ class TestSubagentFailureAndDurationStats:
         assert abs(item["failure_rate"] - 0.5) < 1e-9
 
     def test_subagent_ranking_avg_duration_from_subagent_stop(self, tmp_path):
-        """subagent_stop の duration_ms を優先して平均を取る"""
+        """subagent_stop の duration_ms を優先して平均を取る (2 invocation で平均値検証)"""
         mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
         events = [
             {"event_type": "subagent_start", "subagent_type": "Explore", "project": "p", "session_id": "s", "timestamp": "2026-01-01T00:00:00+00:00"},
             {"event_type": "subagent_stop", "subagent_type": "Explore", "duration_ms": 1000, "project": "p", "session_id": "s", "timestamp": "2026-01-01T00:00:10+00:00"},
-            {"event_type": "subagent_stop", "subagent_type": "Explore", "duration_ms": 3000, "project": "p", "session_id": "s", "timestamp": "2026-01-01T00:00:20+00:00"},
+            {"event_type": "subagent_start", "subagent_type": "Explore", "project": "p", "session_id": "s", "timestamp": "2026-01-01T00:01:00+00:00"},
+            {"event_type": "subagent_stop", "subagent_type": "Explore", "duration_ms": 3000, "project": "p", "session_id": "s", "timestamp": "2026-01-01T00:01:20+00:00"},
         ]
         data = mod.build_dashboard_data(events)
         item = data["subagent_ranking"][0]
+        assert item["count"] == 2
         assert item["avg_duration_ms"] == 2000.0
 
     def test_subagent_ranking_avg_duration_falls_back_to_start(self, tmp_path):

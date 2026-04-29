@@ -109,6 +109,64 @@ class TestHtmlTemplateFallback:
 
 
 # ---------------------------------------------------------------------------
+# Issue #74: Surface 3 panel が静的 export でも描画される (regression guard)
+# ---------------------------------------------------------------------------
+
+class TestStaticExportSurfaceTab:
+    def _import(self):
+        import dashboard.server as m
+        importlib.reload(m)
+        return m
+
+    def test_static_html_contains_new_surface_panels(self, tmp_path, monkeypatch):
+        """新 3 panel の DOM ID が static export 出力に含まれること。"""
+        m = self._import()
+        empty_skills = tmp_path / "empty-skills"
+        empty_skills.mkdir()
+        monkeypatch.setenv("SKILLS_DIR", str(empty_skills))
+        data = m.build_dashboard_data([])
+        html = m.render_static_html(data)
+        for el_id in ['surface-inv-panel', 'surface-life-panel', 'surface-hib-panel',
+                      'surface-inv', 'surface-life', 'surface-hib']:
+            assert f'id="{el_id}"' in html, f"static export missing {el_id}"
+
+    def test_static_html_lacks_old_surface_dom(self, tmp_path, monkeypatch):
+        """旧 panel の DOM ID / 関数 / help-pop が static export に残っていない。"""
+        m = self._import()
+        empty_skills = tmp_path / "empty-skills"
+        empty_skills.mkdir()
+        monkeypatch.setenv("SKILLS_DIR", str(empty_skills))
+        data = m.build_dashboard_data([])
+        html = m.render_static_html(data)
+        for old_id in ['surface-source-panel', 'surface-source', 'surface-instr-panel',
+                      'surface-instr-mt', 'surface-instr-glob', 'hp-source', 'hp-instr']:
+            assert f'id="{old_id}"' not in html, f"old DOM id leaked into static export: {old_id}"
+        for old_fn in ['renderSlashCommandSourceBreakdown',
+                       'renderInstructionsLoadedBreakdown',
+                       'renderInstrBars', 'renderGlobTable']:
+            assert f'function {old_fn}' not in html, f"old renderer leaked: {old_fn}"
+
+    def test_static_export_embeds_new_surface_data(self, tmp_path, monkeypatch):
+        """build_dashboard_data の新 3 field が window.__DATA__ に乗ること。"""
+        m = self._import()
+        empty_skills = tmp_path / "empty-skills"
+        empty_skills.mkdir()
+        monkeypatch.setenv("SKILLS_DIR", str(empty_skills))
+        data = m.build_dashboard_data([])
+        html = m.render_static_html(data)
+        marker = "window.__DATA__ = "
+        idx = html.index(marker) + len(marker)
+        end = html.index(";</script>", idx)
+        embedded = json.loads(html[idx:end])
+        assert "skill_invocation_breakdown" in embedded
+        assert "skill_lifecycle" in embedded
+        assert "skill_hibernating" in embedded
+        # 旧 field は無い
+        assert "slash_command_source_breakdown" not in embedded
+        assert "instructions_loaded_breakdown" not in embedded
+
+
+# ---------------------------------------------------------------------------
 # reports/export_html.py の main() のテスト
 # ---------------------------------------------------------------------------
 
