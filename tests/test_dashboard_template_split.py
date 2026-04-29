@@ -37,7 +37,8 @@ _DASHBOARD_PATH = Path(__file__).parent.parent / "dashboard" / "server.py"
 #   - 42d23915...: Issue #69 UX 調整 / 表示中上書き時の slide-in 再生 + 表示時間を 6s → 4s に戻す
 #   - 2964f3e9...: Issue #69 UX 調整 / requestAnimationFrame で frame 分割 (style 変更 collapse 回避)
 #   - e787b78b...: Issue #69 UX 調整 / CSS animation (@keyframes toast-in/out) に切替 (CSS transition 方式は実機で再生されない問題への対処)
-EXPECTED_TEMPLATE_SHA256 = "e787b78b9d4bdf106972f9675dc3f033bf55dbca2c0370e1def44a9119c6b4be"
+#   - 4f4b511f...: Issue #69 fix-up / scheduleLoadAndRender で SSE refresh と hashchange の loadAndRender 並行発火を直列化 (stale-snapshot race 対策)
+EXPECTED_TEMPLATE_SHA256 = "4f4b511f26e6ab599e69cad5d70d2319dfe8244c9271d6d5354c2753f44b430f"
 
 
 def _load_dashboard_module(tmp_path: Path):

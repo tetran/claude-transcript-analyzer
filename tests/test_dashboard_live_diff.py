@@ -29,6 +29,8 @@ _TEMPLATE_DIR = Path(__file__).parent.parent / "dashboard" / "template"
 _LIVE_DIFF_JS = _TEMPLATE_DIR / "scripts" / "25_live_diff.js"
 _LOAD_RENDER_JS = _TEMPLATE_DIR / "scripts" / "20_load_and_render.js"
 _HELPERS_JS = _TEMPLATE_DIR / "scripts" / "10_helpers.js"
+_INIT_ES_JS = _TEMPLATE_DIR / "scripts" / "70_init_eventsource.js"
+_HASHCHANGE_JS = _TEMPLATE_DIR / "scripts" / "60_hashchange_listener.js"
 _DASHBOARD_PY = Path(__file__).parent.parent / "dashboard" / "server.py"
 _COMPONENTS_CSS = _TEMPLATE_DIR / "styles" / "10_components.css"
 _SHELL_HTML = _TEMPLATE_DIR / "shell.html"
@@ -75,6 +77,30 @@ class TestLiveDiffJsStructure:
         body = _read(_LIVE_DIFF_JS)
         assert re.search(r"\bfunction\s+commitLiveSnapshot\s*\(", body), \
             "function commitLiveSnapshot(...) が 25_live_diff.js に定義されていない"
+
+    def test_schedule_load_and_render_function_defined(self):
+        """SSE refresh / hashchange の loadAndRender 並行発火を直列化する
+        scheduleLoadAndRender が 25_live_diff.js に定義されている。defining
+        ファイルを 25 にする理由: __activeRender / __pendingRefresh の
+        closure-private state が 25 番冒頭の IIFE-top 宣言群と同居しているため。
+        """
+        body = _read(_LIVE_DIFF_JS)
+        assert re.search(r"\bfunction\s+scheduleLoadAndRender\s*\(", body), \
+            "function scheduleLoadAndRender(...) が 25_live_diff.js に定義されていない"
+
+    def test_schedule_state_declared_at_iife_top(self):
+        """`__activeRender` / `__pendingRefresh` が 25_live_diff.js 冒頭 (関数定義
+        より前) に宣言されている。25 番冒頭に集約する理由は 25_live_diff.js の
+        TDZ 安全性コメントと同じ — IIFE-top の `let` 群と一緒に評価済にする。
+        """
+        body = _read(_LIVE_DIFF_JS)
+        first_fn_match = re.search(r"\bfunction\s+", body)
+        assert first_fn_match is not None
+        head = body[: first_fn_match.start()]
+        assert re.search(r"\blet\s+__activeRender\s*=", head), \
+            "25_live_diff.js 冒頭に let __activeRender = ... 宣言が無い"
+        assert re.search(r"\blet\s+__pendingRefresh\s*=", head), \
+            "25_live_diff.js 冒頭に let __pendingRefresh = ... 宣言が無い"
 
     def test_25_declares_liveprev_at_iife_top(self):
         """25_live_diff.js 冒頭 (関数定義より前) に `let __livePrev` 宣言が存在する。
@@ -230,6 +256,43 @@ class TestLoadRenderIntegration:
         assert not re.search(r"__livePrev\s*=", body), \
             "20_load_and_render.js に __livePrev への直接代入が混入している" \
             " (commitLiveSnapshot(...) 経由のみ許可)"
+
+    def test_init_eventsource_uses_schedule_wrapper_for_sse_refresh(self):
+        """SSE refresh の fire-and-forget 経路は scheduleLoadAndRender 経由で呼ぶ。
+
+        bare `loadAndRender()` を fire-and-forget すると、fetch1 / fetch2 が overlap
+        した際に DOM が古い data1 で上書き → commitLiveSnapshot で __livePrev も
+        snap1 に巻き戻る race が再来する。
+        """
+        body = _read(_INIT_ES_JS)
+        # message handler 内で loadAndRender 直接呼出ではなく schedule 経由
+        msg_handler = re.search(
+            r"addEventListener\(['\"]message['\"][^{]*\{(.*?)\}\)",
+            body, re.DOTALL,
+        )
+        assert msg_handler is not None, \
+            "70_init_eventsource.js の message handler が見つからない"
+        handler_body = msg_handler.group(1)
+        assert "scheduleLoadAndRender(" in handler_body, \
+            "70_init_eventsource.js の SSE message handler が " \
+            "scheduleLoadAndRender(...) を呼んでいない"
+        # bare loadAndRender( を message handler 内で fire-and-forget していない
+        # (= "loadAndRender(" が現れたとしても scheduleLoadAndRender( の一部として)
+        bare_calls = re.findall(r"(?<!schedule)\bloadAndRender\s*\(", handler_body)
+        assert not bare_calls, \
+            "70_init_eventsource.js の SSE message handler に bare loadAndRender(...) " \
+            "の fire-and-forget が残っている (race 防止のため schedule 経由必須)"
+
+    def test_hashchange_listener_uses_schedule_wrapper(self):
+        """hashchange handler も SSE refresh と並行して走り得るので schedule 経由。"""
+        body = _read(_HASHCHANGE_JS)
+        assert "scheduleLoadAndRender(" in body, \
+            "60_hashchange_listener.js が scheduleLoadAndRender(...) を呼んでいない"
+        # bare loadAndRender( が残っていない
+        bare_calls = re.findall(r"(?<!schedule)\bloadAndRender\s*\(", body)
+        assert not bare_calls, \
+            "60_hashchange_listener.js に bare loadAndRender(...) が残っている " \
+            "(race 防止のため schedule 経由必須)"
 
 
 # ============================================================
@@ -764,6 +827,122 @@ class TestCommitLiveSnapshotNode(unittest.TestCase):
         e = next(x for x in out if x["id"] == "kpi-total")
         self.assertEqual(e["delta"], 5,
                          "commit を skip した場合 累積 delta (snap1→snap3) が出るべき")
+
+
+@unittest.skipUnless(_NODE, "node not installed; skipping behavior round-trip")
+class TestScheduleLoadAndRenderNode(unittest.TestCase):
+    """scheduleLoadAndRender が overlap を直列化し、in-flight 中の追加要求は
+    coalesce して 1 件 pending に絞ることを検証する (stale-snapshot race 対策)。
+    """
+
+    def test_serializes_overlapping_calls_strictly(self):
+        """scheduleLoadAndRender を 2 連続で呼んでも、2 件目の loadAndRender は
+        1 件目が完了するまで開始されない (strict serial order)。
+
+        失敗時の症状: 並行実行で start1 / start2 が先に並び end1 / end2 が後ろに
+        来る ('start1','start2','end1','end2')。修正後は完全直列で
+        ['start1','end1','start2','end2'] になる。
+        """
+        out = _node_eval(
+            "let counter = 0;\n"
+            "let order = [];\n"
+            "let resolvers = [];\n"
+            "// scheduleLoadAndRender が呼び出す lexical な loadAndRender を override する。\n"
+            "// JS の関数宣言は再代入可能 (strict mode の Module ではないので)。\n"
+            "loadAndRender = function () {\n"
+            "  counter += 1;\n"
+            "  const my = counter;\n"
+            "  order.push('start' + my);\n"
+            "  return new Promise(resolve => {\n"
+            "    resolvers.push(function () { order.push('end' + my); resolve(); });\n"
+            "  });\n"
+            "};\n"
+            "(async function () {\n"
+            "  const p1 = scheduleLoadAndRender();\n"
+            "  const p2 = scheduleLoadAndRender();\n"
+            "  // microtask を流して p1 の Promise.resolve().then(...) を発火させる\n"
+            "  await Promise.resolve(); await Promise.resolve();\n"
+            "  const midStarted = counter;\n"
+            "  const midOrder = order.slice();\n"
+            "  // __pendingRefresh は live_diff.js の script-scope let なので bare name で参照\n"
+            "  const midPending = __pendingRefresh;\n"
+            "  // 1 件目の loadAndRender を resolve\n"
+            "  resolvers[0]();\n"
+            "  // finally → pending fire → 2 件目の loadAndRender 開始までの microtask を流す\n"
+            "  await Promise.resolve(); await Promise.resolve(); await Promise.resolve();\n"
+            "  const afterFirst = counter;\n"
+            "  const afterFirstOrder = order.slice();\n"
+            "  // 2 件目を resolve\n"
+            "  resolvers[1]();\n"
+            "  await Promise.resolve(); await Promise.resolve();\n"
+            "  process.stdout.write(JSON.stringify({\n"
+            "    midStarted,            // 1 件目開始 / 2 件目はまだ → 1\n"
+            "    midOrder,              // ['start1']\n"
+            "    midPending,            // true (2 件目が coalesce 済)\n"
+            "    afterFirst,            // 1 件目完了後に 2 件目開始 → 2\n"
+            "    afterFirstOrder,       // ['start1','end1','start2']\n"
+            "    finalCounter: counter, // 2 (それ以上 fire しない)\n"
+            "    finalOrder: order,     // ['start1','end1','start2','end2']\n"
+            "    p1eq_p2: p1 === p2,    // true (coalesce で同 promise 返却)\n"
+            "  }));\n"
+            "})().catch(e => { console.error(e); process.exit(1); });\n"
+        )
+        self.assertEqual(out["midStarted"], 1,
+                         "1 件目開始時点で 2 件目が同時に走り出している (直列化されていない)")
+        self.assertEqual(out["midOrder"], ["start1"])
+        self.assertTrue(out["midPending"],
+                        "2 件目が __pendingRefresh = true で coalesce されていない")
+        self.assertEqual(out["afterFirst"], 2,
+                         "1 件目完了後に 2 件目が fire していない (pending refresh が消えている)")
+        self.assertEqual(out["afterFirstOrder"], ["start1", "end1", "start2"],
+                         f"strict serial order が崩れている: {out['afterFirstOrder']}")
+        self.assertEqual(out["finalCounter"], 2,
+                         "想定外に 3 回目以降 fire している")
+        self.assertEqual(out["finalOrder"], ["start1", "end1", "start2", "end2"],
+                         f"final 直列順序が崩れている: {out['finalOrder']}")
+        self.assertTrue(out["p1eq_p2"],
+                        "scheduleLoadAndRender が in-flight 中に同じ promise を返していない")
+
+    def test_third_call_during_first_does_not_double_pend(self):
+        """1 件目 in-flight 中に 3 回連続 schedule しても pending は 1 件に
+        coalesce される (queue 肥大しない)。最終的な loadAndRender 呼出回数 = 2。
+        """
+        out = _node_eval(
+            "let counter = 0;\n"
+            "let resolvers = [];\n"
+            "loadAndRender = function () {\n"
+            "  counter += 1;\n"
+            "  return new Promise(resolve => { resolvers.push(resolve); });\n"
+            "};\n"
+            "(async function () {\n"
+            "  scheduleLoadAndRender();\n"
+            "  scheduleLoadAndRender();\n"
+            "  scheduleLoadAndRender();\n"
+            "  scheduleLoadAndRender();\n"
+            "  await Promise.resolve(); await Promise.resolve();\n"
+            "  // 1 件目だけ start している\n"
+            "  const startedFirst = counter;\n"
+            "  resolvers[0]();\n"
+            "  await Promise.resolve(); await Promise.resolve(); await Promise.resolve();\n"
+            "  // pending 1 件だけが fire (3 件 coalesce → 1 件)\n"
+            "  const startedSecond = counter;\n"
+            "  resolvers[1]();\n"
+            "  await Promise.resolve(); await Promise.resolve();\n"
+            "  // 全完了後 pending 残らない\n"
+            "  const final = counter;\n"
+            "  const tailPending = __pendingRefresh;\n"
+            "  process.stdout.write(JSON.stringify({\n"
+            "    startedFirst, startedSecond, final, tailPending,\n"
+            "  }));\n"
+            "})().catch(e => { console.error(e); process.exit(1); });\n"
+        )
+        self.assertEqual(out["startedFirst"], 1)
+        self.assertEqual(out["startedSecond"], 2,
+                         "3 件以上 schedule しても pending は 1 件に coalesce される必要がある")
+        self.assertEqual(out["final"], 2,
+                         f"queue が肥大して 2 を超えている (got {out['final']})")
+        self.assertFalse(out["tailPending"],
+                         "全完了後も __pendingRefresh が立っている (cleanup 漏れ)")
 
 
 # ============================================================

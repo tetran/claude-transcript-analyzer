@@ -13,6 +13,16 @@
   let __toastTimer = null;       // display 期間終了 → fade-out 開始 timer
   let __toastFadeTimer = null;   // fade-out animation 終了 → hidden = true timer
   const __highlightTimers = new WeakMap();
+  // SSE refresh / hashchange からの loadAndRender 並行発火による stale-snapshot
+  // race を直列化で防ぐための state。
+  //   __activeRender    : 現在 in-flight の loadAndRender 結果 promise (なければ null)
+  //   __pendingRefresh  : in-flight 中に追加 schedule された場合の coalesce フラグ
+  // race の具体例: fetch1 / fetch2 が overlap し fetch2 が先に return → DOM が
+  // 古い fetch1 の data で上書きされ commitLiveSnapshot で __livePrev が snap1 に
+  // 巻き戻る → 次の refresh diff が「snap1 → 現在」の累積 delta を toast に
+  // 出してしまう。serialization で fetch を必ず順番に流すことで構造的に防ぐ。
+  let __activeRender = null;
+  let __pendingRefresh = false;
 
   // KPI / lede / ranking row のラベル定義。toast 対象 (LABEL テーブル) と
   // highlight のみの key を分離する。順序固定 = priority order を兼ねる
@@ -223,6 +233,39 @@
     __livePrev = next;
   }
 
+  // loadAndRender の overlap を直列化する wrapper。
+  //
+  // 70_init_eventsource.js の SSE message handler / 60_hashchange_listener.js
+  // から fire-and-forget で呼ばれる経路を経由させ、in-flight 中の追加要求は
+  // __pendingRefresh = true で coalesce し、現 render 完了後に 1 回だけ追加 fire
+  // する。これにより:
+  //   - DOM (kpiRow / skillBody / sparkline 等) が古い data の遅延 return で上書き
+  //     されるのを防ぐ
+  //   - commitLiveSnapshot の writer も常に 1 つに絞られるため __livePrev の
+  //     stale snapshot 巻き戻りを構造的に防ぐ
+  //   - burst 中に queue が肥大しない (常に最大 1 件 pending)
+  //
+  // Promise.resolve().then(...) で loadAndRender 呼出を 1 microtask 遅延させて
+  // いるのは、`scheduleLoadAndRender()` の戻り値で `__activeRender` を見せた
+  // 直後に同期的に loadAndRender を呼ばないためで、テスト時の microtask flush
+  // 観測を簡単にする副次効果もある。
+  function scheduleLoadAndRender() {
+    if (__activeRender) {
+      __pendingRefresh = true;
+      return __activeRender;
+    }
+    __activeRender = Promise.resolve()
+      .then(function () { return loadAndRender(); })
+      .finally(function () {
+        __activeRender = null;
+        if (__pendingRefresh) {
+          __pendingRefresh = false;
+          scheduleLoadAndRender();
+        }
+      });
+    return __activeRender;
+  }
+
   // test fixture / dev probe からの read-only access。production 経路では使わない
   // (20 番からは diffLiveSnapshot の第一引数として渡す path のみ)。
   if (typeof window !== 'undefined') {
@@ -231,6 +274,7 @@
       diffLiveSnapshot,
       formatToastSummary,
       commitLiveSnapshot,
+      scheduleLoadAndRender,
       getLivePrev: function () { return __livePrev; },
     };
   }
