@@ -139,6 +139,24 @@ class TestAggregateHourlyHeatmap:
             {"hour_utc": "2026-04-28T10:00:00+00:00", "count": 1},
         ]
 
+    def test_naive_timestamp_treated_as_utc(self, tmp_path):
+        """Issue #71 Finding 2: naive datetime は UTC として扱う。
+
+        `subagent_metrics._week_start_iso` と同じ policy。`rescan_transcripts.py
+        --append` 経由で過去 transcript から再投入された event が naive のまま
+        流れるケースで、heatmap だけ silent drop されると集計の整合性が崩れる。
+        """
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        usage_events = [
+            # naive timestamp (TZ 情報なし) → UTC として 10:00 bucket に入るべき
+            {"event_type": "skill_tool", "skill": "a", "project": "p", "session_id": "s",
+             "timestamp": "2026-04-28T10:30:00"},
+        ]
+        result = mod.aggregate_hourly_heatmap(usage_events)
+        assert result["buckets"] == [
+            {"hour_utc": "2026-04-28T10:00:00+00:00", "count": 1},
+        ]
+
     def test_week_boundary_separate_buckets(self, tmp_path):
         """日曜 23:00 と月曜 00:00 が別 bucket (時刻 truncate 確認)。"""
         mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")

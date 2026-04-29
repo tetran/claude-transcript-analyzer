@@ -177,3 +177,26 @@ class TestQualityPageDOM:
         head_idx = section.index('panel-head', idx - 200)
         head_chunk = section[head_idx:head_idx + 100]
         assert 'c-mint' in head_chunk, "trend panel uses c-mint missing"
+
+
+# ============================================================
+#  TestPagePanelSpacing — Issue #71: Patterns/Quality/Surface タブの
+#  panel 間マージンを CSS で確保する (Overview 以外の 3 ページが
+#  対象。Overview は inline style + .two-up gap で既に間隔がある)。
+# ============================================================
+
+class TestPagePanelSpacing:
+    def test_page_panel_adjacent_sibling_has_margin_top(self):
+        """`.page > .panel + .panel { margin-top: ... }` 相当の rule が存在する。
+
+        Patterns / Quality / Surface 各ページで連続する .panel 要素間にマージンを
+        入れるための CSS rule。selector 形式は `.page > .panel + .panel` か
+        同等の adjacent-sibling combinator を含めばよい。
+        """
+        template = _load_template()
+        # CSS ブロックだけを切り出して selector を検索
+        style_start = template.index('<style>')
+        style_end = template.index('</style>', style_start)
+        css = template[style_start:style_end]
+        assert '.page > .panel + .panel' in css, \
+            "Patterns/Quality/Surface ページの .panel 間マージン CSS rule が未定義 (Issue #71)"

@@ -501,13 +501,13 @@ histogram の 0 bucket 分母を「実観測 session 数」に揃えるため。
 - sort key: `(expansion_count + submit_count)` 降順 → `skill` 昇順
 - top-N: `TOP_N_SLASH_COMMAND_BREAKDOWN = 20` で cap
 
-### 旧 schema / 未知 source 値の扱い
+### 未知 source 値の扱い
 
-`source` フィールドが `"expansion"` / `"submit"` 以外の event (旧 schema で
-`source` 欠落 / 将来追加されうる未知文字列) は **silent skip** する (= エラーに
-せず、集計に含めないだけ)。`expansion + submit == 0` の skill は output rows に
-含まれない。これは reader-side で旧 record を読み込んでもエラーにしないという
-互換性確保のためで、UI 側の表示要素にもしない。
+`source` フィールドが `"expansion"` / `"submit"` 以外の event (`source` 欠落 /
+将来追加されうる未知文字列) は **silent skip** する (= エラーにせず、集計に
+含めないだけ)。`expansion + submit == 0` の skill は output rows に含まれない。
+これは reader-side で record を読み込んでもエラーにしないという互換性確保の
+ためで、UI 側の表示要素にもしない。
 
 ## `instructions_loaded_breakdown` (Issue #62, v0.7.0〜)
 
