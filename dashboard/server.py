@@ -9,7 +9,7 @@ import sys
 import threading
 import time
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Callable, Optional
@@ -494,129 +494,276 @@ def aggregate_permission_breakdowns(events: list[dict], top_n: int = TOP_N) -> d
     return {"skill": skill_items, "subagent": subagent_items}
 
 
-TOP_N_SLASH_COMMAND_BREAKDOWN = 20
-TOP_N_GLOB_MATCH = 10
+# Issue #74 / Surface 3 panel — 共通定数
+
+TOP_N_SKILL_INVOCATION = 20
+TOP_N_SKILL_LIFECYCLE = 20
+
+_LIFECYCLE_NEW_THRESHOLD_DAYS = 14
+_HIBERNATING_ACTIVE_DAYS = 14
+_HIBERNATING_RESTING_DAYS = 30
 
 
-def _compress_home_path(path: str) -> str:
-    """`/Users/<user>/...` を `~/...` に圧縮する。一致しなければ無加工 path を返す。
+def _normalize_skill_name(raw: str) -> str:
+    """skill_tool / user_slash_command の skill 名表記差を吸収する。
 
-    `home + os.sep` で prefix 比較するため "/Users/foo-extended/x" は HOME="/Users/foo"
-    に false-match しない。HOME と完全一致 (sep 無し) の path も圧縮しない仕様。
+    user_slash_command は先頭 `/` を含む形 (`"/codex-review"`)、skill_tool は
+    含まない形 (`"codex-review"`) で記録される。`lstrip("/")` で先頭の slash
+    を全て剥がし、`~/.claude/skills/<name>/` のディレクトリ名と同じカノニカル
+    表現に揃える。空文字 / `"/"` 単独 / whitespace-only は呼び出し側で skip 判定。
     """
-    home = os.path.expanduser("~")
-    if home and path.startswith(home + os.sep):
-        return "~" + path[len(home):]
-    return path
+    if not isinstance(raw, str):
+        return ""
+    return raw.lstrip("/").strip()
 
 
-def aggregate_instructions_loaded_breakdown(
-    events: list[dict],
-    top_n: int = TOP_N_GLOB_MATCH,
-) -> dict:
-    """instructions_loaded event を memory_type / load_reason / glob_match_top に集計。
+def _parse_iso_utc(ts: str) -> Optional[datetime]:
+    """ISO 8601 → tz-aware UTC datetime。失敗時 None。
 
-    memory_type / load_reason の値はそのまま (lower-case 正規化しない / 実機データの
-    真実を歪めない)。glob_match_top は file_path home 圧縮済み。
-
-    P2 反映: dict (memory_type_dist / load_reason_dist) は count 降順 → key 昇順
-    の insertion order で組み立てる。Python 3.7+ dict / JSON 仕様で順序保持される
-    ため、consumer (renderer / static export) はこの順を信頼可能。
-
-    Q1 反映: glob_match_top は load_reason="glob_match" の event だけを対象に
-    file_path で count する。同じ file_path が他の load_reason で出現しても
-    glob_match スコープ内の count しか積まない。
-
-    3-P2 反映: top_n は glob_match_top にのみ適用。memory_type_dist /
-    load_reason_dist は全観測キーを返す (キー数が hooks 仕様で bounded =
-    `{"User", "Project", "Skill", ...}` の固定値域に収まるため cap 不要)。
-
-    P3 反映: input events は in-place rewrite しない (集計後の dict キーに対してのみ
-    `_compress_home_path` を適用)。
-
-    実装注意 (2-P1 反映): `json.dumps(..., sort_keys=True)` を本関数の戻り値の
-    serialize 経路で混入させると dict 順序契約が破壊される。
-    `tests/test_skill_surface.py::test_dict_iteration_order_survives_json_roundtrip`
-    が regression guard として動く。
+    naive datetime (tzinfo 無し) は UTC とみなす (`hourly_heatmap` と同方針)。
     """
-    memory_type_counter: Counter = Counter()
-    load_reason_counter: Counter = Counter()
-    glob_match_counter: Counter = Counter()
-    for ev in events:
-        if ev.get("event_type") != "instructions_loaded":
-            continue
-        mt = ev.get("memory_type", "")
-        lr = ev.get("load_reason", "")
-        fp = ev.get("file_path", "")
-        if mt:
-            memory_type_counter[mt] += 1
-        if lr:
-            load_reason_counter[lr] += 1
-        if lr == "glob_match" and fp:
-            glob_match_counter[_compress_home_path(fp)] += 1
-
-    def _to_sorted_dict(counter: Counter) -> dict:
-        # count desc → key asc。Python 3.7+ dict は insertion order を保持。
-        return {k: c for k, c in sorted(counter.items(), key=lambda kv: (-kv[1], kv[0]))}
-
-    glob_match_top = [
-        {"file_path": k, "count": c}
-        for k, c in sorted(glob_match_counter.items(), key=lambda kv: (-kv[1], kv[0]))[:top_n]
-    ]
-    return {
-        "memory_type_dist": _to_sorted_dict(memory_type_counter),
-        "load_reason_dist": _to_sorted_dict(load_reason_counter),
-        "glob_match_top": glob_match_top,
-    }
+    if not isinstance(ts, str) or not ts:
+        return None
+    try:
+        dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
 
 
-# 既知の source 値。これ以外 (None / 未知文字列) は silent skip (= エラー回避のみ)。
-_SOURCE_EXPANSION = "expansion"
-_SOURCE_SUBMIT = "submit"
-
-
-def aggregate_slash_command_source_breakdown(
+def aggregate_skill_invocation_breakdown(
     events: list[dict],
-    top_n: int = TOP_N_SLASH_COMMAND_BREAKDOWN,
+    top_n: int = TOP_N_SKILL_INVOCATION,
 ) -> list[dict]:
-    """user_slash_command event を skill ごとに source 分類して expansion_rate を返す。
+    """skill_tool (LLM 自律) / user_slash_command (ユーザー手動) を skill ごとに集計。
 
-    source が "expansion" / "submit" のものだけを count に積む。それ以外
-    (source 不在 / 未知 source 値) は **silent skip** (= 集計対象外にするだけで
-    エラーにはしない)。modern data 0 件の skill は出力対象外。
-
-    rate は 4 桁小数で丸める (`round(rate, 4)`)。
-
-    sort: (expansion + submit) 降順 → skill 昇順、top_n 件で cap。
+    Mode は 3-way: dual / llm-only / user-only。autonomy_rate は dual のみ意味があり
+    (round 4 桁丸め)、片側 only は None。skill 名は `_normalize_skill_name()` で
+    先頭 `/` を全部剥がして同一 key にマージ。失敗 event (success=False) も count に含む。
     """
-    expansion_count: Counter = Counter()
-    submit_count: Counter = Counter()
+    tool_count: Counter = Counter()
+    slash_count: Counter = Counter()
     for ev in events:
-        if ev.get("event_type") != "user_slash_command":
+        et = ev.get("event_type")
+        if et not in ("skill_tool", "user_slash_command"):
             continue
-        skill = ev.get("skill", "")
+        skill = _normalize_skill_name(ev.get("skill", ""))
         if not skill:
             continue
-        src = ev.get("source")
-        if src == _SOURCE_EXPANSION:
-            expansion_count[skill] += 1
-        elif src == _SOURCE_SUBMIT:
-            submit_count[skill] += 1
-        # source 不在 / 未知 source 値は silent skip
-    skills = set(expansion_count) | set(submit_count)
+        if et == "skill_tool":
+            tool_count[skill] += 1
+        else:
+            slash_count[skill] += 1
+
     rows = []
-    for skill in skills:
-        e = expansion_count.get(skill, 0)
-        s = submit_count.get(skill, 0)
-        total = e + s
+    for skill in set(tool_count) | set(slash_count):
+        t = tool_count.get(skill, 0)
+        s = slash_count.get(skill, 0)
+        if t > 0 and s > 0:
+            mode = "dual"
+            autonomy_rate: Optional[float] = round(t / (t + s), 4)
+        elif t > 0:
+            mode = "llm-only"
+            autonomy_rate = None
+        else:
+            mode = "user-only"
+            autonomy_rate = None
         rows.append({
             "skill": skill,
-            "expansion_count": e,
-            "submit_count": s,
-            "expansion_rate": round(e / total, 4),
+            "mode": mode,
+            "tool_count": t,
+            "slash_count": s,
+            "autonomy_rate": autonomy_rate,
         })
-    rows.sort(key=lambda r: (-(r["expansion_count"] + r["submit_count"]), r["skill"]))
+    rows.sort(key=lambda r: (-(r["tool_count"] + r["slash_count"]), r["skill"]))
     return rows[:top_n]
+
+
+def aggregate_skill_lifecycle(
+    events: list[dict],
+    *,
+    now: Optional[datetime] = None,
+    top_n: int = TOP_N_SKILL_LIFECYCLE,
+) -> list[dict]:
+    """skill_tool + user_slash_command を skill 名正規化済みで merge し lifecycle を算出。
+
+    trend 4 値: new (first_seen が 14 日以内なら最優先) / accelerating / stable /
+    decelerating。observation_days に上限 cap は無い (Q2)。
+    sort: last_seen desc → skill asc の 2-pass stable sort。
+    """
+    if now is None:
+        now = datetime.now(timezone.utc)
+    cutoff_30d = now - timedelta(days=30)
+
+    by_skill: dict[str, dict] = {}
+    for ev in events:
+        et = ev.get("event_type")
+        if et not in ("skill_tool", "user_slash_command"):
+            continue
+        skill = _normalize_skill_name(ev.get("skill", ""))
+        if not skill:
+            continue
+        ts = _parse_iso_utc(ev.get("timestamp", ""))
+        if ts is None:
+            continue
+        slot = by_skill.get(skill)
+        if slot is None:
+            slot = {"first": ts, "last": ts, "count_total": 0, "count_30d": 0}
+            by_skill[skill] = slot
+        if ts < slot["first"]:
+            slot["first"] = ts
+        if ts > slot["last"]:
+            slot["last"] = ts
+        slot["count_total"] += 1
+        if cutoff_30d <= ts <= now:
+            slot["count_30d"] += 1
+
+    rows = []
+    for skill, slot in by_skill.items():
+        days_since_first = (now - slot["first"]).days
+        if days_since_first < _LIFECYCLE_NEW_THRESHOLD_DAYS:
+            trend = "new"
+        else:
+            observation_days = max(days_since_first, 1)
+            recent_rate = slot["count_30d"] / 30
+            overall_rate = slot["count_total"] / observation_days
+            if overall_rate == 0:
+                trend = "stable"
+            else:
+                ratio = recent_rate / overall_rate
+                if ratio > 1.5:
+                    trend = "accelerating"
+                elif ratio < 0.5:
+                    trend = "decelerating"
+                else:
+                    trend = "stable"
+        rows.append({
+            "skill": skill,
+            "first_seen": slot["first"].isoformat(),
+            "last_seen": slot["last"].isoformat(),
+            "count_30d": slot["count_30d"],
+            "count_total": slot["count_total"],
+            "trend": trend,
+        })
+    # 2-pass stable sort: skill asc が tiebreaker、last_seen desc が一次キー
+    rows.sort(key=lambda r: r["skill"])
+    rows.sort(key=lambda r: r["last_seen"], reverse=True)
+    return rows[:top_n]
+
+
+def _resolve_skills_dir(skills_dir) -> Path:
+    """skills_dir 引数 / SKILLS_DIR env / 既定 ~/.claude/skills の resolution。"""
+    if skills_dir is not None:
+        return Path(skills_dir).expanduser()
+    env = os.environ.get("SKILLS_DIR")
+    if env:
+        return Path(env).expanduser()
+    return Path.home() / ".claude" / "skills"
+
+
+def aggregate_skill_hibernating(
+    events: list[dict],
+    *,
+    skills_dir=None,
+    now: Optional[datetime] = None,
+) -> dict:
+    """user-level skills (~/.claude/skills/*/SKILL.md) と usage を cross-reference。
+
+    14 日以内に呼ばれた skill は items から除外し active_excluded_count に計上。
+    plugin-bundled skills (~/.claude/plugins/*/skills/) は対象外。
+    skills_dir 不在 / 各 entry の OSError は silent skip。
+    """
+    if now is None:
+        now = datetime.now(timezone.utc)
+    skills_dir = _resolve_skills_dir(skills_dir)
+
+    # skills_dir 不在 / アクセス不可 → empty + scope_note
+    try:
+        entries = list(skills_dir.iterdir()) if skills_dir.is_dir() else []
+    except OSError:
+        entries = []
+
+    installed: dict[str, datetime] = {}
+    for entry in entries:
+        try:
+            if not entry.is_dir():
+                continue
+            skill_md = entry / "SKILL.md"
+            if not skill_md.is_file():
+                continue
+            mtime = datetime.fromtimestamp(skill_md.stat().st_mtime, tz=timezone.utc)
+        except OSError:
+            continue
+        installed[entry.name] = mtime
+
+    # usage 側 last_seen (skill 名正規化済みで installed と key 一致)
+    last_seen_by_skill: dict[str, datetime] = {}
+    for ev in events:
+        et = ev.get("event_type")
+        if et not in ("skill_tool", "user_slash_command"):
+            continue
+        skill = _normalize_skill_name(ev.get("skill", ""))
+        if not skill or skill not in installed:
+            continue
+        ts = _parse_iso_utc(ev.get("timestamp", ""))
+        if ts is None:
+            continue
+        prev = last_seen_by_skill.get(skill)
+        if prev is None or ts > prev:
+            last_seen_by_skill[skill] = ts
+
+    active_cutoff = now - timedelta(days=_HIBERNATING_ACTIVE_DAYS)
+
+    items = []
+    active_excluded_count = 0
+    for skill, mtime in installed.items():
+        last = last_seen_by_skill.get(skill)
+        if last is not None and last >= active_cutoff:
+            active_excluded_count += 1
+            continue
+        days_since_use = (now - last).days if last is not None else None
+        days_since_install = (now - mtime).days
+
+        if last is not None:
+            status = "resting" if days_since_use <= _HIBERNATING_RESTING_DAYS else "idle"
+        else:
+            status = "warming_up" if days_since_install <= _HIBERNATING_ACTIVE_DAYS else "idle"
+
+        items.append({
+            "skill": skill,
+            "status": status,
+            "mtime": mtime.isoformat(),
+            "last_seen": last.isoformat() if last is not None else None,
+            "days_since_last_use": days_since_use,
+            # sort 用 sidecar (return 直前に pop)
+            "_mtime_dt": mtime,
+            "_d_inst": days_since_install,
+        })
+
+    status_order = {"warming_up": 0, "resting": 1, "idle": 2}
+
+    def _tiebreak(it: dict) -> tuple:
+        if it["status"] == "warming_up":
+            return (-it["_mtime_dt"].timestamp(),)
+        if it["status"] == "resting":
+            return (-(it["days_since_last_use"] or 0),)
+        # idle
+        d_use = it["days_since_last_use"] or 0
+        return (-max(d_use, it["_d_inst"]),)
+
+    items.sort(key=lambda it: (status_order[it["status"]], *_tiebreak(it), it["skill"]))
+
+    for it in items:
+        it.pop("_mtime_dt", None)
+        it.pop("_d_inst", None)
+
+    return {
+        "items": items,
+        "scope_note": "user-level only",
+        "active_excluded_count": active_excluded_count,
+    }
 
 
 def aggregate_compact_density(events: list[dict], top_n: int = TOP_N) -> dict:
@@ -743,8 +890,9 @@ def build_dashboard_data(events: list[dict]) -> dict:
         "compact_density": aggregate_compact_density(events),
         "session_stats": aggregate_session_stats(events),
         "health_alerts": load_health_alerts(),
-        "slash_command_source_breakdown": aggregate_slash_command_source_breakdown(events),
-        "instructions_loaded_breakdown": aggregate_instructions_loaded_breakdown(events),
+        "skill_invocation_breakdown": aggregate_skill_invocation_breakdown(events),
+        "skill_lifecycle": aggregate_skill_lifecycle(events),
+        "skill_hibernating": aggregate_skill_hibernating(events),
     }
 
 

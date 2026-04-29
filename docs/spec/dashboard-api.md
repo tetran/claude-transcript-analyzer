@@ -24,8 +24,9 @@
   "subagent_failure_trend":  [...],
   "session_stats":           { ... },
   "health_alerts":           [...],
-  "slash_command_source_breakdown":   [...],
-  "instructions_loaded_breakdown":    { ... }
+  "skill_invocation_breakdown":  [...],
+  "skill_lifecycle":             [...],
+  "skill_hibernating":           { ... }
 }
 ```
 
@@ -471,99 +472,203 @@ histogram の 0 bucket 分母を「実観測 session 数」に揃えるため。
 - `project` は当該 session の **最後に観測した** `compact_start.project` (空なら `""`)
 - 空入力なら `[]` を返す
 
-## `slash_command_source_breakdown` (Issue #62, v0.7.0〜)
+## skill 名正規化 (Issue #74, v0.7.0〜)
 
-`user_slash_command` event を skill ごとに `source` 分類して `expansion_rate` を
-返す。Surface ページの「Slash command 起動経路 (top 20)」table が消費する。
+`skill_invocation_breakdown` / `skill_lifecycle` / `skill_hibernating` の 3
+aggregator は **共通の正規化規則** で skill 名を扱う:
+
+| event_type | `skill` フィールドの形 |
+|-----------|---------------------|
+| `skill_tool` | `"codex-review"` (先頭 `/` なし、`tool_input.skill` 由来) |
+| `user_slash_command` | `"/codex-review"` (先頭 `/` あり、`command_name` 由来) |
+
+→ aggregator 内で `lstrip("/")` を適用し、**先頭の `/` を全て剥がして** 同じ
+key にマージする (例: `"//foo"` も `"/foo"` も `"foo"` に正規化される)。
+正規化結果が空文字 (`""` / `"/"` / `"  "` などの whitespace-only) の event は
+silent skip。`~/.claude/skills/<name>/` のディレクトリ名 (= skill ID)
+と一致する形がカノニカル。
+
+この正規化は本 3 aggregator 内に閉じる (= `aggregate_skills` などの既存 ranking
+には影響しない / 別 issue)。
+
+## `skill_invocation_breakdown` (Issue #74, v0.7.0〜)
+
+同一 skill に対する **LLM 自律発火 (`skill_tool`)** と **ユーザー手動発火
+(`user_slash_command`)** の件数比を skill ごとに集計。Surface ページ
+「Skill 起動経路」panel が消費する。
 
 ### 形
 
 ```json
 {
-  "slash_command_source_breakdown": [
-    {"skill": "/codex-review",      "expansion_count": 12, "submit_count": 3, "expansion_rate": 0.8},
-    {"skill": "/usage-summary",     "expansion_count": 0,  "submit_count": 5, "expansion_rate": 0.0},
-    {"skill": "/usage-export-html", "expansion_count": 8,  "submit_count": 0, "expansion_rate": 1.0}
+  "skill_invocation_breakdown": [
+    {"skill": "codex-review",        "mode": "dual",      "tool_count": 24, "slash_count": 1,  "autonomy_rate": 0.96},
+    {"skill": "user-story-creation", "mode": "dual",      "tool_count": 2,  "slash_count": 18, "autonomy_rate": 0.10},
+    {"skill": "frontend-design",     "mode": "llm-only",  "tool_count": 12, "slash_count": 0,  "autonomy_rate": null},
+    {"skill": "usage-archive",       "mode": "user-only", "tool_count": 0,  "slash_count": 8,  "autonomy_rate": null}
   ]
 }
 ```
 
 ### 形 — 各フィールド
 
-- `skill`: slash command 名 (先頭 `/` 含む)
-- `expansion_count`: `source == "expansion"` の event 件数 (= LLM が展開した経路)
-- `submit_count`: `source == "submit"` の event 件数 (= raw prompt 送信経路)
-- `expansion_rate`: **`float (4 桁丸め)`**
-  `round(expansion_count / (expansion_count + submit_count), 4)`
+- `skill`: 正規化済み skill 名 (先頭 `/` なし)
+- `mode`: 3-way 分類
+  - `"dual"`: 両方観測あり (`tool_count > 0 && slash_count > 0`)
+  - `"llm-only"`: `skill_tool` のみ観測
+  - `"user-only"`: `user_slash_command` のみ観測
+- `tool_count`: `skill_tool` event 件数 (`success=False` も含む / B2)
+- `slash_count`: `user_slash_command` event 件数 (`source` の値は無視)
+- `autonomy_rate`: `dual` のみ `round(tool_count / (tool_count + slash_count), 4)` の float、`llm-only` / `user-only` では `null` (UI で `—` 表示)
 
 ### sort / top-N
 
-- sort key: `(expansion_count + submit_count)` 降順 → `skill` 昇順
-- top-N: `TOP_N_SLASH_COMMAND_BREAKDOWN = 20` で cap
+- sort key: `(tool_count + slash_count)` 降順 → `skill` 昇順
+- top-N: `TOP_N_SKILL_INVOCATION = 20` で cap
 
-### 未知 source 値の扱い
+### 失敗 event の扱い
 
-`source` フィールドが `"expansion"` / `"submit"` 以外の event (`source` 欠落 /
-将来追加されうる未知文字列) は **silent skip** する (= エラーにせず、集計に
-含めないだけ)。`expansion + submit == 0` の skill は output rows に含まれない。
-これは reader-side で record を読み込んでもエラーにしないという互換性確保の
-ためで、UI 側の表示要素にもしない。
+`skill_tool.success=False` (PostToolUseFailure 由来) も `tool_count` に含める。
+LLM が呼ぼうとした事実そのものが Panel 1 の意味 (= 想起率) なので、成否は
+区別しない。
 
-## `instructions_loaded_breakdown` (Issue #62, v0.7.0〜)
+## `skill_lifecycle` (Issue #74, v0.7.0〜)
 
-`instructions_loaded` event を `memory_type` / `load_reason` の頻度分布と、
-`load_reason == "glob_match"` が多発した `file_path` top 10 に集計する。
-Surface ページの「Instructions ロード分布」panel が消費する。
+各 skill の lifecycle (初回 / 直近 / 30日件数 / 全期間件数 / trend) を 1 行
+集計。`skill_tool` + `user_slash_command` を skill 名正規化済み key で merge
+した上で算出。Surface ページ「Skill lifecycle」panel が消費する。
 
 ### 形
 
 ```json
 {
-  "instructions_loaded_breakdown": {
-    "memory_type_dist": {"User": 65, "Project": 62},
-    "load_reason_dist": {"session_start": 127},
-    "glob_match_top": [
-      {"file_path": "~/.claude/skills/foo/SKILL.md", "count": 42},
-      {"file_path": "~/.claude/skills/bar/SKILL.md", "count": 18}
-    ]
+  "skill_lifecycle": [
+    {
+      "skill": "codex-review",
+      "first_seen": "2026-02-28T10:00:00+00:00",
+      "last_seen":  "2026-04-28T10:00:00+00:00",
+      "count_30d":   18,
+      "count_total": 24,
+      "trend": "accelerating"
+    }
+  ]
+}
+```
+
+### 形 — 各フィールド
+
+- `skill`: 正規化済み skill 名
+- `first_seen` / `last_seen`: ISO 8601 (`+00:00` 付き UTC)。`timestamp` parse
+  失敗 (空 / 不正 / naive) の event は silent skip
+- `count_30d`: `now - 30d <= ts <= now` を満たす event 数 (両端 inclusive / B3)
+- `count_total`: 全期間 (= hot tier 180 日 + opt-in archive) の event 数
+- `trend`: enum `accelerating` / `stable` / `decelerating` / `new`
+
+### trend 判定ロジック
+
+```
+days_since_first = (now - first_seen).days
+
+if days_since_first < 14:
+    trend = "new"          # lifecycle 浅すぎて trend 判定不可 (最優先)
+else:
+    observation_days = max(days_since_first, 1)
+    recent_rate  = count_30d / 30
+    overall_rate = count_total / observation_days
+    ratio = recent_rate / overall_rate
+    if   ratio > 1.5: trend = "accelerating"
+    elif ratio < 0.5: trend = "decelerating"
+    else:             trend = "stable"
+```
+
+`observation_days` に **上限 cap は無い**。dashboard 経路の events は 180 日
+hot tier で自然 bound されるが、`--include-archive` 時に古い skill が
+artificially `decelerating` 寄りに歪む実害があるため cap 撤廃 (Issue #74 / Q2)。
+
+### sort / top-N
+
+- sort key: `last_seen` 降順 → `skill` 昇順
+- top-N: `TOP_N_SKILL_LIFECYCLE = 20` で cap
+
+### `now` 注入
+
+aggregator は `now: datetime | None = None` キーワード引数を受け、`None` 時
+`datetime.now(timezone.utc)` 既定。test 安定化のため明示注入推奨。
+
+## `skill_hibernating` (Issue #74, v0.7.0〜)
+
+`~/.claude/skills/*/SKILL.md` listing と `usage.jsonl` を cross-reference し、
+**install してるが最近呼ばれてない user-level skill** を surface する。
+Surface ページ「Hibernating skills」panel が消費する。
+
+### 形
+
+```json
+{
+  "skill_hibernating": {
+    "items": [
+      {"skill": "frontend-design",     "status": "warming_up", "mtime": "2026-04-26T10:00:00+00:00", "last_seen": null,                       "days_since_last_use": null},
+      {"skill": "webapp-testing",      "status": "resting",    "mtime": "2026-01-29T10:00:00+00:00", "last_seen": "2026-04-15T10:00:00+00:00", "days_since_last_use": 14},
+      {"skill": "ruby-gem-security",   "status": "idle",       "mtime": "2026-02-28T10:00:00+00:00", "last_seen": "2026-04-01T10:00:00+00:00", "days_since_last_use": 28}
+    ],
+    "scope_note": "user-level only",
+    "active_excluded_count": 5
   }
 }
 ```
 
-### dict iteration order — count desc → key asc
+### 形 — 各フィールド
 
-- `memory_type_dist` / `load_reason_dist` は **dict** で観測されたキーのみを返す
-- aggregator は **count 降順 → key 昇順 の insertion order** で組み立てる
-- Python 3.7+ dict は insertion order を保持し、`json.dumps` は dict の
-  iteration order でキーを出す。ECMAScript 仕様で string key の挿入順保持が
-  規定されているため `JSON.parse` も同順を保つ
-- consumer (renderer / static export) は server-side sort 済みを **信頼** する
-  (= renderer 側で sort し直さない)
-- 値の正規化はしない (TitleCase / lowercase verbatim)
+- `items[].skill`: ディレクトリ名 (= skill ID, 正規化済み skill 名と同じ)
+- `items[].status`: enum `warming_up` / `resting` / `idle`
+- `items[].mtime`: `<skills_dir>/<skill>/SKILL.md` のファイル mtime (ISO 8601 UTC)
+- `items[].last_seen`: 該当 skill の最後の usage event timestamp (使用無しは `null`)
+- `items[].days_since_last_use`: `(now - last_seen).days` (使用無しは `null`)
+- `scope_note`: 文字列 `"user-level only"` 固定 (UI でユーザーへの注釈)
+- `active_excluded_count`: 14 日以内に 1 度でも呼ばれて **active 除外** された
+  skill 数 (= panel に表示されない skill 数)。UI で「14日以内に使われた X 件は
+  非表示」注記に使う
 
-### top-N cap の対象
+### スコープ
 
-- `top_n = TOP_N_GLOB_MATCH = 10` は **`glob_match_top` のみ** に適用
-- `memory_type_dist` / `load_reason_dist` は **全観測キー** を返す
-  (キー数が hooks 仕様で bounded = `{"User", "Project", "Skill", ...}` の固定値域に
-  収まるため cap 不要)
+- 対象: `~/.claude/skills/*/SKILL.md` (user-level skills only)
+- 対象外: `~/.claude/plugins/*/skills/` (plugin-bundled は本 panel に出さない)
 
-### glob_match_top 仕様
+### Active 除外ルール
 
-- `load_reason == "glob_match"` の event だけを対象に `file_path` で count
-- 同じ `file_path` が他の `load_reason` で出現しても **glob_match スコープ内の
-  count しか積まない**
-- sort: count 降順 → file_path 昇順、最大 10 件
-- `file_path` は **home 圧縮済み** (`/Users/<user>/...` → `~/...`)
-- empty events / observed 0 件のとき `[]`
+`last_seen >= now - 14d` (両端 inclusive) の skill は items に含めない。
+代わりに `active_excluded_count` に 1 加算。Lifecycle panel 側で見える設計。
 
-### file_path home 圧縮
+### Status 分類
 
-- 集計関数 (`aggregate_instructions_loaded_breakdown`) 内で `_compress_home_path`
-  を適用してから dict に積む (= server-side responsibility)
-- export_html (静的) でも同じ表示になる + 単一箇所のメンテで済む
-- 集計後のキーが圧縮済みなのでキーが分かれない (= raw path と圧縮 path で
-  count が分割される事故を構造的に避ける)
-- prefix 比較は `home + os.sep` で行う (= "/Users/foo" を "/Users/foo-extended"
-  に false-match させない)
-- input events は **in-place rewrite しない** (raw event は無加工 / 後続処理影響なし)
+| status | 条件 |
+|--------|------|
+| `warming_up` | 未使用 (`last_seen=null`) かつ `mtime >= now - 14d` (新着 install) |
+| `resting`    | 使用履歴あり、`14d < days_since_last_use <= 30d` |
+| `idle`       | 使用履歴あり、`days_since_last_use > 30d` ／ または 未使用かつ `mtime < now - 14d` (古い install で未使用 = 死蔵) |
+
+### sort
+
+第一 key: status 順 (`warming_up` → `resting` → `idle`)。各 status 内 tiebreaker:
+
+- `warming_up`: `mtime` 降順 (= 最新 install を上に)
+- `resting`: `days_since_last_use` 降順
+- `idle`: `max(days_since_last_use, days_since_install)` 降順 (使用ありなら使用経過、未使用なら install 経過の長い方)
+
+### `skills_dir` resolution / env override
+
+優先順: 引数 `skills_dir` > 環境変数 `SKILLS_DIR` > 既定 `~/.claude/skills/`。
+ディレクトリ不在 / アクセス不可 (`PermissionError` 等) のとき `{"items": [],
+"scope_note": "user-level only", "active_excluded_count": 0}` を silent return
+(health_alert は立てない / B4)。
+
+### Robustness
+
+各 entry の `is_dir() / is_file() / .stat()` は壊れた symlink で `OSError` を
+投げうるため、entry 単位で `try/except OSError: continue` で wrap。1 件の
+壊れた entry が panel 全体を毒さない設計。
+
+### `now` 注入
+
+aggregator は `now: datetime | None = None` キーワード引数を受け、`None` 時
+`datetime.now(timezone.utc)` 既定。

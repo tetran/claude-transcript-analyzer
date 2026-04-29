@@ -969,74 +969,81 @@
   .data-tip[data-kind="histogram"] { border-left-color: var(--peach); }
   .data-tip[data-kind="worst-session"] { border-left-color: var(--peach); }
 
-  /* slash command source breakdown (Issue #62 / A4) */
-  .source-table {
+  /* Surface 3 panel 共通テーブル (Issue #74) */
+  .surface-table {
     width: 100%; border-collapse: collapse; font-size: 12px;
     font-family: var(--ff-mono);
   }
-  .source-table th {
+  .surface-table th {
     text-align: left; color: var(--ink-faint); font-weight: 500;
     padding: 6px 8px; border-bottom: 1px solid var(--line);
   }
-  .source-table th.num, .source-table td.num {
+  .surface-table th.num, .surface-table td.num {
     text-align: right; font-variant-numeric: tabular-nums;
   }
-  .source-table tbody tr { border-bottom: 1px solid rgba(255, 255, 255, 0.04); }
-  .source-table tbody tr:hover { background: rgba(255, 255, 255, 0.03); }
-  .source-table tbody tr:focus-visible { outline: 2px solid var(--mint); outline-offset: -1px; }
-  .source-table td { padding: 5px 8px; color: var(--ink); }
-  .source-table td.name { color: var(--mint); }
-  .source-table td.dim { color: var(--ink-faint); }
-  .source-table td.rate-warn { color: var(--peach); font-weight: 500; }
-  .source-table td .dim { color: var(--ink-faint); }
-  .source-table .empty { text-align: center; color: var(--ink-faint); padding: 24px 0; }
-  .data-tip[data-kind="source"] { border-left-color: var(--mint); }
+  .surface-table tbody tr { border-bottom: 1px solid rgba(255, 255, 255, 0.04); }
+  .surface-table tbody tr:hover { background: rgba(255, 255, 255, 0.03); }
+  .surface-table tbody tr:focus-visible { outline: 2px solid var(--mint); outline-offset: -1px; }
+  .surface-table td { padding: 5px 8px; color: var(--ink); }
+  .surface-table td.name { color: var(--mint); }
+  .surface-table td.dim { color: var(--ink-faint); }
+  .surface-table td.rate-warn { color: var(--peach); font-weight: 500; }
+  .surface-table .empty { text-align: center; color: var(--ink-faint); padding: 24px 0; }
 
-  /* instructions_loaded breakdown (Issue #62 / B4) */
-  .instr-grid {
-    display: grid;
-    grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) minmax(280px, 2fr);
-    gap: 24px; align-items: start;
+  /* Panel 1 — Mode chip (dual / llm-only / user-only) */
+  .mode-chip {
+    display: inline-block; padding: 1px 6px; border-radius: 3px;
+    font-size: 10px; letter-spacing: 0.02em;
+    background: rgba(255, 255, 255, 0.05); color: var(--ink-faint);
   }
-  @media (max-width: 720px) {
-    .instr-grid { grid-template-columns: 1fr; }
-  }
-  .instr-col-wide { min-width: 0; } /* table の overflow 回避 */
-  .instr-h {
-    margin: 0 0 8px; font-size: 11px; font-weight: 500;
-    color: var(--ink-faint); font-family: var(--ff-mono); text-transform: uppercase;
-    letter-spacing: 0.04em;
-  }
-  .instr-bars { display: flex; flex-direction: column; gap: 4px; }
-  .instr-row {
-    display: grid; grid-template-columns: minmax(60px, max-content) 1fr 36px;
-    align-items: center; gap: 8px; font-size: 12px; font-family: var(--ff-mono);
-  }
-  .instr-row:focus-visible { outline: 2px solid var(--peri); outline-offset: 1px; }
-  .instr-row .lbl { color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .instr-row .bar-wrap { background: rgba(255, 255, 255, 0.05); height: 8px; border-radius: 2px; overflow: hidden; }
-  .instr-row .bar { height: 100%; background: var(--peri); border-radius: 2px; }
-  .instr-row .v { text-align: right; color: var(--ink); font-variant-numeric: tabular-nums; }
-  .instr-bars .empty { color: var(--ink-faint); font-size: 12px; padding: 8px 0; }
+  .mode-chip.mode-dual     { background: rgba(133, 188, 208, 0.10); color: var(--peri); }
+  .mode-chip.mode-llm-only { background: rgba(143, 188, 143, 0.12); color: var(--mint); }
+  .mode-chip.mode-user-only{ background: rgba(255, 200, 130, 0.12); color: var(--peach); }
 
-  .glob-table { width: 100%; border-collapse: collapse; font-size: 12px; font-family: var(--ff-mono); table-layout: fixed; }
-  .glob-table th {
-    text-align: left; color: var(--ink-faint); font-weight: 500;
-    padding: 6px 8px; border-bottom: 1px solid var(--line);
+  /* Panel 2 — trend chip (📈 / ➡️ / 📉 / 🌱) */
+  .trend-chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 11px; padding: 1px 4px; border-radius: 3px;
+    background: rgba(255, 255, 255, 0.04);
   }
-  .glob-table th.num, .glob-table td.num {
-    text-align: right; font-variant-numeric: tabular-nums; width: 56px;
+  .trend-chip.trend-accelerating { color: var(--mint); }
+  .trend-chip.trend-stable       { color: var(--ink); }
+  .trend-chip.trend-decelerating { color: var(--peach); }
+  .trend-chip.trend-new          { color: var(--peri); }
+
+  /* Panel 3 — status chip + scope-note callout */
+  .status-chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 11px; padding: 1px 4px; border-radius: 3px;
+    background: rgba(255, 255, 255, 0.04);
   }
-  .glob-table tbody tr { border-bottom: 1px solid rgba(255, 255, 255, 0.04); }
-  .glob-table tbody tr:hover { background: rgba(255, 255, 255, 0.03); }
-  .glob-table tbody tr:focus-visible { outline: 2px solid var(--peri); outline-offset: -1px; }
-  .glob-table td { padding: 5px 8px; color: var(--ink); }
-  .glob-table td.fp {
-    color: var(--peri); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  .status-chip.status-warming_up { color: var(--mint); }
+  .status-chip.status-resting    { color: var(--peri); }
+  .status-chip.status-idle       { color: var(--ink-faint); }
+
+  .scope-note {
+    margin: 0 0 12px; padding: 8px 12px;
+    display: flex; align-items: flex-start; gap: 8px;
+    background: rgba(133, 188, 208, 0.06);
+    border-left: 3px solid var(--peri);
+    border-radius: 4px;
+    font-size: 12px; color: var(--ink); line-height: 1.5;
   }
-  .glob-table .empty { text-align: center; color: var(--ink-faint); padding: 16px 0; }
-  .data-tip[data-kind="instr-bar"] { border-left-color: var(--peri); }
-  .data-tip[data-kind="glob"] { border-left-color: var(--peri); }
+  .scope-note.scope-note-active {
+    background: rgba(255, 200, 130, 0.06);
+    border-left-color: var(--peach);
+  }
+  .scope-note .scope-note-ic { flex: 0 0 auto; }
+  .scope-note .scope-note-text { flex: 1 1 auto; }
+  .scope-note code {
+    background: rgba(255, 255, 255, 0.05); padding: 0 4px; border-radius: 2px;
+    font-size: 11px;
+  }
+
+  /* Surface tooltip border colors */
+  .data-tip[data-kind="inv"]  { border-left-color: var(--mint); }
+  .data-tip[data-kind="life"] { border-left-color: var(--peri); }
+  .data-tip[data-kind="hib"]  { border-left-color: var(--peach); }
 </style>
 </head>
 <body>
@@ -1378,33 +1385,34 @@
       <header class="header">
         <div>
           <h1 id="page-surface-title"><span class="accent">Surface</span></h1>
-          <p class="lede">スキルの「呼ばれ方」と「載せられ方」を可視化します。</p>
+          <p class="lede">スキルが「呼ばれているか」「育っているか」「使われていないか」を 3 panel で可視化します。</p>
         </div>
       </header>
 
-      <!-- (1) A4: Slash command expansion/submit breakdown -->
-      <div class="panel" id="surface-source-panel">
+      <!-- (1) Skill 起動経路: LLM 自律 vs ユーザー手動 -->
+      <div class="panel" id="surface-inv-panel">
         <div class="panel-head c-mint">
           <div class="ttl-wrap">
-            <span class="ttl"><span class="dot"></span>Slash command 起動経路 (top 20)</span>
+            <span class="ttl"><span class="dot"></span>Skill 起動経路 (top 20)</span>
             <span class="help-host">
-              <button class="help-btn" type="button" aria-label="説明を表示" aria-expanded="false" aria-describedby="hp-source" data-help-id="hp-source">?</button>
-              <span class="help-pop" id="hp-source" role="tooltip" data-place="right">
-                <span class="pop-ttl">expansion / submit 比率</span>
-                <span class="pop-body"><code>user_slash_command</code> イベントの <code>source</code> を skill ごとに集計。<strong>expansion</strong> = LLM が slash command を理解して展開した経路、<strong>submit</strong> = 展開できず raw prompt として送信された経路。<code>expansion_rate</code> が低い skill は description / glob 設計が弱く LLM が「思いつかない」可能性。0.5 未満の rate を peach 色で強調。</span>
+              <button class="help-btn" type="button" aria-label="説明を表示" aria-expanded="false" aria-describedby="hp-inv" data-help-id="hp-inv">?</button>
+              <span class="help-pop" id="hp-inv" role="tooltip" data-place="right">
+                <span class="pop-ttl">LLM 自律 vs ユーザー手動</span>
+                <span class="pop-body">同一 skill に対する <code>skill_tool</code> (🤖 LLM が <code>Skill</code> ツールで自律発火) と <code>user_slash_command</code> (👤 ユーザーが <code>/foo</code> で手動発火) の件数比。Mode は <strong>dual</strong> (両方観測) / <strong>llm-only</strong> (Skill ツールのみ) / <strong>user-only</strong> (slash command のみ) の 3-way。<code>dual</code> の LLM 率は <code>tool / (tool + slash)</code>。低い (= ユーザー手動依存が強い) skill は description / trigger が弱く LLM が「思いつかない」候補。</span>
               </span>
             </span>
           </div>
-          <span class="sub" id="surface-source-sub"></span>
+          <span class="sub" id="surface-inv-sub"></span>
         </div>
         <div class="panel-body">
-          <table class="source-table" id="surface-source">
+          <table class="surface-table" id="surface-inv">
             <thead>
               <tr>
                 <th>Skill</th>
-                <th class="num">Expansion</th>
-                <th class="num">Submit</th>
-                <th class="num">Rate</th>
+                <th>Mode</th>
+                <th class="num">🤖 LLM</th>
+                <th class="num">👤 User</th>
+                <th class="num">LLM率</th>
               </tr>
             </thead>
             <tbody></tbody>
@@ -1412,44 +1420,77 @@
         </div>
       </div>
 
-      <!-- (2) B4: InstructionsLoaded distribution -->
-      <div class="panel" id="surface-instr-panel">
+      <!-- (2) Skill lifecycle: 育ち方トラッキング -->
+      <div class="panel" id="surface-life-panel">
         <div class="panel-head c-peri">
           <div class="ttl-wrap">
-            <span class="ttl"><span class="dot"></span>Instructions ロード分布</span>
+            <span class="ttl"><span class="dot"></span>Skill lifecycle (top 20)</span>
             <span class="help-host">
-              <button class="help-btn" type="button" aria-label="説明を表示" aria-expanded="false" aria-describedby="hp-instr" data-help-id="hp-instr">?</button>
-              <span class="help-pop" id="hp-instr" role="tooltip" data-place="right">
-                <span class="pop-ttl">Instructions ロード分布</span>
-                <span class="pop-body"><code>instructions_loaded</code> hook の <code>memory_type</code> / <code>load_reason</code> 頻度分布と、<code>load_reason="glob_match"</code> が多発した <code>file_path</code> top 10。glob_match top に頻出する skill / CLAUDE.md は description が広すぎて proactive にロードされすぎる候補 (description を絞る / glob 設計を見直すと改善)。</span>
+              <button class="help-btn" type="button" aria-label="説明を表示" aria-expanded="false" aria-describedby="hp-life" data-help-id="hp-life">?</button>
+              <span class="help-pop" id="hp-life" role="tooltip" data-place="right">
+                <span class="pop-ttl">初回 / 直近 / トレンド</span>
+                <span class="pop-body">各 skill の <code>first_seen</code> / <code>last_seen</code> + 直近 30 日件数 + 全期間件数 + trend ラベル (📈 加速 / ➡️ 安定 / 📉 減速 / 🌱 新規)。<code>first_seen</code> から 14 日未満は trend 判定不可で 🌱 新規。それ以外は <code>recent_rate / overall_rate</code> 比 (>1.5 加速、<0.5 減速、それ以外安定)。並び順は <code>last_seen</code> 降順。</span>
               </span>
             </span>
           </div>
-          <span class="sub" id="surface-instr-sub"></span>
+          <span class="sub" id="surface-life-sub"></span>
         </div>
         <div class="panel-body">
-          <div class="instr-grid">
-            <div class="instr-col">
-              <h3 class="instr-h">memory_type</h3>
-              <div class="instr-bars" id="surface-instr-mt"></div>
-            </div>
-            <div class="instr-col">
-              <h3 class="instr-h">load_reason</h3>
-              <div class="instr-bars" id="surface-instr-lr"></div>
-            </div>
-            <div class="instr-col instr-col-wide">
-              <h3 class="instr-h">glob_match top 10</h3>
-              <table class="glob-table" id="surface-instr-glob">
-                <thead>
-                  <tr>
-                    <th>File path</th>
-                    <th class="num">Count</th>
-                  </tr>
-                </thead>
-                <tbody></tbody>
-              </table>
-            </div>
+          <table class="surface-table" id="surface-life">
+            <thead>
+              <tr>
+                <th>Skill</th>
+                <th>初回</th>
+                <th>直近</th>
+                <th class="num">30日件数</th>
+                <th class="num">全期間件数</th>
+                <th>トレンド</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- (3) Hibernating skills: 未活用 / 新着検知 -->
+      <div class="panel" id="surface-hib-panel">
+        <div class="panel-head c-peach">
+          <div class="ttl-wrap">
+            <span class="ttl"><span class="dot"></span>Hibernating skills</span>
+            <span class="help-host">
+              <button class="help-btn" type="button" aria-label="説明を表示" aria-expanded="false" aria-describedby="hp-hib" data-help-id="hp-hib">?</button>
+              <span class="help-pop" id="hp-hib" role="tooltip" data-place="right">
+                <span class="pop-ttl">未活用 / 新着検知</span>
+                <span class="pop-body"><code>~/.claude/skills/*/SKILL.md</code> と usage を cross-reference。14 日以内に呼ばれた skill は <em>active</em> として除外 (Lifecycle panel 側で見える)。残った skill を 🌱 新着 (warming up: mtime ≤14 日 / 未使用) / 💤 休眠 (resting: 15〜30 日未使用) / 🪦 死蔵 (idle: 30 日以上未使用 or 古い install で未使用) に分類。Plugin-bundled skill (<code>~/.claude/plugins/*/skills/</code>) は対象外。</span>
+              </span>
+            </span>
           </div>
+          <span class="sub" id="surface-hib-sub"></span>
+        </div>
+        <div class="panel-body">
+          <p class="scope-note">
+            <span class="scope-note-ic">📌</span>
+            <span class="scope-note-text">
+              <strong>User-level skills のみ表示中。</strong>
+              Plugin 由来の skill (<code>~/.claude/plugins/*/skills/</code>) は対象外です。
+            </span>
+          </p>
+          <p class="scope-note scope-note-active" id="surface-hib-active-note" hidden>
+            <span class="scope-note-ic">💡</span>
+            <span class="scope-note-text" id="surface-hib-active-text"></span>
+          </p>
+          <table class="surface-table" id="surface-hib">
+            <thead>
+              <tr>
+                <th>Skill</th>
+                <th>状態</th>
+                <th>mtime</th>
+                <th>最終呼び出し</th>
+                <th class="num">経過</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
         </div>
       </div>
     </section>
@@ -1769,10 +1810,10 @@
   // ---- A3 compact density (Issue #61) ----
   renderCompactDensity(data.compact_density);
 
-  // ---- A4 slash command source breakdown (Issue #62) ----
-  renderSlashCommandSourceBreakdown(data.slash_command_source_breakdown);
-  // ---- B4 instructions_loaded breakdown (Issue #62) ----
-  renderInstructionsLoadedBreakdown(data.instructions_loaded_breakdown);
+  // ---- Surface 3 panel (Issue #74) ----
+  renderSkillInvocationBreakdown(data.skill_invocation_breakdown);
+  renderSkillLifecycle(data.skill_lifecycle);
+  renderSkillHibernating(data.skill_hibernating);
 
   // dynamic re-render 後の help-pop 再配置 (Issue #41)。kpiRow を含む全 popup を
   // walk して、右端 KPI tooltip の viewport overflow を防ぐ。
@@ -2230,101 +2271,159 @@
     }
   }
 
-  // ---- A4 slash command source breakdown (Issue #62) ----
-  function renderSlashCommandSourceBreakdown(items) {
+  // ---- Surface 3 panel (Issue #74) ----
+  // 共通 helper: ISO 8601 timestamp → "X日前" / "今日" の relative day 表示。
+  function relDay(iso, nowMs) {
+    if (!iso) return '—';
+    const ms = Date.parse(iso);
+    if (!isFinite(ms)) return '—';
+    const days = Math.max(0, Math.floor((nowMs - ms) / 86400000));
+    if (days === 0) return '今日';
+    if (days === 1) return '昨日';
+    return days + '日前';
+  }
+
+  // Panel 1: Skill 起動経路
+  function renderSkillInvocationBreakdown(items) {
     if (document.body.dataset.activePage !== 'surface') return;
-    const tbody = document.querySelector('#surface-source tbody');
-    const sub = document.getElementById('surface-source-sub');
+    const tbody = document.querySelector('#surface-inv tbody');
+    const sub = document.getElementById('surface-inv-sub');
     if (!tbody) return;
+    const MODE_LABEL = {
+      'dual':      '🤝 dual',
+      'llm-only':  '🤖 llm-only',
+      'user-only': '👤 user-only',
+    };
     const list = Array.isArray(items) ? items : [];
     if (list.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="4" class="empty">観測なし</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="5" class="empty">観測なし</td></tr>';
     } else {
       tbody.innerHTML = list.map(it => {
-        const e = it.expansion_count || 0;
-        const s = it.submit_count || 0;
-        const rate = Number(it.expansion_rate || 0);
-        const rateClass = rate < 0.5 ? 'num rate-warn' : 'num';
-        const ratePct = Math.round(rate * 100);
-        const al = it.skill + ': expansion ' + e + ' / submit ' + s + ' (' + ratePct + '%)';
-        return '<tr data-tip="source" data-name="' + esc(it.skill) +
-          '" data-e="' + e + '" data-s="' + s +
-          '" data-rate="' + rate +
+        const mode = it.mode || '';
+        const t = Number(it.tool_count || 0);
+        const s = Number(it.slash_count || 0);
+        const rate = it.autonomy_rate;
+        const hasRate = rate !== null && rate !== undefined;
+        const rateNum = hasRate ? Number(rate) : null;
+        const rateCell = hasRate
+          ? Math.round(rateNum * 100) + '%'
+          : '<span class="dim">—</span>';
+        const rateClass = (hasRate && rateNum < 0.5) ? 'num rate-warn' : 'num';
+        const tCellClass = t === 0 ? 'num dim' : 'num';
+        const sCellClass = s === 0 ? 'num dim' : 'num';
+        const al = it.skill + ' (' + mode + '): LLM ' + t + ' / User ' + s +
+                   (hasRate ? ' / autonomy ' + Math.round(rateNum * 100) + '%' : '');
+        return '<tr data-tip="inv" data-name="' + esc(it.skill) +
+          '" data-mode="' + esc(mode) + '" data-t="' + t + '" data-s="' + s +
+          '" data-rate="' + (hasRate ? rateNum : '') +
           '" tabindex="0" role="row" aria-label="' + esc(al) + '">' +
           '<td class="name">' + esc(it.skill) + '</td>' +
-          '<td class="num">' + fmtN(e) + '</td>' +
-          '<td class="num dim">' + fmtN(s) + '</td>' +
-          '<td class="' + rateClass + '">' + ratePct + '%</td>' +
+          '<td><span class="mode-chip mode-' + esc(mode) + '">' +
+            esc(MODE_LABEL[mode] || mode) + '</span></td>' +
+          '<td class="' + tCellClass + '">' + fmtN(t) + '</td>' +
+          '<td class="' + sCellClass + '">' + fmtN(s) + '</td>' +
+          '<td class="' + rateClass + '">' + rateCell + '</td>' +
           '</tr>';
       }).join('');
     }
     if (sub) sub.textContent = list.length + ' skill(s)';
   }
 
-  // ---- B4 instructions_loaded breakdown (Issue #62) ----
-  function renderInstructionsLoadedBreakdown(payload) {
+  // Panel 2: Skill lifecycle
+  function renderSkillLifecycle(items) {
+    if (document.body.dataset.activePage !== 'surface') return;
+    const tbody = document.querySelector('#surface-life tbody');
+    const sub = document.getElementById('surface-life-sub');
+    if (!tbody) return;
+    const TREND_LABEL = {
+      'accelerating': '📈 加速',
+      'stable':       '➡️ 安定',
+      'decelerating': '📉 減速',
+      'new':          '🌱 新規',
+    };
+    const list = Array.isArray(items) ? items : [];
+    const nowMs = Date.now();
+    if (list.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" class="empty">観測なし</td></tr>';
+    } else {
+      tbody.innerHTML = list.map(it => {
+        const trend = it.trend || 'stable';
+        const c30 = Number(it.count_30d || 0);
+        const ct = Number(it.count_total || 0);
+        const first = relDay(it.first_seen, nowMs);
+        const last = relDay(it.last_seen, nowMs);
+        const al = it.skill + ': first=' + first + ', last=' + last +
+                   ', 30d=' + c30 + ', total=' + ct + ', trend=' + trend;
+        return '<tr data-tip="life" data-name="' + esc(it.skill) +
+          '" data-trend="' + esc(trend) +
+          '" data-30d="' + c30 + '" data-total="' + ct +
+          '" tabindex="0" role="row" aria-label="' + esc(al) + '">' +
+          '<td class="name">' + esc(it.skill) + '</td>' +
+          '<td>' + esc(first) + '</td>' +
+          '<td>' + esc(last) + '</td>' +
+          '<td class="num">' + fmtN(c30) + '</td>' +
+          '<td class="num">' + fmtN(ct) + '</td>' +
+          '<td><span class="trend-chip trend-' + esc(trend) + '">' +
+            esc(TREND_LABEL[trend] || trend) + '</span></td>' +
+          '</tr>';
+      }).join('');
+    }
+    if (sub) sub.textContent = list.length + ' skill(s)';
+  }
+
+  // Panel 3: Hibernating skills
+  function renderSkillHibernating(payload) {
     if (document.body.dataset.activePage !== 'surface') return;
     const data = (payload && typeof payload === 'object') ? payload : {};
-    const mt = (data.memory_type_dist && typeof data.memory_type_dist === 'object') ? data.memory_type_dist : {};
-    const lr = (data.load_reason_dist && typeof data.load_reason_dist === 'object') ? data.load_reason_dist : {};
-    // P4 反映: defensive default は [] (list) — typo の `: {}` を修正。
-    const glob = Array.isArray(data.glob_match_top) ? data.glob_match_top : [];
-    renderInstrBars('surface-instr-mt', mt, 'memory_type');
-    renderInstrBars('surface-instr-lr', lr, 'load_reason');
-    renderGlobTable('surface-instr-glob', glob);
-    const sub = document.getElementById('surface-instr-sub');
-    if (sub) {
-      const total = Object.values(lr).reduce((a, b) => a + Number(b || 0), 0);
-      sub.textContent = total + ' instruction load(s)';
-    }
-  }
-
-  function renderInstrBars(rootId, dict, kind) {
-    const root = document.getElementById(rootId);
-    if (!root) return;
-    // P2 反映: dict は server side で count desc / key asc の insertion order に
-    // 整列済み。Object.entries はその順を保持する (ECMAScript 仕様で string key の
-    // 挿入順保持が規定 + JSON parse 順序保持) ので renderer 側で sort し直さない
-    // (= server の契約を信頼する)。
-    const entries = Object.entries(dict || {})
-      .map(([k, v]) => [k, Number(v || 0)])
-      .filter(([k, v]) => k && v > 0);
-    if (entries.length === 0) {
-      root.innerHTML = '<div class="empty">観測なし</div>';
-      return;
-    }
-    const max = Math.max(...entries.map(([, v]) => v));
-    root.innerHTML = entries.map(([k, v]) => {
-      const pct = max > 0 ? (v / max) * 100 : 0;
-      const al = kind + '=' + k + ': ' + v;
-      return '<div class="instr-row" data-tip="instr-bar" data-kind="' + esc(kind) +
-        '" data-key="' + esc(k) + '" data-c="' + v + '" tabindex="0" role="row" aria-label="' + esc(al) + '">' +
-        '<span class="lbl" title="' + esc(k) + '">' + esc(k) + '</span>' +
-        '<span class="bar-wrap"><span class="bar" style="width:' + pct.toFixed(1) + '%"></span></span>' +
-        '<span class="v">' + fmtN(v) + '</span>' +
-        '</div>';
-    }).join('');
-  }
-
-  function renderGlobTable(rootId, items) {
-    const tbody = document.querySelector('#' + rootId + ' tbody');
+    const items = Array.isArray(data.items) ? data.items : [];
+    const activeExcluded = Number(data.active_excluded_count || 0);
+    const tbody = document.querySelector('#surface-hib tbody');
+    const sub = document.getElementById('surface-hib-sub');
+    const activeNote = document.getElementById('surface-hib-active-note');
+    const activeText = document.getElementById('surface-hib-active-text');
+    const STATUS_LABEL = {
+      'warming_up': '🌱 新着',
+      'resting':    '💤 休眠',
+      'idle':       '🪦 死蔵',
+    };
     if (!tbody) return;
-    const list = Array.isArray(items) ? items : [];
-    if (list.length === 0) {
-      // Question 反映: empty state 文言は "観測なし" に統一。
-      tbody.innerHTML = '<tr><td colspan="2" class="empty">観測なし</td></tr>';
-      return;
+    if (items.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5" class="empty">観測なし</td></tr>';
+    } else {
+      const nowMs = Date.now();
+      tbody.innerHTML = items.map(it => {
+        const status = it.status || 'idle';
+        const mtime = relDay(it.mtime, nowMs);
+        const last = it.last_seen ? relDay(it.last_seen, nowMs) :
+                     '<span class="dim">(未使用)</span>';
+        const days = it.days_since_last_use;
+        const daysCell = (days === null || days === undefined) ?
+                         '<span class="dim">—</span>' : (Number(days) + 'd');
+        const al = it.skill + ' (' + status + '): mtime=' + mtime +
+                   ', last=' + (it.last_seen ? relDay(it.last_seen, nowMs) : '未使用') +
+                   ((days === null || days === undefined) ? '' : ', ' + days + '日経過');
+        return '<tr data-tip="hib" data-name="' + esc(it.skill) +
+          '" data-status="' + esc(status) +
+          '" tabindex="0" role="row" aria-label="' + esc(al) + '">' +
+          '<td class="name">' + esc(it.skill) + '</td>' +
+          '<td><span class="status-chip status-' + esc(status) + '">' +
+            esc(STATUS_LABEL[status] || status) + '</span></td>' +
+          '<td>' + esc(mtime) + '</td>' +
+          '<td>' + last + '</td>' +
+          '<td class="num">' + daysCell + '</td>' +
+          '</tr>';
+      }).join('');
     }
-    tbody.innerHTML = list.map(it => {
-      const fp = it.file_path || '';
-      const c = it.count || 0;
-      const al = fp + ': ' + c;
-      return '<tr data-tip="glob" data-fp="' + esc(fp) + '" data-c="' + c +
-        '" tabindex="0" role="row" aria-label="' + esc(al) + '">' +
-        '<td class="fp" title="' + esc(fp) + '">' + esc(fp) + '</td>' +
-        '<td class="num">' + fmtN(c) + '</td>' +
-        '</tr>';
-    }).join('');
+    if (sub) sub.textContent = items.length + ' skill(s)';
+    if (activeNote && activeText) {
+      if (activeExcluded > 0) {
+        activeText.textContent = '14日以内に使われた ' + activeExcluded +
+                                  ' 件は非表示 (= active)。Lifecycle panel (上位 20 件) で見えます。';
+        activeNote.hidden = false;
+      } else {
+        activeNote.hidden = true;
+      }
+    }
   }
 
   function fmtDur(ms) {
@@ -2665,6 +2764,73 @@
         kind: 'glob',
         html: '<span class="ttl">' + esc(fp) + '</span>' +
               '<span class="lbl">loads</span><span class="val">' + fmtN(c) + '</span>'
+      };
+    }
+    if (kind === 'inv') {
+      // Surface Panel 1: skill 起動経路 (Issue #74)
+      const name = el.getAttribute('data-name') || '';
+      const mode = el.getAttribute('data-mode') || '';
+      const t = el.getAttribute('data-t') || '0';
+      const s = el.getAttribute('data-s') || '0';
+      const rateRaw = el.getAttribute('data-rate') || '';
+      const MODE_TIP = {
+        'llm-only':  '🤖 LLM-only',
+        'user-only': '👤 User-only',
+        'mixed':     '🤝 Mixed',
+      };
+      const rateText = rateRaw === '' ?
+        '<span class="dim">—</span>' :
+        Math.round(parseFloat(rateRaw) * 100) + '%';
+      return {
+        kind: 'inv',
+        html: '<span class="ttl">' + esc(name) + '</span>' +
+              '<span class="lbl">mode</span><span class="val">' +
+                esc(MODE_TIP[mode] || mode) + '</span>' +
+              '<span class="sep">·</span>' +
+              '<span class="lbl">LLM</span><span class="val">' + fmtN(t) + '</span>' +
+              '<span class="sep">·</span>' +
+              '<span class="lbl">User</span><span class="val">' + fmtN(s) + '</span>' +
+              '<span class="sep">·</span>' +
+              '<span class="lbl">autonomy</span><span class="val">' + rateText + '</span>'
+      };
+    }
+    if (kind === 'life') {
+      // Surface Panel 2: skill lifecycle (Issue #74)
+      const name = el.getAttribute('data-name') || '';
+      const trend = el.getAttribute('data-trend') || '';
+      const c30 = el.getAttribute('data-30d') || '0';
+      const ct = el.getAttribute('data-total') || '0';
+      const TREND_TIP = {
+        'accelerating': '📈 加速',
+        'stable':       '➡️ 安定',
+        'decelerating': '📉 減速',
+        'new':          '🌱 新規',
+      };
+      return {
+        kind: 'life',
+        html: '<span class="ttl">' + esc(name) + '</span>' +
+              '<span class="lbl">30d</span><span class="val">' + fmtN(c30) + '</span>' +
+              '<span class="sep">·</span>' +
+              '<span class="lbl">total</span><span class="val">' + fmtN(ct) + '</span>' +
+              '<span class="sep">·</span>' +
+              '<span class="lbl">trend</span><span class="val">' +
+                esc(TREND_TIP[trend] || trend) + '</span>'
+      };
+    }
+    if (kind === 'hib') {
+      // Surface Panel 3: hibernating skills (Issue #74)
+      const name = el.getAttribute('data-name') || '';
+      const status = el.getAttribute('data-status') || '';
+      const STATUS_TIP = {
+        'warming_up': '🌱 新着 (mtime ≤14 日 / 未使用)',
+        'resting':    '💤 休眠 (15〜30 日未使用)',
+        'idle':       '🪦 死蔵 (30 日以上未使用)',
+      };
+      return {
+        kind: 'hib',
+        html: '<span class="ttl">' + esc(name) + '</span>' +
+              '<span class="lbl">status</span><span class="val">' +
+                esc(STATUS_TIP[status] || status) + '</span>'
       };
     }
     return null;
