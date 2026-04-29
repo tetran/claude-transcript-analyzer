@@ -232,6 +232,44 @@ class TestSubagentMetricsAddsPercentileFields:
         assert m["sample_count"] == 1
         assert m["sample_count"] <= m["count"]
 
+    def test_orphan_stops_do_not_contaminate_percentile_samples(self):
+        """Codex Round 1 / P2 反映: 同 (session, type) bucket に start 1 + stops 2 のような
+        orphan stops があるとき、余り stop の duration_ms が durations に積まれて
+        sample_count > count を生む問題への regression。orphan stop は invocation 単位
+        集計の対象外なので percentile sample にも入らない (= sample_count <= count)。"""
+        events = [
+            _start("Explore", "s", "2026-04-22T10:00:00+00:00", duration_ms=1000),
+            _stop("Explore", "s", "2026-04-22T10:00:01+00:00", duration_ms=1000),
+            # orphan stop: invocation がペアリングされない 2 つ目の stop
+            _stop("Explore", "s", "2026-04-22T11:00:00+00:00", duration_ms=5000),
+        ]
+        m = subagent_metrics.aggregate_subagent_metrics(events)["Explore"]
+        assert m["count"] == 1
+        assert m["sample_count"] == 1, \
+            f"orphan stop duration が percentile sample を汚染: sample_count={m['sample_count']}"
+        assert m["sample_count"] <= m["count"]
+        # avg / p50/p90/p99 はすべて invocation 1 件分の 1000.0 から (5000 が混入していない)
+        assert m["avg_duration_ms"] == 1000.0
+        assert m["p50_duration_ms"] == 1000.0
+        assert m["p99_duration_ms"] == 1000.0
+
+    def test_orphan_stops_do_not_affect_failure_count_drift(self):
+        """orphan stop fix 後も failure_count drift guard (Q1) を破らない:
+        _process_bucket と _bucket_invocation_records の failure_count が一致し続ける。"""
+        events = [
+            _start("Explore", "s", "2026-04-22T10:00:00+00:00", success=False),
+            _stop("Explore",  "s", "2026-04-22T10:00:01+00:00", success=False),
+            _stop("Explore",  "s", "2026-04-22T11:00:00+00:00", success=False),  # orphan
+        ]
+        metrics = subagent_metrics.aggregate_subagent_metrics(events)
+        trend = subagent_metrics.aggregate_subagent_failure_trend(events)
+        from collections import Counter
+        trend_failures = Counter()
+        for r in trend:
+            trend_failures[r["subagent_type"]] += r["failure_count"]
+        for name, m in metrics.items():
+            assert trend_failures[name] == m["failure_count"]
+
     def test_existing_fields_unchanged(self):
         """count / failure_count / failure_rate / avg_duration_ms が破壊されていない (regression)"""
         events = [

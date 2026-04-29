@@ -1716,10 +1716,26 @@
         const r = e.byWeek.get(w);
         if (r) pts.push({ i, r });
       });
-      if (pts.length >= 2) {
-        svg += '<polyline class="line" stroke="' + color + '" points="' +
-          pts.map(p => xOf(p.i) + ',' + yOf(p.r.failure_rate)).join(' ') + '"/>';
-      }
+      // Codex Round 1 / P3 反映: gap-bridging を防ぐため、weeks union axis 上で
+      // 連続する index ごとに run を組み、run 単位で polyline を出す。type が
+      // 観測されなかった中間週 (= byWeek に key 無し) を跨ぐ単一 line を描かない。
+      // 単一点 run は pts.length >= 2 guard で polyline スキップされ circle のみ残る。
+      const runs = [];
+      let current = null;
+      pts.forEach(p => {
+        if (current && p.i === current[current.length - 1].i + 1) {
+          current.push(p);
+        } else {
+          current = [p];
+          runs.push(current);
+        }
+      });
+      runs.forEach(run => {
+        if (run.length >= 2) {
+          svg += '<polyline class="line" stroke="' + color + '" points="' +
+            run.map(p => xOf(p.i) + ',' + yOf(p.r.failure_rate)).join(' ') + '"/>';
+        }
+      });
       pts.forEach(p => {
         const al = name + ' ' + p.r.week_start + ': ' + Math.round(p.r.failure_rate * 100) + '% (' + p.r.failure_count + '/' + p.r.count + ')';
         svg += '<circle class="pt" stroke="' + color + '" fill="' + color + '" cx="' + xOf(p.i) +

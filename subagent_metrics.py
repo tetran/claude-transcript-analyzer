@@ -143,10 +143,11 @@ def _process_bucket(
         inv_duration = _invocation_duration(start, stop)
         if inv_duration is not None:
             durations.append(inv_duration)
-    for stop in stops_sorted[stop_idx:]:
-        d = stop.get("duration_ms")
-        if isinstance(d, (int, float)):
-            durations.append(float(d))
+    # 余り stops (`stops_sorted[stop_idx:]`) は durations に積まない。
+    # invocation 単位集計なので stop 単独イベントは duration sample にも failure にも
+    # 寄与しない (= `_bucket_invocation_records` と対称)。これにより
+    # `sample_count <= count` invariant が常に成立し、Issue #60 percentile の母集団が
+    # invocation 単位 count と一致する (Codex Round 1 / P2 反映)。
     return failures, durations
 
 

@@ -110,6 +110,18 @@ class TestQualityPageDOM:
         body = template[body_start:body_end]
         assert 'pts.length >= 2' in body, "polyline guard `pts.length >= 2` missing"
 
+    def test_trend_polyline_splits_at_gaps_no_bridging(self):
+        """Codex Round 1 / P3 反映: type 別に観測なし週 (gap) を跨ぐ単一 polyline は描かず、
+        連続 run ごとに分割して polyline を出す (= consecutive index で run を組む)。
+        renderer body 内で run/segment 概念を実装している痕跡 (i 比較で連続性判定) を pin。"""
+        template = _load_template()
+        body_start = template.index('function renderSubagentFailureTrend')
+        body_end = template.index('function ', body_start + 10)
+        body = template[body_start:body_end]
+        # 連続 run ごとに polyline を吐く実装の signature: 「consecutive」「run」「segment」のいずれか + 連続性比較
+        assert ('p.i - prev' in body) or ('current.i + 1' in body) or ('runs.push' in body), \
+            "gap-aware polyline split (consecutive index check) が未実装"
+
     def test_percentile_renderer_has_page_scoped_early_out(self):
         template = _load_template()
         body_start = template.index('function renderSubagentPercentile')
