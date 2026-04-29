@@ -2418,7 +2418,7 @@
     if (activeNote && activeText) {
       if (activeExcluded > 0) {
         activeText.textContent = '14日以内に使われた ' + activeExcluded +
-                                  ' 件は非表示 (= active)。Lifecycle panel で見えます。';
+                                  ' 件は非表示 (= active)。Lifecycle panel (上位 20 件) で見えます。';
         activeNote.hidden = false;
       } else {
         activeNote.hidden = true;
@@ -2764,6 +2764,73 @@
         kind: 'glob',
         html: '<span class="ttl">' + esc(fp) + '</span>' +
               '<span class="lbl">loads</span><span class="val">' + fmtN(c) + '</span>'
+      };
+    }
+    if (kind === 'inv') {
+      // Surface Panel 1: skill 起動経路 (Issue #74)
+      const name = el.getAttribute('data-name') || '';
+      const mode = el.getAttribute('data-mode') || '';
+      const t = el.getAttribute('data-t') || '0';
+      const s = el.getAttribute('data-s') || '0';
+      const rateRaw = el.getAttribute('data-rate') || '';
+      const MODE_TIP = {
+        'llm-only':  '🤖 LLM-only',
+        'user-only': '👤 User-only',
+        'mixed':     '🤝 Mixed',
+      };
+      const rateText = rateRaw === '' ?
+        '<span class="dim">—</span>' :
+        Math.round(parseFloat(rateRaw) * 100) + '%';
+      return {
+        kind: 'inv',
+        html: '<span class="ttl">' + esc(name) + '</span>' +
+              '<span class="lbl">mode</span><span class="val">' +
+                esc(MODE_TIP[mode] || mode) + '</span>' +
+              '<span class="sep">·</span>' +
+              '<span class="lbl">LLM</span><span class="val">' + fmtN(t) + '</span>' +
+              '<span class="sep">·</span>' +
+              '<span class="lbl">User</span><span class="val">' + fmtN(s) + '</span>' +
+              '<span class="sep">·</span>' +
+              '<span class="lbl">autonomy</span><span class="val">' + rateText + '</span>'
+      };
+    }
+    if (kind === 'life') {
+      // Surface Panel 2: skill lifecycle (Issue #74)
+      const name = el.getAttribute('data-name') || '';
+      const trend = el.getAttribute('data-trend') || '';
+      const c30 = el.getAttribute('data-30d') || '0';
+      const ct = el.getAttribute('data-total') || '0';
+      const TREND_TIP = {
+        'accelerating': '📈 加速',
+        'stable':       '➡️ 安定',
+        'decelerating': '📉 減速',
+        'new':          '🌱 新規',
+      };
+      return {
+        kind: 'life',
+        html: '<span class="ttl">' + esc(name) + '</span>' +
+              '<span class="lbl">30d</span><span class="val">' + fmtN(c30) + '</span>' +
+              '<span class="sep">·</span>' +
+              '<span class="lbl">total</span><span class="val">' + fmtN(ct) + '</span>' +
+              '<span class="sep">·</span>' +
+              '<span class="lbl">trend</span><span class="val">' +
+                esc(TREND_TIP[trend] || trend) + '</span>'
+      };
+    }
+    if (kind === 'hib') {
+      // Surface Panel 3: hibernating skills (Issue #74)
+      const name = el.getAttribute('data-name') || '';
+      const status = el.getAttribute('data-status') || '';
+      const STATUS_TIP = {
+        'warming_up': '🌱 新着 (mtime ≤14 日 / 未使用)',
+        'resting':    '💤 休眠 (15〜30 日未使用)',
+        'idle':       '🪦 死蔵 (30 日以上未使用)',
+      };
+      return {
+        kind: 'hib',
+        html: '<span class="ttl">' + esc(name) + '</span>' +
+              '<span class="lbl">status</span><span class="val">' +
+                esc(STATUS_TIP[status] || status) + '</span>'
       };
     }
     return null;

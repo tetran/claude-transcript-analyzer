@@ -194,3 +194,37 @@ class TestSurfacePagePanels:
         for old_hid in ['hp-source', 'hp-instr']:
             assert f'id="{old_hid}"' not in template, \
                 f"old help-pop should be removed: {old_hid}"
+
+    # ---- regression guards: dtipBuild が新 Surface 行の tooltip を出す ----
+    def test_dtipBuild_handles_inv_life_hib_kinds(self):
+        """Surface 3 panel の data-tip="inv|life|hib" 行が dtipBuild で扱われる。
+
+        renderer 側は data-tip 属性を出すが dtipBuild に対応分岐が無いと
+        hover/focus 時に tooltip が出ず regression になる。
+        """
+        template = _load_template()
+        build_idx = template.index('function dtipBuild')
+        # dtipBuild は `return null;\n  }` で閉じる単一関数。その範囲だけ切り出す。
+        end_marker = 'return null;\n  }'
+        body_end = template.index(end_marker, build_idx) + len(end_marker)
+        body = template[build_idx:body_end]
+        for kind in ('inv', 'life', 'hib'):
+            assert f"kind === '{kind}'" in body, \
+                f"dtipBuild に kind === '{kind}' の分岐が無い (Surface 行 tooltip regression)"
+
+    # ---- Lifecycle 20 件 cap を反映した active note 文言 ----
+    def test_hibernating_active_note_mentions_lifecycle_cap(self):
+        """active_excluded_count の note が Lifecycle 20 件 cap を反映している。
+
+        Lifecycle panel は top_n=20 で truncate されるので、
+        active 除外件数全部が必ず Lifecycle で見えるとは限らない。
+        誤誘導しないため文言で cap を示す。
+        """
+        template = _load_template()
+        # active_excluded_count を表示する分岐 (activeText.textContent = ...) の周辺に
+        # "20" と "Lifecycle" の両方があれば cap が示されている
+        assert 'activeText.textContent' in template
+        idx = template.index('activeText.textContent')
+        snippet = template[idx:idx + 400]
+        assert '20' in snippet, "active note should mention Lifecycle cap (20)"
+        assert 'Lifecycle' in snippet, "active note should reference Lifecycle panel"
