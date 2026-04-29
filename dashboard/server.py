@@ -945,6 +945,7 @@ _CSS_FILES = (
 _MAIN_JS_FILES = (
     "10_helpers.js",              # esc / fmtN / pad / STATUS_LABEL / setConnStatus
     "20_load_and_render.js",      # async loadAndRender (KPI / ranking / sparkline / projects)
+    "25_live_diff.js",            # live mode 差分 highlight + toast (Issue #69)
     "30_renderers_patterns.js",   # heatmap / cooccurrence / project×skill matrix renderers
     "40_renderers_quality.js",    # subagent percentile / failure / permission / compact renderers
     "50_renderers_surface.js",    # Surface invocation / lifecycle / hibernating + fmtDur

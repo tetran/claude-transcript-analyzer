@@ -326,3 +326,63 @@
   }
   footer .accent { color: var(--mint); }
 
+  /* ---------- live diff highlight + toast (Issue #69) ---------- */
+  /* 数字が伸びた KPI / lede / ranking row に bumped class が 1.5s だけ載る。
+     box-shadow inset の単一プロパティアニメで layout-safe (隣 KPI を押しのけない)。 */
+  @keyframes pulse-bg {
+    0%   { box-shadow: inset 0 0 0 9999px rgba(111,227,200, 0.18); }
+    100% { box-shadow: inset 0 0 0 9999px rgba(111,227,200, 0); }
+  }
+  .kpi.bumped,
+  .lede .num.bumped,
+  .rank-row.bumped {
+    animation: pulse-bg 1.5s ease-out;
+  }
+  /* lede 数字は inline element で box-shadow が effective でない場合もあるので
+     念のため background-color の transition でも視認性を補う。 */
+  .lede .num.bumped {
+    border-radius: 3px;
+  }
+
+  .toast {
+    position: fixed;
+    top: 14px;
+    right: 14px;
+    z-index: 1000;
+    padding: 8px 14px;
+    border-radius: var(--r-pill);
+    background: var(--bg-panel);
+    border: 1px solid var(--mint-soft);
+    color: var(--ink);
+    font-family: var(--ff-mono);
+    font-size: 12px;
+    box-shadow: 0 4px 18px rgba(0,0,0,0.18);
+    opacity: 0;
+    transform: translateY(-6px);
+    pointer-events: none;
+    transition: opacity 240ms ease, transform 240ms ease;
+  }
+  .toast.show {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    /* pulse keyframe を切って静止 outline のみで「変化があった」signal を残す。
+       toast の slide-in も opacity fade のみに簡略化。 */
+    .kpi.bumped,
+    .lede .num.bumped,
+    .rank-row.bumped {
+      animation: none !important;
+      outline: 1px solid var(--mint);
+      outline-offset: 1px;
+    }
+    .toast {
+      transition: opacity 200ms ease;
+      transform: none;
+    }
+    .toast.show {
+      transform: none;
+    }
+  }
+

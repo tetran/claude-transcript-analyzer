@@ -138,8 +138,10 @@ class TestLoadRenderIntegration:
 class TestMainJsTupleOrder:
     def test_25_listed_in_main_js_files_tuple(self):
         body = _read(_DASHBOARD_PY)
-        # _MAIN_JS_FILES tuple を切り出して順序を見る
-        match = re.search(r"_MAIN_JS_FILES\s*=\s*\(([^)]*)\)", body, re.DOTALL)
+        # _MAIN_JS_FILES tuple を切り出して順序を見る。
+        # `[^)]*` だと tuple 内コメント (例: "(KPI / ranking / ... / projects)") の閉じ
+        # 括弧で early-stop するため、開き行から閉じ行 `\n)\n` までを multi-line で取る。
+        match = re.search(r"_MAIN_JS_FILES\s*=\s*\(\n(.*?)\n\)\n", body, re.DOTALL)
         assert match is not None, "dashboard/server.py に _MAIN_JS_FILES tuple が無い"
         tuple_body = match.group(1)
         # 各エントリの " ... " の中身だけを順序保ったまま抜き出す
@@ -646,7 +648,11 @@ class TestStaticExportNoLiveBehavior:
             f"liveToast に hidden 属性が無い (tag={tag!r})"
 
     def test_static_export_does_not_apply_bumped_class(self):
-        """static export では diff 不能なので bumped class が出ない。"""
+        """static export では diff 不能なので bumped class が DOM 要素に付かない。
+
+        CSS / コメント内の `bumped` 文字列は許容 (.kpi.bumped セレクタ定義は CSS に
+        含まれてよい)。HTML 要素の class attribute 値として出現していないことを pin。
+        """
         import importlib.util
         spec = importlib.util.spec_from_file_location(
             "_dashboard_for_static_export_test2", _DASHBOARD_PY
@@ -655,8 +661,10 @@ class TestStaticExportNoLiveBehavior:
         spec.loader.exec_module(mod)
         data = mod.build_dashboard_data([])
         html = mod.render_static_html(data)
-        assert "bumped" not in html, \
-            "static export 出力に bumped class が混入している (highlight は live mode 限定)"
+        # `class="...bumped..."` のように HTML attribute 値として bumped が現れたら fail。
+        bad_match = re.search(r'class="[^"]*\bbumped\b[^"]*"', html)
+        assert bad_match is None, \
+            f"static export 出力に bumped class が混入している (highlight は live mode 限定): {bad_match.group(0) if bad_match else ''}"
 
     def test_kpi_id_attributes_persist(self):
         """kpi の id 属性は loadAndRender 後の HTML 文字列にも残っている前提。
