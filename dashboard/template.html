@@ -1275,7 +1275,7 @@
               <button class="help-btn" type="button" aria-label="説明を表示" aria-expanded="false" aria-describedby="hp-perm-skill" data-help-id="hp-perm-skill">?</button>
               <span class="help-pop" id="hp-perm-skill" role="tooltip" data-place="right">
                 <span class="pop-ttl">Permission per skill</span>
-                <span class="pop-body">permission notification の <strong>直前 30 秒以内 (or 実行中)</strong> に発火していた <code>skill_tool</code> に帰属。1 prompt は 1 候補にのみ帰属 (skill / subagent disjoint)。<code>permission_rate</code> = 帰属 prompt 数 / 総 skill_tool 数。<strong>1 invocation で複数回 permission を聞かれる skill</strong> は rate &gt; 1.0 になる (clamp しない)。<code>fewer-permission-prompts</code> skill / settings.json allowlist 整理のヒントとして使う。</span>
+                <span class="pop-body">permission notification の <strong>直前 30 秒以内 (or 実行中)</strong> に発火していた <code>skill_tool</code> に帰属。1 prompt は 1 候補にのみ帰属 (skill / subagent disjoint)。<code>permission_rate</code> = 帰属 prompt 数 / 総 skill_tool 数。<strong>1 invocation で複数回 permission を聞かれる skill</strong> は rate &gt; 1.0 になる (clamp しない)。settings.json の allowlist 整理 (上位の skill が頻出する Bash / MCP コマンドを <code>permissions.allow</code> に追加) のヒントとして使う。</span>
               </span>
             </span>
           </div>
