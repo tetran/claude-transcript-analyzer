@@ -46,7 +46,7 @@
 
   document.getElementById('kpiRow').innerHTML = kpis.map(g => {
     const popId = 'hp-' + g.id;
-    return '<div class="kpi ' + g.cls + (g.warn?' warn':'') + '">' +
+    return '<div class="kpi ' + g.cls + (g.warn?' warn':'') + '" id="' + g.id + '">' +
       '<div class="k-row">' +
         '<span class="k">' + esc(g.k) + '</span>' +
         '<span class="help-host">' +
@@ -262,5 +262,20 @@
   // dynamic re-render 後の help-pop 再配置 (Issue #41)。kpiRow を含む全 popup を
   // walk して、右端 KPI tooltip の viewport overflow を防ぐ。
   placeAllPops();
+
+  // Issue #69: live mode のときだけ差分 highlight + 更新概要 toast を発火。
+  // static export (window.__DATA__) 経路では prevSnapshot の比較相手が無く、
+  // diff が UX 上 noise なので skip する。__livePrev は 25_live_diff.js 側に
+  // closure-private に置かれていて、ここからは read-only 参照 + commit helper
+  // 経由でのみ更新する (catch 経路で commit を呼ばない契約を構造保証)。
+  if (typeof window === 'undefined' || typeof window.__DATA__ === 'undefined') {
+    const __liveNext = buildLiveSnapshot(data);
+    if (__livePrev !== null) {
+      const __liveDiff = diffLiveSnapshot(__livePrev, __liveNext);
+      applyHighlights(__liveDiff);
+      showLiveToast(formatToastSummary(__liveDiff));
+    }
+    commitLiveSnapshot(__liveNext);
+  }
   } // end loadAndRender
 

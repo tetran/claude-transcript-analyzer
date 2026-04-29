@@ -1,5 +1,7 @@
   // ---- 初回描画 + EventSource (live refresh) ----
-  await loadAndRender();
+  // 初回描画も scheduleLoadAndRender 経由で統一。Init 中に hashchange が割り込んでも
+  // serialization wrapper が coalesce してくれる (25_live_diff.js を参照)。
+  await scheduleLoadAndRender();
   if (typeof window.__DATA__ !== 'undefined') {
     // 静的 export 経路では EventSource を起動せず、バッジを「静的レポート」表示に固定
     setConnStatus('static');
@@ -28,9 +30,11 @@
       }
     });
     es.addEventListener('message', (ev) => {
-      // payload は "refresh" のみだが拡張余地として弁別
+      // payload は "refresh" のみだが拡張余地として弁別。
+      // scheduleLoadAndRender 経由で並行 refresh を直列化する
+      // (stale-snapshot race 対策 / 25_live_diff.js を参照)。
       if (typeof ev.data === 'string' && ev.data.indexOf('refresh') !== -1) {
-        loadAndRender().catch(err => console.error('refresh 失敗', err));
+        scheduleLoadAndRender().catch(err => console.error('refresh 失敗', err));
       }
     });
   }

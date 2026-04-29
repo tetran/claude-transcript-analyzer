@@ -29,7 +29,16 @@ _DASHBOARD_PATH = Path(__file__).parent.parent / "dashboard" / "server.py"
 #   - 39ad755c...: v0.7.0 / Issue #67 split 直後
 #   - 7538e22b...: Issue #65 / local TZ 化で 10_helpers.js + 20_load_and_render.js 改修
 #   - f27e07c7...: Issue #65 fix-up / formatLocalTimestamp に falsy ガード追加
-EXPECTED_TEMPLATE_SHA256 = "f27e07c762a321a8c9d89f4c183b13a57e7e5ccd2e9d313ab743d386a9286ec9"
+#   - e7440528...: Issue #69 / live diff highlight + toast (25_live_diff.js 追加, shell.html / 10_components.css / 20_load_and_render.js / _MAIN_JS_FILES 改修)
+#   - 4feb318f...: Issue #69 fix-up / KPI tile に id="' + g.id + '" を追加 (applyHighlights getElementById 命中)
+#   - f53d0dab...: Issue #69 UX 調整 / toast を横方向中央寄せ + coral 系 color に変更
+#   - a4885a23...: Issue #69 UX 調整 / toast 表示時間を 4s → 6s に延長
+#   - f7bcb6b0...: Issue #69 UX 調整 / toast fade-out transition を 240ms 完走させる二段 timer 設計
+#   - 42d23915...: Issue #69 UX 調整 / 表示中上書き時の slide-in 再生 + 表示時間を 6s → 4s に戻す
+#   - 2964f3e9...: Issue #69 UX 調整 / requestAnimationFrame で frame 分割 (style 変更 collapse 回避)
+#   - e787b78b...: Issue #69 UX 調整 / CSS animation (@keyframes toast-in/out) に切替 (CSS transition 方式は実機で再生されない問題への対処)
+#   - 4f4b511f...: Issue #69 fix-up / scheduleLoadAndRender で SSE refresh と hashchange の loadAndRender 並行発火を直列化 (stale-snapshot race 対策)
+EXPECTED_TEMPLATE_SHA256 = "4f4b511f26e6ab599e69cad5d70d2319dfe8244c9271d6d5354c2753f44b430f"
 
 
 def _load_dashboard_module(tmp_path: Path):

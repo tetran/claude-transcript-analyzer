@@ -475,6 +475,10 @@ __INCLUDE_STYLES__
 
   <div class="data-tip" id="dataTooltip" role="tooltip" aria-hidden="true"></div>
 
+  <!-- Live update toast (Issue #69) — live mode の差分概要を 1 行で短時間表示。
+       static export 経路では JS が show しないので hidden のまま。 -->
+  <div class="toast" id="liveToast" role="status" aria-live="polite" aria-atomic="true" hidden></div>
+
 <script>
 __INCLUDE_ROUTER_JS__
 </script>
