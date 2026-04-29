@@ -582,8 +582,8 @@ def aggregate_slash_command_source_breakdown(
     """user_slash_command event を skill ごとに source 分類して expansion_rate を返す。
 
     source が "expansion" / "submit" のものだけを count に積む。それ以外
-    (旧 schema の source 欠落 / 未知 source 値) は **silent skip** (= 集計対象外
-    にするだけでエラーにはしない)。modern data 0 件の skill は出力対象外。
+    (source 不在 / 未知 source 値) は **silent skip** (= 集計対象外にするだけで
+    エラーにはしない)。modern data 0 件の skill は出力対象外。
 
     rate は 4 桁小数で丸める (`round(rate, 4)`)。
 
@@ -602,7 +602,7 @@ def aggregate_slash_command_source_breakdown(
             expansion_count[skill] += 1
         elif src == _SOURCE_SUBMIT:
             submit_count[skill] += 1
-        # 旧 schema (source 不在) / 未知 source 値は silent skip
+        # source 不在 / 未知 source 値は silent skip
     skills = set(expansion_count) | set(submit_count)
     rows = []
     for skill in skills:
