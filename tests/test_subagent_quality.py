@@ -7,7 +7,7 @@ A5: subagent_type ごとの invocation duration を p50 / p90 / p99 + sample_cou
 B3: subagent invocation の week (monday-UTC start) × subagent_type で failure_rate trend を返す。
     server は top-N で切らず観測された全 (week, subagent_type) を返す (UI 側 top-5 は描画 affordance)。
 
-詳細は `docs/plans/issue-60-subagent-quality.md` を参照。
+詳細は `docs/plans/archive/issue-60-subagent-quality.md` を参照。
 """
 # pylint: disable=line-too-long
 import importlib.util

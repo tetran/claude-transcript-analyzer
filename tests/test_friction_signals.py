@@ -11,7 +11,7 @@ A3: compact_start を session 単位で集計し、回数の histogram (0/1/2/3+
 fallback の 2 段階。subagent invocation の interval 解釈は
 `subagent_metrics.subagent_invocation_interval` helper に委譲する。
 
-詳細は `docs/plans/issue-61-friction-signals.md` を参照。
+詳細は `docs/plans/archive/issue-61-friction-signals.md` を参照。
 """
 # pylint: disable=line-too-long
 import importlib.util

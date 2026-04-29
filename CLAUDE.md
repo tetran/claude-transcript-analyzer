@@ -54,139 +54,33 @@ data/usage.jsonl          ← append-only イベントログ (hot tier / 直近 
 テスト用途では `USAGE_JSONL` / `HEALTH_ALERTS_JSONL` / `ARCHIVE_DIR` /
 `ARCHIVE_STATE_FILE` / `USAGE_JSONL_LOCK` 環境変数で差し替えできる。
 
-## ライブダッシュボードの運用仕様 (v0.3, Issue #14)
+## 主要 spec / reference へのポインタ
 
-ダッシュボードは Claude Code セッションと一体化したライブビュー。手動コマンドは不要。
+詳細はトピック別に分割。CLAUDE.md からは概要 + 該当 doc へのポインタのみを置く。
 
-### 起動条件
+仕分け基準: 「違反すると **バグ**」= spec (`docs/spec/`) / 「知らないと
+**踏み抜く**」= reference (`docs/reference/`)。各ディレクトリの README に
+詳細な振り分けポリシー。
 
-`hooks/launch_dashboard.py` が以下の Hook で発火し、`server.json` を見て **べき等に**
-起動判定する（既起動なら何もしない、未起動なら fork-and-detach で起動）：
+### `docs/spec/` — 現行仕様 (contract)
 
-| Hook | 役割 |
-|------|------|
-| `SessionStart` | Claude Code 起動の瞬間にダッシュボードも立ち上げる |
-| `UserPromptExpansion` | slash command 経路の主観測点で発火 → 即時復活 |
-| `UserPromptSubmit` | idle 後にユーザーが操作再開 → 自動復活（expansion fallback としても兼用） |
-| `PostToolUse` | 道中の死活サイダーガード（任意のツール使用後にも復活窓を持つ） |
+| トピック | ファイル |
+|---|---|
+| 生 transcript フォーマット + Hook 入力 JSON schema + Archive schema 進化規約 | `docs/transcript-format.md` |
+| `usage.jsonl` のイベント形式（収集後の event log schema） | `docs/spec/usage-jsonl-events.md` |
+| `/api/data` レスポンス schema（dashboard backend → frontend） | `docs/spec/dashboard-api.md` |
+| ライブダッシュボード運用仕様（起動条件 / URL 通知 / idle 停止 / 複数ページ router） | `docs/spec/dashboard-runtime.md` |
+| Retention + 月次アーカイブ運用仕様（環境変数 / 手動コマンド / 並列耐性） | `docs/spec/archive-runtime.md` |
+| GitHub Issue authoring 規約（Heavy / Light variant） | `docs/spec/issue-authoring.md` |
 
-launcher は **常に < 100ms で exit 0**（Claude Code をブロックしない）。
+### `docs/reference/` — 設計判断・gotcha・パターン
 
-### URL 確認方法
-
-サーバー起動時に `~/.claude/transcript-analyzer/server.json` に `{pid, port, url, started_at}`
-が atomic に書かれる。手動起動時は stderr にも `Dashboard available: http://localhost:<port>`
-を 1 行出力する。
-
-```bash
-# URL を取得 (fallback / 確認用)
-cat ~/.claude/transcript-analyzer/server.json
-```
-
-### URL の通知タイミング (Issue #34, v0.5.2〜)
-
-`launch_dashboard.py` が hook output の `systemMessage` 経由でユーザー UI に
-`📊 Dashboard: <url>` を 1 行通知する。条件:
-
-| 状態 \ hook | SessionStart | UserPromptExpansion | UserPromptSubmit | PostToolUse |
-|------------|:------------:|:------------------:|:---------------:|:-----------:|
-| **新規 spawn** | ✅ 通知 | ✅ 通知 | ✅ 通知 | ✅ 通知 |
-| **既起動 (alive)** | ✅ 通知 (再表示) | ❌ silent | ❌ silent | ❌ silent |
-
-設計判断:
-- 毎ターン発火する hook (UserPromptExpansion / Submit / PostToolUse) で既起動時に
-  通知すると会話画面が systemMessage で埋まるため silent
-- spawn 時は「初回起動 / idle 復活」のいずれもユーザーが URL を必要とする瞬間なので
-  4 hook いずれでも通知
-- 既起動 + SessionStart は `claude --resume` 等のセッション開始時の親切再表示
-
-例外時 / hook_event_name 不在 / spawn 直後 server.json 出現遅延時は **silent**
-(silent exit 0 契約は維持。次回 hook での復活経路がある)。
-
-### 停止条件
-
-- **idle 自動停止**: 最後の HTTP リクエストから `DASHBOARD_IDLE_SECONDS`（デフォルト 600 秒 = 10 分）経過で graceful shutdown
-  - SSE 接続中は idle カウンタが進まないため、ブラウザ開きっぱなしでは停止しない
-- **手動停止**: `kill <pid>`（pid は server.json から取得）。SIGTERM / SIGINT で graceful shutdown
-- 停止時に server.json は **compare-and-delete** で自動削除（多重インスタンス保護）
-
-idle 停止後にユーザーが Claude Code 操作を再開すると、UserPromptExpansion /
-UserPromptSubmit / PostToolUse hook が launch_dashboard を起動し直して **自動復活**
-する（同 or 別ポート）。
-
-### 環境変数
-
-| 変数 | デフォルト | 意味 |
-|------|-----------|------|
-| `DASHBOARD_PORT` | `0`（OS 任せ） | 具体ポート指定時はそのポートで bind |
-| `DASHBOARD_IDLE_SECONDS` | `600` | idle 停止の閾値秒。`0` で停止無効化 |
-| `DASHBOARD_POLL_INTERVAL` | `1.0` | usage.jsonl 変更検知の polling 周期 (秒)。`0` で監視無効 |
-| `DASHBOARD_SERVER_JSON` | `~/.claude/transcript-analyzer/server.json` | server.json のパス |
-
-### 手動起動・停止
-
-通常は hook 経由の自動起動で十分だが、手動でも起動可能：
-
-```bash
-# 手動起動 (launcher 経由でべき等 — 既起動なら何もしない)
-python3 ${CLAUDE_PLUGIN_ROOT}/hooks/launch_dashboard.py
-# /usage-dashboard スラッシュコマンドも同じ経路
-
-# fg debug 用に直叩きする場合は事前に既起動確認 (二重起動防止)
-cat ~/.claude/transcript-analyzer/server.json  # 既起動なら kill してから
-python3 dashboard/server.py
-
-# 手動停止
-kill $(jq -r .pid ~/.claude/transcript-analyzer/server.json)
-```
-
-## ダッシュボード複数ページ構成
-
-ダッシュボードは **ハッシュベース router で 4 ページ** に分割。
-
-### ページ構成
-
-| Path | data-page | 名前 | 主な目的 |
-|------|-----------|------|----------|
-| `#/` | `overview` | Overview | KPI / skill ranking / subagent ranking / project breakdown / daily trend / health alerts |
-| `#/patterns` | `patterns` | Patterns | 利用パターン (時間帯 / 共起 / project×skill) |
-| `#/quality` | `quality` | Quality | 実行品質と摩擦シグナル (permission / compact / percentile) |
-| `#/surface` | `surface` | Surface | スキル surface (発見性 / 想起性) |
-
-### 共通 chrome と Overview 専用 chrome の分離
-
-- **共通頂部 nav** (`<nav class="page-nav">`): 4 タブ。`.app` 直下、全ページに表示
-- **共通 footer** (`<footer class="app-footer">`): conn-status / lastRx / sessVal /
-  クレジット行。全ページに表示（接続バッジは Overview 以外のページからも見える）
-- **Overview 専用 header** (`<header class="header">`): h1「Claude Code Usage
-  Overview」+ lede。`<section data-page="overview">` の中に閉じる
-
-### Router の動作仕様
-
-- **DOM 構造**: 4 つの `<section data-page="...">` を DOM に常駐させ、`hidden`
-  属性切替でページ表示を切り替える（DOM tree から削除しない）
-- **router IIFE**: `<script>` ブロック内に独立した IIFE で実装。`HASH_TO_PAGE`
-  テーブル + `applyRoute(rawHash)` + `hashchange` listener。SSE refresh 経路と
-  独立して動作（Overview 以外のページ表示中も `loadAndRender()` は走り続け、
-  戻ってきたときに最新データが見える）
-- **不正 hash fallback**: 未知 hash (`#/foo`, percent-encoded, `#` 単体) は
-  `'overview'` に倒れる
-- **`body[data-active-page="<page>"]`**: 各 widget renderer が
-  `if (document.body.dataset.activePage !== '<page>') return;` で page-scoped
-  early-out できるよう active page 名を expose
-
-`loadAndRender()` は Overview 専用 renderer (absolute `getElementById` lookup)
-として残す。Overview 以外のページが widget を持つ場合は page-scoped early-out
-で no-op 化する設計。
-
-page-scoped early-out (`if (document.body.dataset.activePage !== '<page>') return;`)
-を持つ widget は、page 切替直後に render される必要があるため main IIFE に
-`window.addEventListener('hashchange', () => loadAndRender().catch(...))` の
-hashchange listener を 1 本持つ。router IIFE は先に登録されているため
-`body.dataset.activePage` が更新されてから main IIFE の listener が走り、新 page
-の renderer が正しく動く。
-
-`/api/data` レスポンスの schema 詳細は `docs/spec/dashboard-api.md` を参照。
+| トピック | ファイル |
+|---|---|
+| ストレージ設計（JSONL primary / archive 不変性 / dedup 規律） | `docs/reference/storage.md` |
+| Cross-platform / Python launcher trilemma / Windows porting checklist | `docs/reference/cross-platform.md` |
+| Dashboard サーバー実装の非自明ポイント（SSE / JSON-in-`<script>` / component 分解） | `docs/reference/dashboard-server.md` |
+| Subagent 二重観測の同定アルゴリズム + DRY 圧の教訓 | `docs/reference/subagent-invocation-pairing.md` |
 
 ## ファイル構成
 
@@ -199,6 +93,7 @@ claude-transcript-analyzer/
 │   ├── hooks.json            # プラグイン用フック定義（${CLAUDE_PLUGIN_ROOT} 参照）
 │   ├── _append.py            # lock 付き append + drop alert 記録 (Issue #30)
 │   ├── _launcher_common.py   # OS 別 fork-and-detach の共通実装 (Issue #30)
+│   ├── _lock.py              # POSIX/Windows lock 抽象 (Issue #44)
 │   ├── record_skill.py       # PostToolUse(Skill) / PostToolUseFailure(Skill)
 │   │                         # UserPromptSubmit / UserPromptExpansion 処理
 │   ├── record_subagent.py    # PostToolUse(Task|Agent) / PostToolUseFailure(Task|Agent)
@@ -210,6 +105,7 @@ claude-transcript-analyzer/
 │   │                         # PostToolUse: ダッシュボードを fork-and-detach でべき等起動
 │   └── launch_archive.py     # SessionStart: archive job をべき等に fork-and-detach 起動 (Issue #30)
 ├── commands/                 # スラッシュコマンド定義
+│   ├── restart-dashboard.md
 │   ├── usage-archive.md
 │   ├── usage-dashboard.md
 │   ├── usage-export-html.md
@@ -223,153 +119,28 @@ claude-transcript-analyzer/
 ├── subagent_metrics.py       # subagent 集計の共通ロジック (invocation 単位ペアリング)
 ├── scripts/
 │   ├── archive_usage.py      # 180 日超を月次 .jsonl.gz にする archive job (Issue #30)
+│   ├── build_surface_fixture.py  # Surface タブ視覚 fixture 生成
+│   ├── restart_dashboard.py
 │   └── rescan_transcripts.py # 過去トランスクリプトの遡及スキャン
 ├── data/
 │   └── usage.jsonl           # append-only イベントログ（テスト時のみ。
 │                             # プラグイン稼働時は ~/.claude/transcript-analyzer/）
 ├── tests/
-├── docs/
-│   ├── transcript-format.md  # トランスクリプト形式 + Hook 入力 JSON スキーマ
-│   │                         # + Archive 互換性のための schema 進化規約 (Issue #30)
-│   ├── specs/                # 仕様
-│   ├── plans/                # 実装計画
-│   └── review/               # レビューメモ
+└── docs/
+    ├── transcript-format.md  # 生 transcript フォーマット + Hook 入力 schema + Archive 進化規約
+    ├── spec/                 # 現行仕様 (contract) — README.md に振り分け基準
+    │   │   # dashboard-api / dashboard-runtime / usage-jsonl-events /
+    │   │   # archive-runtime / issue-authoring
+    │   └── legacy/           # v0.1 時代の直接 parse 手順 (履歴アーカイブ)
+    ├── reference/            # 設計判断・gotcha・パターン — README.md に振り分け基準
+    │       # storage / cross-platform / dashboard-server / subagent-invocation-pairing
+    ├── plans/
+    │   └── archive/          # 完了済 plan (履歴アーカイブ)
+    └── review/resolved/      # 解決済レビューメモ
 ```
 
 > プラグイン稼働時の archive 出力先は `~/.claude/transcript-analyzer/archive/YYYY-MM.jsonl.gz`、
 > state marker は `~/.claude/transcript-analyzer/.archive_state.json`。
-
-## data/usage.jsonl のイベント形式
-
-複数種のイベントが1ファイルに混在する（JSONL 形式）。下記は代表例。
-PostToolUse 系には `duration_ms` / `permission_mode` / `tool_use_id` / `success`、
-PostToolUseFailure 系には `success: false` と `error` / `is_interrupt` が付加される。
-
-```jsonc
-// Skill ツール呼び出し（PostToolUse(Skill)）
-{"event_type": "skill_tool", "skill": "user-story-creation", "args": "6",
- "project": "chirper", "session_id": "...", "timestamp": "2026-02-28T10:00:00+00:00",
- "duration_ms": 1234, "permission_mode": "acceptEdits", "tool_use_id": "toolu_...", "success": true}
-
-// Skill ツール失敗（PostToolUseFailure(Skill)）
-{"event_type": "skill_tool", "skill": "user-story-creation", "args": "6",
- "project": "chirper", "session_id": "...", "timestamp": "2026-02-28T10:00:01+00:00",
- "success": false, "error": "...", "is_interrupt": false}
-
-// ユーザーの slash コマンド（UserPromptExpansion / UserPromptSubmit）
-// source は "expansion" (主経路) / "submit" (フォールバック) のいずれか。
-// dedup 判定は source!="submit" のレコードに対してのみ働き、submit 連打は両方記録される。
-{"event_type": "user_slash_command", "skill": "/insights", "args": "", "source": "expansion",
- "project": "chirper", "session_id": "...", "timestamp": "2026-02-28T10:05:00+00:00"}
-
-// Subagent 起動（PostToolUse(Task|Agent) のみが count に入る正規観測点）
-{"event_type": "subagent_start", "subagent_type": "Explore",
- "project": "chirper", "session_id": "...", "timestamp": "2026-02-28T10:06:00+00:00",
- "duration_ms": 90000, "permission_mode": "default", "tool_use_id": "toolu_..."}
-
-// Subagent ライフサイクル開始（SubagentStart 経由・補助観測。count に入らない）
-{"event_type": "subagent_lifecycle_start", "subagent_type": "Explore",
- "project": "chirper", "session_id": "...", "timestamp": "2026-02-28T10:06:00+00:00"}
-
-// Subagent 終了（SubagentStop）
-{"event_type": "subagent_stop", "subagent_type": "Explore", "subagent_id": "agent_...",
- "project": "chirper", "session_id": "...", "timestamp": "2026-02-28T10:07:30+00:00",
- "duration_ms": 90000, "success": true}
-
-// セッション開始 / 終了
-{"event_type": "session_start", "source": "startup", "model": "claude-opus-4-7",
- "project": "chirper", "session_id": "...", "timestamp": "2026-02-28T10:00:00+00:00"}
-{"event_type": "session_end", "reason": "logout",
- "project": "chirper", "session_id": "...", "timestamp": "2026-02-28T11:00:00+00:00"}
-
-// コンテキスト圧縮
-{"event_type": "compact_start", "trigger": "auto",
- "project": "chirper", "session_id": "...", "timestamp": "2026-02-28T10:30:00+00:00"}
-{"event_type": "compact_end", "trigger": "auto",
- "project": "chirper", "session_id": "...", "timestamp": "2026-02-28T10:30:05+00:00"}
-
-// Notification（idle, 確認待ち等）
-// notification_type は `permission` / `permission_prompt` / `idle` / `idle_prompt` 等が観測される。
-// 集計側 (dashboard / summary) は `permission` と `permission_prompt` を同一視してカウント。
-{"event_type": "notification", "notification_type": "idle",
- "project": "chirper", "session_id": "...", "timestamp": "2026-02-28T10:45:00+00:00"}
-
-// InstructionsLoaded（CLAUDE.md / memory / skill 等のロード）
-{"event_type": "instructions_loaded", "file_path": "/path/to/CLAUDE.md",
- "memory_type": "project", "load_reason": "session_start",
- "project": "chirper", "session_id": "...", "timestamp": "2026-02-28T10:00:01+00:00"}
-```
-
-> **設計メモ — Subagent 観測点と invocation 単位集計**
-> Subagent 起動は `PostToolUse(Task|Agent)` を **正規観測点** とし `event_type: subagent_start` で記録する。
-> `SubagentStart` hook 由来は補助観測として `event_type: subagent_lifecycle_start` で記録。
-> バケット `(session, type)` ごとに **timestamp 順マージ** で invocation を構築する：1 秒以内に発火した start と lifecycle は同一 invocation の重複扱い、それ以上離れていれば別 invocation。
-> これにより両方発火・lifecycle のみ・start のみ・disjoint な flaky パターンすべてを取りこぼさず・二重計上もせず数える。
->
-> 失敗・所要時間集計は `subagent_metrics.aggregate_subagent_metrics()` に統一。`(session_id, subagent_type)` でグルーピングし時系列順に start↔stop を **invocation 単位でペアリング** したうえで：
-> - 各 invocation について `start.success=False OR stop.success=False` のとき 1 failure として計上（同 invocation の重複発火は構造的に 1 件に）
-> - 起動失敗（start fail）で stop が来ないケースは「starts と stops の件数不一致」を見て stop プールを消費しないペアリングに切り替える
-> - duration は **invocation ごと** に `stop.duration_ms` (end-to-end) を優先、無ければ `start.duration_ms` (起動オーバーヘッド) を fallback とする（type 単位 fallback はバイアスになるため不採用）
->
-> tool_use_id ↔ agent_id の直接紐付け手段が無いため時系列近似だが、同 type の並行実行は実機では稀で v0.2 の精度要件を満たす。
-
-## Retention + 月次アーカイブの運用仕様 (Issue #30, v0.6.0〜)
-
-`usage.jsonl` (hot tier) は **直近 180 日** だけを保持し、それを超えた event は
-`archive/YYYY-MM.jsonl.gz` (cold tier) に gzip 圧縮で月単位移動する。
-これにより hot tier はサイズ上限のある定常状態に保たれ、reader (dashboard /
-summary / export_html) の parse コストが線形に伸びない。
-
-### 自動起動
-
-`hooks/launch_archive.py` が `SessionStart` で発火し、`.archive_state.json` を
-読んで「`last_archived_month` が前月以前」なら `scripts/archive_usage.py` を
-fork-and-detach で起動する。launcher 自体は **常に < 100ms で exit 0**。
-
-### 環境変数
-
-| 変数 | デフォルト | 意味 |
-|------|-----------|------|
-| `USAGE_RETENTION_DAYS` | `180` | retention window (日)。1 など小さい値で動作確認可能 |
-| `ARCHIVE_DIR` | `~/.claude/transcript-analyzer/archive` | archive 出力ディレクトリ |
-| `ARCHIVE_STATE_FILE` | `~/.claude/transcript-analyzer/.archive_state.json` | state marker のパス |
-| `USAGE_JSONL_LOCK` | `<USAGE_JSONL>.lock` | append/archive 排他用 lock file |
-
-### 手動コマンド
-
-```bash
-# /usage-archive スラッシュコマンドと同じ経路 (べき等)
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/archive_usage.py
-
-# 動作確認用 (retention を 1 日に下げて即時 archive)
-USAGE_RETENTION_DAYS=1 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/archive_usage.py
-
-# 全期間集計が必要な分析
-python3 ${CLAUDE_PLUGIN_ROOT}/reports/summary.py --include-archive
-python3 ${CLAUDE_PLUGIN_ROOT}/reports/export_html.py --include-archive
-```
-
-### 並列耐性 / observability
-
-- archive job: `EX` を取得して直列化、state marker 再 read で race-free 二重起動回避
-- hook (`record_*.py`): **blocking SH** で archive の `EX` release を待ってから append
-  (codex 5th review P1 で旧 `SH | NB × 5 retry × 100ms = 500ms upper-bound` の data
-  loss 経路を撤廃)。取得失敗時は `health_alerts.jsonl` に
-  `{"alert": "append_skipped_due_to_archive_lock", ...}` を 1 行記録して silent drop
-  (実運用ではほぼ起きない / signal 起因等の異常系)
-- lock 層 (`hooks/_lock.py` / Issue #44): POSIX (`fcntl.flock`) と Windows
-  (`msvcrt.locking`) の差を吸収。Windows は SH 概念無しのため SH も EX 相当で動作
-  (concurrency 落ちるが correctness は保たれる)
-
-### `rescan_transcripts.py` との運用注意
-
-`rescan_transcripts.py --append` で 180 日超の event を再 append すると、
-次回 archive job 実行時にまた archive へ移される (idempotent / immutability で
-重複登録は起きない)。**rescan 後は手動で `/usage-archive` を実行する** と hot
-tier がすぐ整理される (自動連動は意図的にしていない)。
-
-詳細な schema 進化規約と secondary_key dispatch table は
-`docs/transcript-format.md` の "Archive 互換性のための schema 進化規約" を参照。
 
 ## 開発規約
 

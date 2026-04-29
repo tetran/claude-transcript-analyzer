@@ -5,7 +5,7 @@ server 側は usage 系 events を hour-truncated UTC bucket に集計し、
 変換 + (weekday, hour) bin される設計 (option 3 hour-bucketed UTC)。
 
 集計対象は usage 系 events のみで、subagent は invocation 単位 dedup 済み。
-詳細は `docs/plans/issue-58-hourly-heatmap.md` を参照。
+詳細は `docs/plans/archive/issue-58-hourly-heatmap.md` を参照。
 """
 # pylint: disable=line-too-long
 import importlib.util

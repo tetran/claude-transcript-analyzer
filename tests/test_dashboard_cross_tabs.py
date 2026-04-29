@@ -10,7 +10,7 @@ B2: `aggregate_project_skill_matrix(events, top_projects=10, top_skills=10)` —
 両 aggregator とも `aggregate_skills` と同じ filter 慣習で raw events を受け取り、
 内部で `skill_tool` / `user_slash_command` のみに絞る (subagent は対象外)。
 
-詳細は `docs/plans/issue-59-cross-tab-viz.md` を参照。
+詳細は `docs/plans/archive/issue-59-cross-tab-viz.md` を参照。
 """
 # pylint: disable=line-too-long
 import importlib.util
