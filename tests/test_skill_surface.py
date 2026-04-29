@@ -354,6 +354,7 @@ class TestInstructionsLoadedBreakdown:
     def test_file_path_home_compression(self, tmp_path, monkeypatch):
         # /Users/<HOME>/.claude/skills/foo/SKILL.md → ~/.claude/skills/foo/SKILL.md
         mod = load_dashboard_module(tmp_path / "n.jsonl")
+        monkeypatch.setattr(os, "sep", "/")
         monkeypatch.setattr(os.path, "expanduser", lambda p: "/Users/foo" if p == "~" else p)
         events = [_instr(load_reason="glob_match",
                          file_path="/Users/foo/.claude/skills/x/SKILL.md")]
@@ -364,6 +365,7 @@ class TestInstructionsLoadedBreakdown:
 
     def test_file_path_outside_home_unchanged(self, tmp_path, monkeypatch):
         mod = load_dashboard_module(tmp_path / "n.jsonl")
+        monkeypatch.setattr(os, "sep", "/")
         monkeypatch.setattr(os.path, "expanduser", lambda p: "/Users/foo" if p == "~" else p)
         events = [_instr(load_reason="glob_match", file_path="/etc/foo/bar/CLAUDE.md")]
         out = mod.aggregate_instructions_loaded_breakdown(events)
@@ -374,6 +376,7 @@ class TestInstructionsLoadedBreakdown:
     def test_aggregator_does_not_mutate_input_events(self, tmp_path, monkeypatch):
         # P3 反映: aggregator が events[*]["file_path"] を in-place rewrite しないこと
         mod = load_dashboard_module(tmp_path / "n.jsonl")
+        monkeypatch.setattr(os, "sep", "/")
         monkeypatch.setattr(os.path, "expanduser", lambda p: "/Users/foo" if p == "~" else p)
         original_path = "/Users/foo/.claude/skills/x/SKILL.md"
         events = [_instr(load_reason="glob_match", file_path=original_path)]
@@ -411,28 +414,33 @@ class TestCompressHomePath:
     """`_compress_home_path()` の単体テスト。aggregator の path 圧縮 helper。"""
     def test_home_prefix_compressed(self, tmp_path, monkeypatch):
         mod = load_dashboard_module(tmp_path / "n.jsonl")
+        monkeypatch.setattr(os, "sep", "/")
         monkeypatch.setattr(os.path, "expanduser", lambda p: "/Users/foo" if p == "~" else p)
         assert mod._compress_home_path("/Users/foo/.claude/x") == "~/.claude/x"
 
     def test_home_exact_match_compressed(self, tmp_path, monkeypatch):
         # path=/Users/foo (HOME と完全一致) → 圧縮しない (sep が無いので prefix 一致しない仕様)
         mod = load_dashboard_module(tmp_path / "n.jsonl")
+        monkeypatch.setattr(os, "sep", "/")
         monkeypatch.setattr(os.path, "expanduser", lambda p: "/Users/foo" if p == "~" else p)
         assert mod._compress_home_path("/Users/foo") == "/Users/foo"
 
     def test_path_outside_home_unchanged(self, tmp_path, monkeypatch):
         mod = load_dashboard_module(tmp_path / "n.jsonl")
+        monkeypatch.setattr(os, "sep", "/")
         monkeypatch.setattr(os.path, "expanduser", lambda p: "/Users/foo" if p == "~" else p)
         assert mod._compress_home_path("/etc/foo") == "/etc/foo"
 
     def test_empty_path_unchanged(self, tmp_path, monkeypatch):
         mod = load_dashboard_module(tmp_path / "n.jsonl")
+        monkeypatch.setattr(os, "sep", "/")
         monkeypatch.setattr(os.path, "expanduser", lambda p: "/Users/foo" if p == "~" else p)
         assert mod._compress_home_path("") == ""
 
     def test_home_substring_not_falsely_compressed(self, tmp_path, monkeypatch):
         # HOME=/Users/foo, path=/Users/foo-extended/x → 無加工 ( `home + os.sep` 比較)
         mod = load_dashboard_module(tmp_path / "n.jsonl")
+        monkeypatch.setattr(os, "sep", "/")
         monkeypatch.setattr(os.path, "expanduser", lambda p: "/Users/foo" if p == "~" else p)
         assert mod._compress_home_path("/Users/foo-extended/x") == "/Users/foo-extended/x"
 
