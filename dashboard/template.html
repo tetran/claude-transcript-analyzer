@@ -577,6 +577,12 @@
   /* `<section data-page="...">` は hidden 切替で常駐。 */
   .page[hidden] { display: none; }
 
+  /* Patterns / Quality / Surface タブの連続する panel 間マージン (Issue #71)。
+     Overview は `.two-up` gap + 後続 panel の inline `margin-top:14px` で既に
+     間隔が確保されている。adjacent-sibling combinator なので 1 件目の panel
+     には影響せず、`<header>` の margin-bottom が先頭間隔を決める。 */
+  .page > .panel + .panel { margin-top: 14px; }
+
   /* 後続 PR (#58〜#62) で本実装するページの placeholder。 */
   .page-placeholder {
     padding: 80px 24px;
