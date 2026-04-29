@@ -6,6 +6,7 @@ A4 (slash command source breakdown) と B4 (instructions_loaded breakdown) の
 レベルで検証する (`tests/test_friction_template.py` と同型)。
 """
 # pylint: disable=line-too-long
+import re
 from pathlib import Path
 
 _TEMPLATE_PATH = Path(__file__).parent.parent / "dashboard" / "template.html"
@@ -16,11 +17,12 @@ def _load_template() -> str:
 
 
 def _extract_section(template: str, page: str) -> str:
-    marker = f'data-page="{page}"'
-    start = template.index(marker)
-    section_open = template.rfind('<section', 0, start)
-    assert section_open != -1
-    end = template.index('</section>', start)
+    # `data-page="X"` は CSS の attribute selector にも現れるので、
+    # 必ず `<section ...>` の開始タグから始まる本物の section だけを拾う。
+    match = re.search(rf'<section\b[^>]*data-page="{re.escape(page)}"[^>]*>', template)
+    assert match is not None, f"<section data-page={page!r}> not found"
+    section_open = match.start()
+    end = template.index('</section>', match.end())
     return template[section_open:end + len('</section>')]
 
 

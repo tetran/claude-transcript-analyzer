@@ -452,6 +452,14 @@
   .help-pop[data-place="right"] { left: -8px; }
   .help-pop[data-place="left"]  { right: -8px; }
 
+  /* Patterns / Quality / Surface は Overview に比べ説明本文が長く、280px だと
+     折り返しが多すぎて読みにくいので scoped で広げる。 */
+  section[data-page="patterns"] .help-pop,
+  section[data-page="quality"]  .help-pop,
+  section[data-page="surface"]  .help-pop {
+    max-width: 380px;
+  }
+
   .help-host:hover > .help-pop,
   .help-pop[data-open="true"] {
     visibility: visible;
