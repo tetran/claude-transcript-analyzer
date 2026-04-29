@@ -100,6 +100,51 @@ class TestLiveDiffJsStructure:
         assert "new WeakMap(" in body, \
             "25_live_diff.js に new WeakMap(...) が無い (timer state は WeakMap 必須)"
 
+    def test_show_live_toast_fade_out_completes_before_hidden(self):
+        """showLiveToast の fade-out transition が display: none で打ち切られない構造。
+
+        `.show` を remove したあと **同フレームで** `hidden = true` を当てると CSS
+        `transition: opacity 240ms ease` がキャンセルされて瞬間消失する。CSS と
+        同期した __TOAST_FADE_MS 経過後に hidden を当てる二段 timer 設計を強制
+        する。pure DOM 副作用なので Node round-trip では検証できず、source レベル
+        の structural pin で代替する。
+        """
+        body = _read(_LIVE_DIFF_JS)
+        # __TOAST_FADE_MS 定数の存在 (CSS の 240ms と同期)
+        assert re.search(r"__TOAST_FADE_MS\s*=\s*\d+", body), \
+            "__TOAST_FADE_MS 定数 (CSS transition と同期) が定義されていない"
+        # __toastFadeTimer (fade-out 終了 → hidden 化) と __toastTimer (display 期間終了 →
+        # fade-out 開始) が両方存在
+        assert "__toastFadeTimer" in body, \
+            "__toastFadeTimer (fade-out 完了後 hidden 化用) が無い — fade-out が瞬間消失する"
+        # showLiveToast 関数本体を抜き出して、内側に二段 setTimeout (TOAST_MS と
+        # TOAST_FADE_MS) があることを構造的に確認
+        match = re.search(
+            r"function\s+showLiveToast\s*\([^)]*\)\s*\{",
+            body,
+        )
+        assert match is not None
+        start = match.end()
+        depth = 1
+        i = start
+        while i < len(body) and depth > 0:
+            if body[i] == "{":
+                depth += 1
+            elif body[i] == "}":
+                depth -= 1
+            i += 1
+        fn_body = body[start:i - 1]
+        # 二段 setTimeout 構造: 外側 __TOAST_MS / 内側 __TOAST_FADE_MS
+        assert "__TOAST_MS" in fn_body and "__TOAST_FADE_MS" in fn_body, \
+            "showLiveToast 内に __TOAST_MS / __TOAST_FADE_MS 両方が無い (二段 timer 設計違反)"
+        # `.show` remove と `hidden = true` を同 statement / 同フレームで打っていない
+        # ことを確認: `el.classList.remove('show'); el.hidden = true` のような
+        # 直接連結が無い (= setTimeout を挟んでいる)
+        assert not re.search(
+            r"classList\.remove\(['\"]show['\"]\)\s*;\s*\n?\s*[a-zA-Z_].*?hidden\s*=\s*true",
+            fn_body,
+        ), "showLiveToast で .show remove 直後に hidden=true を打っている (fade-out transition がキャンセルされる)"
+
 
 # ============================================================
 #  1-a. Literal pin: 20_load_and_render.js 側の統合と __livePrev 規律

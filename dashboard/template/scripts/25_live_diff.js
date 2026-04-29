@@ -10,7 +10,8 @@
   // ・rank row は loadAndRender ごとに innerHTML 完全置換で element 参照が detach
   //   するため、per-element timer state は WeakMap (NOT Map) で持つ。
   let __livePrev = null;
-  let __toastTimer = null;
+  let __toastTimer = null;       // display 期間終了 → fade-out 開始 timer
+  let __toastFadeTimer = null;   // fade-out transition 終了 → hidden = true timer
   const __highlightTimers = new WeakMap();
 
   // KPI / lede / ranking row のラベル定義。toast 対象 (LABEL テーブル) と
@@ -27,7 +28,14 @@
   ];
   const __TOAST_MAX_SEGMENTS = 4;
   const __HIGHLIGHT_MS = 1500;
-  const __TOAST_MS = 4000;
+  const __TOAST_MS = 6000;
+  // CSS の `.toast { transition: opacity 240ms ease, transform 240ms ease }` と同期。
+  // `.show` を remove したあと `__TOAST_FADE_MS` 経過してから `hidden = true` にする
+  // ことで fade-out transition を見える状態で完走させる (display: none で transition
+  // を打ち切らない)。CSS 側を変えたらこの定数も同期して変えること。
+  // prefers-reduced-motion 環境では CSS transition が 200ms に短縮されるが、240ms
+  // 待つことでフェード完了後の hidden 化を構造的に保証する。
+  const __TOAST_FADE_MS = 240;
 
   function buildLiveSnapshot(data) {
     const d = (data && typeof data === 'object') ? data : {};
@@ -171,10 +179,14 @@
     if (typeof document === 'undefined') return;
     const el = document.getElementById('liveToast');
     if (!el) return;
+    // 連続 refresh で複数 toast が来たら、前回の display end / fade-out end の
+    // どちらの timer も取り消して新 toast の lifecycle を 0 から始める。
+    if (__toastTimer) { clearTimeout(__toastTimer); __toastTimer = null; }
+    if (__toastFadeTimer) { clearTimeout(__toastFadeTimer); __toastFadeTimer = null; }
     if (!msg) {
       el.hidden = true;
       el.textContent = '';
-      if (__toastTimer) { clearTimeout(__toastTimer); __toastTimer = null; }
+      el.classList.remove('show');
       return;
     }
     el.textContent = msg;
@@ -182,11 +194,18 @@
     el.classList.remove('show');
     void el.offsetWidth;
     el.classList.add('show');
-    if (__toastTimer) clearTimeout(__toastTimer);
     __toastTimer = setTimeout(() => {
-      el.hidden = true;
+      // fade-out transition を発火。`.show` を remove することで CSS の
+      // `opacity: 1 → 0` / `transform: translate(-50%, 0) → translate(-50%, -6px)`
+      // が走り出す。display: none を即座に当てると transition が打ち切られるため、
+      // __TOAST_FADE_MS 後に `hidden = true` にする (順序が逆だと fade-out が
+      // 視覚的に見えない)。
       el.classList.remove('show');
       __toastTimer = null;
+      __toastFadeTimer = setTimeout(() => {
+        el.hidden = true;
+        __toastFadeTimer = null;
+      }, __TOAST_FADE_MS);
     }, __TOAST_MS);
   }
 

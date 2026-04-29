@@ -31,7 +31,10 @@ _DASHBOARD_PATH = Path(__file__).parent.parent / "dashboard" / "server.py"
 #   - f27e07c7...: Issue #65 fix-up / formatLocalTimestamp に falsy ガード追加
 #   - e7440528...: Issue #69 / live diff highlight + toast (25_live_diff.js 追加, shell.html / 10_components.css / 20_load_and_render.js / _MAIN_JS_FILES 改修)
 #   - 4feb318f...: Issue #69 fix-up / KPI tile に id="' + g.id + '" を追加 (applyHighlights getElementById 命中)
-EXPECTED_TEMPLATE_SHA256 = "4feb318fd600a8052edf0d49a1be507451ce5a492a3d9d194786e6adfad09401"
+#   - f53d0dab...: Issue #69 UX 調整 / toast を横方向中央寄せ + coral 系 color に変更
+#   - a4885a23...: Issue #69 UX 調整 / toast 表示時間を 4s → 6s に延長
+#   - f7bcb6b0...: Issue #69 UX 調整 / toast fade-out transition を 240ms 完走させる二段 timer 設計
+EXPECTED_TEMPLATE_SHA256 = "f7bcb6b02968bb2b1dd1672cb9938a8638055c197b1b04ee841e68950eed3054"
 
 
 def _load_dashboard_module(tmp_path: Path):
