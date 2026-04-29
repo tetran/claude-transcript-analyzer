@@ -491,6 +491,67 @@ def aggregate_permission_breakdowns(events: list[dict], top_n: int = TOP_N) -> d
     return {"skill": skill_items, "subagent": subagent_items}
 
 
+TOP_N_SLASH_COMMAND_BREAKDOWN = 20
+
+# 既知の source 値。これ以外 (None / 未知文字列) は legacy 扱いに倒す。
+_SOURCE_EXPANSION = "expansion"
+_SOURCE_SUBMIT = "submit"
+
+
+def aggregate_slash_command_source_breakdown(
+    events: list[dict],
+    top_n: int = TOP_N_SLASH_COMMAND_BREAKDOWN,
+) -> list[dict]:
+    """user_slash_command event を skill ごとに source 分類して expansion_rate を返す。
+
+    P1 反映: source 値を {"expansion", "submit", legacy (= それ以外 / source 不在)}
+    の 3 分類で集計。expansion_rate の分母は modern (= expansion + submit) のみ、
+    legacy は観測値として記録するが rate 計算からは除外する。modern == 0 の skill は
+    expansion_rate=None を返す (= 観測待ち)。Q2 反映: rate は 4 桁小数で丸める。
+
+    sort: (expansion + submit + legacy) 降順 → skill 昇順、top_n 件で cap。
+    legacy も sort 分母に入れることで retention 経過後も上位順位の安定を保つ
+    (trade-off は memory/skill_surface.md 参照)。
+    """
+    expansion_count: Counter = Counter()
+    submit_count: Counter = Counter()
+    legacy_count: Counter = Counter()
+    for ev in events:
+        if ev.get("event_type") != "user_slash_command":
+            continue
+        skill = ev.get("skill", "")
+        if not skill:
+            continue
+        src = ev.get("source")
+        if src == _SOURCE_EXPANSION:
+            expansion_count[skill] += 1
+        elif src == _SOURCE_SUBMIT:
+            submit_count[skill] += 1
+        else:
+            legacy_count[skill] += 1
+    skills = set(expansion_count) | set(submit_count) | set(legacy_count)
+    rows = []
+    for skill in skills:
+        e = expansion_count.get(skill, 0)
+        s = submit_count.get(skill, 0)
+        lg = legacy_count.get(skill, 0)
+        modern_total = e + s
+        if modern_total > 0:
+            rate = round(e / modern_total, 4)
+        else:
+            rate = None
+        rows.append({
+            "skill": skill,
+            "expansion_count": e,
+            "submit_count": s,
+            "legacy_count": lg,
+            "expansion_rate": rate,
+        })
+    rows.sort(key=lambda r: (-(r["expansion_count"] + r["submit_count"] + r["legacy_count"]),
+                              r["skill"]))
+    return rows[:top_n]
+
+
 def aggregate_compact_density(events: list[dict], top_n: int = TOP_N) -> dict:
     """session 単位 compact_start を集計し histogram (0/1/2/3+) と worst_sessions を返す。
 
@@ -615,6 +676,7 @@ def build_dashboard_data(events: list[dict]) -> dict:
         "compact_density": aggregate_compact_density(events),
         "session_stats": aggregate_session_stats(events),
         "health_alerts": load_health_alerts(),
+        "slash_command_source_breakdown": aggregate_slash_command_source_breakdown(events),
     }
 
 
