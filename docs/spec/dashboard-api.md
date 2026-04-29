@@ -45,8 +45,9 @@ client が `Date` の native methods で local 化する分担。
 - frontend は `formatLocalTimestamp(iso)` (10_helpers.js) で
   `"YYYY-MM-DD HH:mm <TZ>"` 形式に整形して header の「最終更新」に表示
 - `<TZ>` 部は `Intl.DateTimeFormat(undefined, { timeZoneName: 'short' })` の出力。
-  **環境依存** (例: macOS Chromium で `"GMT+9"`, Windows Edge で `"JST"` 等)。
-  値の具体形は仕様としない (= test pin は正規表現で吸収)
+  **環境依存** (Node v24 / macOS Chromium で `"GMT+9"` を観測)。他のブラウザ /
+  OS では `"JST"` / `"GMT+9"` 等になりうるが、値の具体形は仕様としない
+  (= test pin は正規表現で吸収)
 
 ### `daily_trend` (server は UTC 日付で返すが frontend は読まない)
 

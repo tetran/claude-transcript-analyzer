@@ -64,6 +64,24 @@ class TestHelpersDefined:
         assert "timeZoneName" in body, \
             "timeZoneName option による TZ 短縮名抽出が無い"
 
+    def test_format_local_timestamp_guards_falsy_input(self):
+        """`null` / `undefined` / 空文字を falsy で early-return する痕跡を pin。
+
+        `new Date(null)` は epoch (1970-01-01T00:00:00Z) を valid Date として返す
+        ため isNaN チェックでは弾けず、silent に「1970」を表示してしまう。
+        truthiness ガードを冒頭に置くこと。
+        """
+        body = _read_helpers()
+        match = re.search(
+            r"function\s+formatLocalTimestamp\s*\([^)]*\)\s*\{",
+            body,
+        )
+        assert match is not None, "formatLocalTimestamp 本体が見つからない"
+        # 関数本体の先頭 200 文字以内に falsy guard があること
+        head = body[match.end():match.end() + 200]
+        assert ("if (!iso)" in head) or ("if(!iso)" in head), \
+            "formatLocalTimestamp に falsy 値ガード (if (!iso)) が無い"
+
     def test_local_daily_from_hourly_function_defined(self):
         """`localDailyFromHourly(buckets)` が 10_helpers.js に定義されている。
 

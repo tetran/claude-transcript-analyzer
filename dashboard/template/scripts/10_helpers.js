@@ -10,6 +10,9 @@
   // Intl.DateTimeFormat の timeZoneName: 'short' に委譲しており、環境依存
   // (例: "JST" / "GMT+9" のいずれかが返ることがある)。
   function formatLocalTimestamp(iso) {
+    // null / undefined / 空文字は全て空表示。`new Date(null)` は epoch (1970)
+    // を valid Date として返してしまうので isNaN チェックでは弾けない。
+    if (!iso) return '';
     const dt = new Date(iso);
     if (isNaN(dt.getTime())) return '';
     let tz = '';

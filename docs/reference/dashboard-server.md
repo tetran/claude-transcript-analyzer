@@ -320,13 +320,13 @@ local cursor を作り `setDate(+1)` で進める。`new Date(date+'T00:00:00Z')
 ### TZ 短縮名は環境依存
 
 `Intl.DateTimeFormat(undefined, { timeZoneName: 'short' })` の出力は
-**ブラウザ / OS / locale 依存**:
+**ブラウザ / OS / locale 依存**。本リポジトリで実観測済みの組み合わせ:
 
-- macOS Chromium: `"GMT+9"` (= JST)
-- Windows Edge / Safari: `"JST"` のことが多い
-- 古い Chromium: `"GMT+9"` が多い
+- Node v24 + macOS: `"GMT+9"` (Issue #65 検証時)
 
-仕様としては固定しない (= test pin は正規表現
+ブラウザ実機 (Safari / Edge / Firefox / 旧 Chromium) は未検証。`"JST"` を返す
+環境がある報告は古くから一般的だが、自リポジトリでの pin は持たない。仕様
+としては固定しない (= test pin は正規表現
 `^\d{4}-\d{2}-\d{2} \d{2}:\d{2} \S+$` で吸収)。ユーザー報告で表記が揺れる場合は
 "環境依存" として説明する。
 
