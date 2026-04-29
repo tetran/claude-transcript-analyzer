@@ -533,8 +533,8 @@ Surface ページの「Instructions ロード分布」panel が消費する。
     "memory_type_dist": {"User": 65, "Project": 62},
     "load_reason_dist": {"session_start": 127},
     "glob_match_top": [
-      {"file_path": "~/.claude/skills/skill-creator/SKILL.md", "count": 42},
-      {"file_path": "~/.claude/skills/codex-review/SKILL.md",  "count": 18}
+      {"file_path": "~/.claude/skills/foo/SKILL.md", "count": 42},
+      {"file_path": "~/.claude/skills/bar/SKILL.md", "count": 18}
     ]
   }
 }

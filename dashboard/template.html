@@ -1408,7 +1408,7 @@
               <button class="help-btn" type="button" aria-label="説明を表示" aria-expanded="false" aria-describedby="hp-instr" data-help-id="hp-instr">?</button>
               <span class="help-pop" id="hp-instr" role="tooltip" data-place="right">
                 <span class="pop-ttl">Instructions ロード分布</span>
-                <span class="pop-body"><code>instructions_loaded</code> hook の <code>memory_type</code> / <code>load_reason</code> 頻度分布と、<code>load_reason="glob_match"</code> が多発した <code>file_path</code> top 10。glob_match top に頻出する skill / CLAUDE.md は description が広すぎて proactive にロードされすぎる候補 = <code>skill-slimmer</code> での整理対象。</span>
+                <span class="pop-body"><code>instructions_loaded</code> hook の <code>memory_type</code> / <code>load_reason</code> 頻度分布と、<code>load_reason="glob_match"</code> が多発した <code>file_path</code> top 10。glob_match top に頻出する skill / CLAUDE.md は description が広すぎて proactive にロードされすぎる候補 (description を絞る / glob 設計を見直すと改善)。</span>
               </span>
             </span>
           </div>
