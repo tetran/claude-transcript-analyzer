@@ -46,7 +46,7 @@
 
   document.getElementById('kpiRow').innerHTML = kpis.map(g => {
     const popId = 'hp-' + g.id;
-    return '<div class="kpi ' + g.cls + (g.warn?' warn':'') + '">' +
+    return '<div class="kpi ' + g.cls + (g.warn?' warn':'') + '" id="' + g.id + '">' +
       '<div class="k-row">' +
         '<span class="k">' + esc(g.k) + '</span>' +
         '<span class="help-host">' +

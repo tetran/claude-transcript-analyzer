@@ -706,8 +706,10 @@ class TestStaticExportNoLiveBehavior:
         """kpi の id 属性は loadAndRender 後の HTML 文字列にも残っている前提。
 
         applyHighlights が getElementById で参照する前提を壊さない。
-        ここは shell.html の kpiRow placeholder + 20_load_and_render.js の HTML 生成で
-        `id="kpi-..."` を出していること (= JS の出力 string に含まれること) を pin。
+        kpiRow.innerHTML 完全置換の出力で各 KPI tile div に id=\"kpi-...\" を
+        付けて出していることを source-level に pin。
+        chrome-devtools での実機確認で id 属性漏れを検出できたケースを後追いで
+        構造保証する (Phase 5 visual smoke で見つけた gap)。
         """
         body = _read(_LOAD_RENDER_JS)
         # kpis array の各 entry に id: 'kpi-...' があること
@@ -715,12 +717,12 @@ class TestStaticExportNoLiveBehavior:
                        "kpi-sess", "kpi-resume", "kpi-compact", "kpi-perm"):
             assert f"'{kpi_id}'" in body, \
                 f"20_load_and_render.js の kpis array に '{kpi_id}' が無い"
-        # KPI tile DIV に id=' を付けて出力していること
-        assert re.search(r"<div class=\"kpi[^\"]*\"\s+id=", body) \
-            or "+ g.id" in body \
-            or "id=\"' + g.id + '\"" in body \
-            or "id=\\\"' + g.id + '\\\"" in body, \
-            "KPI tile の HTML 出力で id 属性を埋め込めていない"
+        # kpiRow.innerHTML 直前 / 内部の map() で kpi tile div に
+        # `id="' + g.id + '"` を埋め込んでいること。
+        # クォートのエスケープバリエーションを許容する。
+        assert ("id=\"' + g.id + '\"" in body) or ("id=' + g.id + '" in body), \
+            "KPI tile の HTML 出力で id=\"' + g.id + '\" を埋め込めていない " \
+            "(applyHighlights の getElementById が hit しない)"
 
     def test_rank_row_data_name_attribute_persists(self):
         """rank renderer 出力に data-name=\"...\" が必ず含まれる。"""
