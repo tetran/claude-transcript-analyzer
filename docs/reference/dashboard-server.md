@@ -282,3 +282,58 @@ return (shell
 - `(async function(){` / `})();` の IIFE wrapper は **shell.html 側に置いている**。split file は IIFE body の連続スライスのみ含み、自前で IIFE を開閉しない
 - byte 等価 smoke test (sha256) は強い regression guard。意図的に template を変更したら期待値の hash を更新する
 
+---
+
+## §5. Client-side TZ 変換 — UTC で送り local で見せる (Issue #58, #65)
+
+dashboard frontend は **server から UTC で受け取り、client 側で local TZ に変換**
+する分担。「server に client TZ を確実に教える経路が無い」(cookie / header /
+query は SSE と相性が悪い) のと、「DST 境界は `Date` の native methods が正しく
+扱える」のが採用理由。
+
+### 該当箇所と入力
+
+| 場所 | server output | frontend 変換 |
+|---|---|---|
+| Patterns hourly heatmap | `hourly_heatmap.buckets` (UTC hour) | `getDay()` / `getHours()` で local の `(weekday, hour)` 7×24 matrix に bin (`30_renderers_patterns.js`) |
+| Overview sparkline | `hourly_heatmap.buckets` (= 同上) | `localDailyFromHourly(buckets)` (10_helpers.js) で local 日付集約 → `[{date, count}]` |
+| header「最終更新」 | `last_updated` (ISO 8601 with `+00:00`) | `formatLocalTimestamp(iso)` (10_helpers.js) で `"YYYY-MM-DD HH:mm <TZ>"` |
+
+`subagent_failure_trend` は **Mon 00:00 UTC 起算** で固定 (= server pre-bin 済み
+の week_start を使う)。Issue #65 の射程外。
+
+### 実装の罠 — `toISOString` を使わない
+
+`toISOString().slice(0, 10)` は **UTC 日付** を返すため、local TZ 集約には
+**使ってはいけない**。`localDailyFromHourly` / sparkline densify は
+`getFullYear()` / `getMonth()` / `getDate()` を手組みで連結して key を作る:
+
+```js
+const key = dt.getFullYear() + '-' + pad(dt.getMonth()+1, 2) + '-' + pad(dt.getDate(), 2);
+```
+
+densify (観測 0 の中間日も x 軸に並べる) も同様に `new Date(y, m-1, d)` で
+local cursor を作り `setDate(+1)` で進める。`new Date(date+'T00:00:00Z')` +
+`setUTCDate(+1)` 経路は UTC 日付を吐くので避ける。`Date` constructor は月 / 年
+またぎを自動補正するため `setDate(32)` 等でも正しく wrap する。
+
+### TZ 短縮名は環境依存
+
+`Intl.DateTimeFormat(undefined, { timeZoneName: 'short' })` の出力は
+**ブラウザ / OS / locale 依存**。本リポジトリで実観測済みの組み合わせ:
+
+- Node v24 + macOS: `"GMT+9"` (Issue #65 検証時)
+
+ブラウザ実機 (Safari / Edge / Firefox / 旧 Chromium) は未検証。`"JST"` を返す
+環境がある報告は古くから一般的だが、自リポジトリでの pin は持たない。仕様
+としては固定しない (= test pin は正規表現
+`^\d{4}-\d{2}-\d{2} \d{2}:\d{2} \S+$` で吸収)。ユーザー報告で表記が揺れる場合は
+"環境依存" として説明する。
+
+### export_html を別ホストで開いた場合
+
+`reports/export_html.py` は `<script>window.__DATA__ = ...</script>` でデータを
+inline するが、`Date` の TZ 変換は **閲覧ホスト** で実行される。生成ホスト ≠
+閲覧ホスト の場合 (例: JST マシンで生成 → CET マシンで閲覧) は **閲覧ホスト**
+の TZ で表示される。これは仕様 (受け手の体感に合わせるほうが自然)。
+

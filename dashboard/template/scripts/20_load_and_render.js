@@ -10,18 +10,21 @@
   }
   const ss = data.session_stats || {};
 
-  // header
-  const dt = new Date(data.last_updated);
-  const ts = dt.getUTCFullYear() + '-' + pad(dt.getUTCMonth()+1,2) + '-' + pad(dt.getUTCDate(),2) + ' ' + pad(dt.getUTCHours(),2) + ':' + pad(dt.getUTCMinutes(),2) + ' UTC';
-  document.getElementById('lastRx').textContent = ts;
+  // header (Issue #65: local TZ 表記に統一)
+  document.getElementById('lastRx').textContent = formatLocalTimestamp(data.last_updated);
   document.getElementById('sessVal').textContent = (ss.total_sessions || 0) + ' sessions';
+
+  // Issue #65: daily 系 KPI / sparkline は data.daily_trend (= server UTC bucket) ではなく
+  // hourly_heatmap.buckets を local TZ で再集計した localDays を使う。
+  // daily_trend は /api/data の backward-compat field として残るが client は読まない。
+  const localDays = localDailyFromHourly((data.hourly_heatmap || {}).buckets || []);
   document.getElementById('ledeEvents').textContent = fmtN(data.total_events);
-  document.getElementById('ledeDays').textContent = (data.daily_trend||[]).length;
+  document.getElementById('ledeDays').textContent = localDays.length;
   document.getElementById('ledeProjects').textContent = (data.project_breakdown||[]).length;
 
   // ---- KPI definitions (ヘルプ本文を含む) ----
   const kpis = [
-    { id: 'kpi-total', k: 'total events', v: fmtN(data.total_events), s: '<em>' + (data.daily_trend||[]).length + '</em> 日間の観測', cls: '',
+    { id: 'kpi-total', k: 'total events', v: fmtN(data.total_events), s: '<em>' + localDays.length + '</em> 日間の観測', cls: '',
       helpTtl: '総イベント数', helpBody: 'スキル利用と subagent invocation の合計件数。subagent は PostToolUse / SubagentStart の重複発火を <code>1 invocation = 1 件</code> に dedup 済み。session_start や notification は含めない。' },
     { id: 'kpi-skills', k: 'skills', v: (data.skill_ranking||[]).length, s: 'unique kinds', cls: '',
       helpTtl: 'スキル種別数', helpBody: '観測されたスキルの種類数（最大 10 件まで表示）。スキル本体（PostToolUse(Skill)）とユーザー入力のスラッシュコマンド（UserPromptExpansion / Submit）を合算してカウント。' },
@@ -104,17 +107,28 @@
   document.getElementById('skillSub').textContent = 'top ' + (data.skill_ranking||[]).length + ' · max ' + (((data.skill_ranking||[])[0]||{}).count || 0);
   document.getElementById('subSub').textContent = 'top ' + (data.subagent_ranking||[]).length + ' · max ' + (((data.subagent_ranking||[])[0]||{}).count || 0);
 
-  // ---- sparkline ----
-  const trend = (data.daily_trend||[]).slice().sort((a,b) => a.date<b.date?-1:1);
+  // ---- sparkline (Issue #65: local TZ 集約) ----
+  // localDays は localDailyFromHourly で sort 済 / local 日付 key。
+  const trend = localDays;
   if (trend.length) {
     const W = 800, H = 168, pad_x = 10, pad_y = 18;
     const byDate = new Map(trend.map(d=>[d.date, d.count]));
-    const start = new Date(trend[0].date+'T00:00:00Z');
-    const end = new Date(trend[trend.length-1].date+'T00:00:00Z');
+    // 観測 0 の中間日も x-axis に並べる densify を local TZ で iterate する。
+    // toISOString は UTC 日付を返してしまうため使わない。年月日の数値を保持して
+    // new Date(y, m-1, d).setDate(+1) で 1 日進める (DST 境界跨ぎは Date が
+    // 自動補正してくれるので、月 / 年またぎでも setDate(+1) が正しく wrap する)。
     const days = [];
-    for (let d = new Date(start); d <= end; d.setUTCDate(d.getUTCDate()+1)) {
-      const ds = d.toISOString().slice(0,10);
+    const [sy, sm, sd] = trend[0].date.split('-').map(Number);
+    const [ey, em, ed] = trend[trend.length-1].date.split('-').map(Number);
+    const cursor = new Date(sy, sm-1, sd);
+    const endLocal = new Date(ey, em-1, ed);
+    // 異常 input (start > end) でも無限ループしない safety: 最大 365 * 5 日 = 5 年
+    let safety = 0;
+    while (cursor <= endLocal && safety < 365 * 5) {
+      const ds = cursor.getFullYear() + '-' + pad(cursor.getMonth()+1, 2) + '-' + pad(cursor.getDate(), 2);
       days.push({ date: ds, count: byDate.get(ds) || 0 });
+      cursor.setDate(cursor.getDate() + 1);
+      safety += 1;
     }
     const max = Math.max(...days.map(d=>d.count));
     const xs = (i) => pad_x + i * (W - 2*pad_x) / Math.max(1, days.length-1);
