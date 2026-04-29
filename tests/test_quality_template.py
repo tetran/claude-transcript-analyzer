@@ -122,6 +122,19 @@ class TestQualityPageDOM:
         assert ('p.i - prev' in body) or ('current.i + 1' in body) or ('runs.push' in body), \
             "gap-aware polyline split (consecutive index check) が未実装"
 
+    def test_trend_xaxis_densified_for_empty_calendar_weeks(self):
+        """Codex Round 2 / P2#2 反映: server が観測なし週を返さない仕様のため、
+        renderer 側で weekSet を 7-day 増分で densify して空週も x-axis に表示する。
+        renderer body 内で week 増分 (Date 操作 / setUTCDate / 7-day 加算) を実装している
+        痕跡を pin。これにより inactivity 期間が timeline 上に可視化される。"""
+        template = _load_template()
+        body_start = template.index('function renderSubagentFailureTrend')
+        body_end = template.index('function ', body_start + 10)
+        body = template[body_start:body_end]
+        # 7-day 増分の densify 実装: setUTCDate + 7 / Date('T00:00:00Z') 経由のいずれか
+        assert ('setUTCDate' in body) and ('+ 7' in body or '+7' in body or 'getUTCDate() + 7' in body), \
+            "x-axis densify (7-day step via Date.setUTCDate) が未実装"
+
     def test_percentile_renderer_has_page_scoped_early_out(self):
         template = _load_template()
         body_start = template.index('function renderSubagentPercentile')

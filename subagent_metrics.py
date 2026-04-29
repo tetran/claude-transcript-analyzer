@@ -117,37 +117,82 @@ def _invocation_duration(start: dict | None, stop: dict | None) -> float | None:
     return None
 
 
+def _pair_invocations_with_stops(
+    invocations: list[dict], stops_sorted: list[dict]
+) -> list[tuple[dict, dict | None]]:
+    """invocation と stop を pairing し `[(invocation, paired_stop_or_None), ...]` を返す。
+
+    `_process_bucket` と `_bucket_invocation_records` の両方から呼ばれ、failure_count
+    drift guard (Issue #60 / Q1) を構造的に保証する単一ペアリング関数。
+
+    - 件数一致 (`paired_stops = True`) → sequential 1:1 (重複発火扱い、timestamp 検査なし)
+    - 件数不一致:
+      - `start.success=False` → 起動失敗で stop なしと扱い stop プール非消費
+      - `start.success=True` → **timestamp-window pairing**: `start.ts` 以降かつ次 invocation
+        の `start.ts` 未満 (最終 invocation は +∞) の未消費 stop を最初に採る
+        (Codex Round 2 / P2#1: 後続週の failed stop を earlier 週の successful start に
+        誤 attribute する cross-week 失敗 shift を防ぐ)
+    """
+    paired_stops = len(invocations) == len(stops_sorted)
+    if paired_stops:
+        return list(zip(invocations, stops_sorted))
+
+    inv_ts: list = []
+    for inv in invocations:
+        rep = inv.get("start") or inv.get("lifecycle")
+        ts = _parse_ts(rep.get("timestamp", "")) if rep else None
+        inv_ts.append(ts)
+
+    stop_consumed = [False] * len(stops_sorted)
+    pairs: list[tuple[dict, dict | None]] = []
+    for i, inv in enumerate(invocations):
+        start = inv.get("start")
+        if bool(start) and start.get("success") is False:
+            pairs.append((inv, None))
+            continue
+        this_ts = inv_ts[i]
+        next_ts = inv_ts[i + 1] if i + 1 < len(invocations) else None
+        chosen_idx: int | None = None
+        for j, stop in enumerate(stops_sorted):
+            if stop_consumed[j]:
+                continue
+            stop_ts = _parse_ts(stop.get("timestamp", ""))
+            if this_ts is not None and stop_ts is not None:
+                if stop_ts < this_ts:
+                    continue
+                if next_ts is not None and stop_ts >= next_ts:
+                    continue
+            chosen_idx = j
+            break
+        if chosen_idx is not None:
+            stop_consumed[chosen_idx] = True
+            pairs.append((inv, stops_sorted[chosen_idx]))
+        else:
+            pairs.append((inv, None))
+    return pairs
+
+
 def _process_bucket(
     invocations: list[dict],
     stops_sorted: list[dict],
 ) -> tuple[int, list[float]]:
-    """1 バケット (session×type) の invocation 群を処理し (failure_count, durations) を返す。"""
+    """1 バケット (session×type) の invocation 群を処理し (failure_count, durations) を返す。
+
+    Pairing は `_pair_invocations_with_stops` に委譲。失敗判定は invocation 単位の
+    `start.success=False OR paired_stop.success=False`。orphan stops は durations に
+    積まれない (Codex Round 1 / P2 反映で sample_count <= count invariant 維持)。
+    """
     failures = 0
     durations: list[float] = []
-    paired_stops = len(invocations) == len(stops_sorted)
-    stop_idx = 0
-    for inv in invocations:
+    for inv, stop in _pair_invocations_with_stops(invocations, stops_sorted):
         start = inv.get("start")
         start_failed = bool(start) and start.get("success") is False
-        stop: dict | None = None
-        if start_failed and not paired_stops:
+        stop_failed = bool(stop) and stop.get("success") is False
+        if start_failed or stop_failed:
             failures += 1
-        else:
-            stop = stops_sorted[stop_idx] if stop_idx < len(stops_sorted) else None
-            if stop is not None:
-                stop_idx += 1
-            if stop is None and start_failed:
-                failures += 1
-            elif stop is not None and (start_failed or stop.get("success") is False):
-                failures += 1
         inv_duration = _invocation_duration(start, stop)
         if inv_duration is not None:
             durations.append(inv_duration)
-    # 余り stops (`stops_sorted[stop_idx:]`) は durations に積まない。
-    # invocation 単位集計なので stop 単独イベントは duration sample にも failure にも
-    # 寄与しない (= `_bucket_invocation_records` と対称)。これにより
-    # `sample_count <= count` invariant が常に成立し、Issue #60 percentile の母集団が
-    # invocation 単位 count と一致する (Codex Round 1 / P2 反映)。
     return failures, durations
 
 
@@ -221,34 +266,27 @@ def _bucket_invocation_records(
 ) -> list[dict]:
     """1 バケット (session×type) の invocation 単位 [(timestamp, name, failed)] を返す。
 
-    ペアリング戦略は `_process_bucket` と同じ:
-      - starts と stops の件数が一致 → 1:1 ペアリング (同 invocation の重複発火扱い)
-      - 件数不一致 → start.success=False は「起動失敗で stop なし」とみなし stop プールを
-        進めず failed=True
+    Pairing は `_pair_invocations_with_stops` に委譲し `_process_bucket` と同一の
+    pair 列を共有する。これにより failure_count drift guard (Issue #60 / Q1)
+    と Codex R2 / P2#1 の cross-week 誤 attribute fix が両者に同時に効く。
 
-    余り stops (`stops_sorted[len(invocations):]`) は **record 化しない**。
-    invocation 単位集計なので stop 単独イベントは trend に寄与しないのが正解。
-    `_process_bucket` 側も余り stop の failure はカウントしないため、両者の failure_count は
-    **構造的に一致** する (Issue #60 / Q1 drift guard / 2-P1)。
+    余り stops (`stops_sorted[len(invocations):]`) は **record 化しない**:
+    invocation 単位集計なので stop 単独イベントは trend に寄与しないのが正解
+    (`_process_bucket` も同じ理由で durations に積まない / 2-P1 drift guard)。
     """
-    paired_stops = len(invocations) == len(stops_sorted)
-    stop_idx = 0
     records: list[dict] = []
-    for inv in invocations:
+    for inv, stop in _pair_invocations_with_stops(invocations, stops_sorted):
         start = inv.get("start")
         lifecycle = inv.get("lifecycle")
         rep = start or lifecycle
         ts = rep.get("timestamp", "") if rep else ""
         start_failed = bool(start) and start.get("success") is False
-        if start_failed and not paired_stops:
-            failed = True
-        else:
-            stop = stops_sorted[stop_idx] if stop_idx < len(stops_sorted) else None
-            if stop is not None:
-                stop_idx += 1
-            stop_failed = bool(stop) and stop.get("success") is False
-            failed = start_failed or stop_failed
-        records.append({"timestamp": ts, "subagent_type": name, "failed": failed})
+        stop_failed = bool(stop) and stop.get("success") is False
+        records.append({
+            "timestamp": ts,
+            "subagent_type": name,
+            "failed": start_failed or stop_failed,
+        })
     return records
 
 

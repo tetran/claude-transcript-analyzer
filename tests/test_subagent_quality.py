@@ -496,6 +496,25 @@ class TestAggregateSubagentFailureTrend:
         types = {r["subagent_type"] for r in result}
         assert types == {f"Type{i}" for i in range(6)}, f"top-N で切られた: {types}"
 
+    def test_orphan_start_does_not_misattribute_failure_to_earlier_week(self):
+        """Codex Round 2 / P2#1 反映: 不一致時に start.success=True の successful start が
+        後続週の failed stop を sequential 消費して、failure を誤って earlier week に
+        attribute する問題への regression。timestamp-window pairing で防ぐ。
+
+        scenario: 2 succeeded starts (W1, W2) + 1 stop(success=False) in W2.
+        expected: W1 fail=0/1, W2 fail=1/1。"""
+        events = [
+            _start("Explore", "s", "2026-04-22T10:00:00+00:00", success=True),  # W1=2026-04-20
+            _start("Explore", "s", "2026-04-29T10:00:00+00:00", success=True),  # W2=2026-04-27
+            _stop("Explore",  "s", "2026-04-29T10:00:30+00:00", success=False),  # W2 stop, failed
+        ]
+        trend = subagent_metrics.aggregate_subagent_failure_trend(events)
+        by_week = {r["week_start"]: r for r in trend}
+        assert by_week["2026-04-20"]["failure_count"] == 0, \
+            f"W1 should have 0 failures, got {by_week['2026-04-20']['failure_count']}"
+        assert by_week["2026-04-27"]["failure_count"] == 1, \
+            f"W2 should have 1 failure, got {by_week['2026-04-27']['failure_count']}"
+
     def test_failure_count_matches_metrics_failure_count(self):
         """Q1 反映: invocation_records 経由の trend と aggregate_subagent_metrics の
         failure_count が type 単位の合計で一致 (drift guard)。"""

@@ -1687,7 +1687,26 @@
       e.byWeek.set(r.week_start, r);
       weekSet.add(r.week_start);
     }
-    const weeks = [...weekSet].sort();
+    // Codex Round 2 / P2#2 反映: server は観測なし週を返さない (sparse) ため、x-axis を
+    // 7-day 増分で densify して空週も timeline に表示する。これにより全 type で観測が
+    // 0 だった週も視覚的な inactivity 期間として可視化される (axis label / 軸位置に反映)。
+    // 単一週入力 / 連続観測時は元の挙動と等価。
+    const observedWeeks = [...weekSet].sort();
+    const weeks = [];
+    if (observedWeeks.length === 1) {
+      weeks.push(observedWeeks[0]);
+    } else if (observedWeeks.length >= 2) {
+      const startDate = new Date(observedWeeks[0] + 'T00:00:00Z');
+      const endDate = new Date(observedWeeks[observedWeeks.length - 1] + 'T00:00:00Z');
+      const cursor = new Date(startDate);
+      // safety: 最大 1040 週 (= 約 20 年) で打ち切り (異常データへの保険)
+      let safety = 0;
+      while (cursor <= endDate && safety < 1040) {
+        weeks.push(cursor.toISOString().slice(0, 10));
+        cursor.setUTCDate(cursor.getUTCDate() + 7);
+        safety += 1;
+      }
+    }
     const top = [...byType.entries()].sort((a, b) => b[1].total - a[1].total).slice(0, 5);
 
     const W = 600, H = 220, padL = 36, padR = 12, padT = 14, padB = 28;
