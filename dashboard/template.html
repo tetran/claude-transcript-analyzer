@@ -1687,10 +1687,11 @@
       e.byWeek.set(r.week_start, r);
       weekSet.add(r.week_start);
     }
-    // Codex Round 2 / P2#2 反映: server は観測なし週を返さない (sparse) ため、x-axis を
-    // 7-day 増分で densify して空週も timeline に表示する。これにより全 type で観測が
-    // 0 だった週も視覚的な inactivity 期間として可視化される (axis label / 軸位置に反映)。
-    // 単一週入力 / 連続観測時は元の挙動と等価。
+    // server は観測なし週を返さない (sparse) ので、観測週だけで weekSet を作ると
+    // W1/W3 のみ観測時に空 W2 が x-axis から消えて W1 と W3 が隣接描画される。
+    // observedWeeks の最初〜最後を 7-day 増分で densify し、空週も timeline 上に
+    // calendar 時系列として表示する (xOf(i) が暦週位置に揃う)。
+    // 単一週入力 / 連続観測時は densify しても元の axis と等価。
     const observedWeeks = [...weekSet].sort();
     const weeks = [];
     if (observedWeeks.length === 1) {
@@ -1735,10 +1736,10 @@
         const r = e.byWeek.get(w);
         if (r) pts.push({ i, r });
       });
-      // Codex Round 1 / P3 反映: gap-bridging を防ぐため、weeks union axis 上で
-      // 連続する index ごとに run を組み、run 単位で polyline を出す。type が
-      // 観測されなかった中間週 (= byWeek に key 無し) を跨ぐ単一 line を描かない。
-      // 単一点 run は pts.length >= 2 guard で polyline スキップされ circle のみ残る。
+      // gap-bridging を防ぐため、weeks 上で連続する index ごとに run を組み run 単位で
+      // polyline を出す。type が観測されなかった中間週 (= byWeek に key 無し) を跨ぐ
+      // 単一 line を描かない (= 観測実態を視覚的に正しく反映)。
+      // 単一点 run は run.length >= 2 guard で polyline スキップされ circle のみ残る。
       const runs = [];
       let current = null;
       pts.forEach(p => {

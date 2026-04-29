@@ -125,9 +125,10 @@ class TestPercentileEdgeCases:
         assert p99 == 5.0
 
     def test_known_sample_pin_excel_inclusive(self):
-        """P1 反映: [1,2,3,4] に対し p50=2.5 / p90=3.7 / p99=3.97 を pin。
-        Excel PERCENTILE.INC (= inclusive method) との等価性を担保し、
-        method 切替え (inclusive→exclusive 等) による回帰を検出。"""
+        """[1,2,3,4] に対し p50=2.5 / p90=3.7 / p99=3.97 を pin。
+        Excel PERCENTILE.INC (= statistics.quantiles の `method="inclusive"`) との
+        等価性を担保し、method 切替え (inclusive → exclusive 等) や numpy の
+        `method="linear"` (exclusive endpoints) などへの差し替えによる回帰を検出する。"""
         p50, p90, p99 = subagent_metrics._percentiles([1.0, 2.0, 3.0, 4.0])
         assert p50 == pytest.approx(2.5, abs=1e-6)
         assert p90 == pytest.approx(3.7, abs=1e-6)
@@ -233,10 +234,10 @@ class TestSubagentMetricsAddsPercentileFields:
         assert m["sample_count"] <= m["count"]
 
     def test_orphan_stops_do_not_contaminate_percentile_samples(self):
-        """Codex Round 1 / P2 反映: 同 (session, type) bucket に start 1 + stops 2 のような
-        orphan stops があるとき、余り stop の duration_ms が durations に積まれて
-        sample_count > count を生む問題への regression。orphan stop は invocation 単位
-        集計の対象外なので percentile sample にも入らない (= sample_count <= count)。"""
+        """同 (session, type) bucket に start 1 + stops 2 のような余り stops が
+        あるとき、stop 単独イベントの duration_ms が durations に混入して
+        sample_count > count を生まないことを pin (= orphan stop は invocation 単位
+        集計の対象外、`sample_count <= count` invariant を構造的に維持)。"""
         events = [
             _start("Explore", "s", "2026-04-22T10:00:00+00:00", duration_ms=1000),
             _stop("Explore", "s", "2026-04-22T10:00:01+00:00", duration_ms=1000),
@@ -429,8 +430,10 @@ class TestAggregateSubagentFailureTrend:
         assert result[0]["count"] == 3
 
     def test_naive_timestamp_treated_as_utc(self):
-        """P3 反映: naive timestamp (TZ サフィックスなし) でも UTC として解釈し、
-        local TZ shift が起きないことを pin。"""
+        """naive timestamp (TZ サフィックスなし) でも UTC として解釈され、local TZ shift
+        が起きないことを pin: usage.jsonl は通常 aware ISO だが、Stop hook 経路や
+        rescan_transcripts.py --append 由来で naive が紛れた場合に Python 3.11+ の
+        `astimezone()` が local TZ 解釈で silent shift する非対称を構造的に塞ぐ。"""
         events = [
             # naive: TZ サフィックスなし
             {"event_type": "subagent_start", "subagent_type": "Explore",
@@ -488,7 +491,9 @@ class TestAggregateSubagentFailureTrend:
         assert keys == sorted(keys), f"sort 失敗: {keys}"
 
     def test_returns_all_types_no_top_n_cap(self):
-        """P2 反映: server は top-N で切らず観測された全 (week, type) を返す"""
+        """server は top-N で切らず観測された全 (week, type) を返す。client 側 top-5
+        は UI affordance であり schema 仕様には現れない (= programmatic consumer は
+        全 type の trend を受け取る前提で読む)。"""
         events = []
         for i in range(6):
             events.append(_start(f"Type{i}", f"s{i}", "2026-04-22T10:00:00+00:00"))
@@ -497,9 +502,9 @@ class TestAggregateSubagentFailureTrend:
         assert types == {f"Type{i}" for i in range(6)}, f"top-N で切られた: {types}"
 
     def test_orphan_start_does_not_misattribute_failure_to_earlier_week(self):
-        """Codex Round 2 / P2#1 反映: 不一致時に start.success=True の successful start が
-        後続週の failed stop を sequential 消費して、failure を誤って earlier week に
-        attribute する問題への regression。timestamp-window pairing で防ぐ。
+        """件数不一致 + start.success=True が sequential 消費されると、後続週の failed
+        stop が earlier 週の successful start にマッチして failure が誤って earlier 週へ
+        shift する問題への regression。timestamp-window pairing で防ぐ。
 
         scenario: 2 succeeded starts (W1, W2) + 1 stop(success=False) in W2.
         expected: W1 fail=0/1, W2 fail=1/1。"""
@@ -516,8 +521,11 @@ class TestAggregateSubagentFailureTrend:
             f"W2 should have 1 failure, got {by_week['2026-04-27']['failure_count']}"
 
     def test_failure_count_matches_metrics_failure_count(self):
-        """Q1 反映: invocation_records 経由の trend と aggregate_subagent_metrics の
-        failure_count が type 単位の合計で一致 (drift guard)。"""
+        """`aggregate_subagent_failure_trend` 経由の failure_count と
+        `aggregate_subagent_metrics` の failure_count が type 単位の合計で一致することを
+        pin (drift guard)。両者は `_pair_invocations_with_stops` で共通 pair 列を
+        共有しているため構造的に一致するが、将来の片側変更で drift しないようテストで
+        固定する。"""
         events = [
             _start("Explore", "s1", "2026-04-22T10:00:00+00:00", success=True),
             _stop("Explore", "s1", "2026-04-22T10:00:05+00:00", success=True),

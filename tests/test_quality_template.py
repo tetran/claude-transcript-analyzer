@@ -77,8 +77,9 @@ class TestQualityPageDOM:
             "renderSubagentFailureTrend(data.subagent_failure_trend) call missing"
 
     def test_percentile_table_has_thead_columns(self):
-        """P5 反映: 列順は Subagent / Count / Samples / avg / p50 / p90 / p99
-        (Samples は Count 直後)"""
+        """列順は Subagent / Count / Samples / avg / p50 / p90 / p99 (Samples を Count
+        直後に置くことで、percentile の信頼度を最初に整理させる読み順を pin する。
+        sample_count <= count の関係も並びで読み取れる)。"""
         section = _extract_section(_load_template(), 'quality')
         # thead 部分を抜き出して列順を確認
         thead_start = section.index('<thead>')
@@ -101,19 +102,21 @@ class TestQualityPageDOM:
         for tag in ['<svg ', '<polyline', '<circle']:
             assert tag in body, f"renderSubagentFailureTrend に {tag!r} がない"
 
-    def test_trend_single_week_renders_circles_no_polyline(self):
-        """P4 反映: weeks.length === 1 の degenerate path で polyline 0 / circle のみ。
-        renderer body 内で `pts.length >= 2` の guard が存在することを pin。"""
+    def test_trend_single_point_renders_circle_no_polyline(self):
+        """単一データ点 (= 1 週分しかない / 連続 run が長さ 1) では polyline を描かず
+        circle のみ残る: renderer 内で長さ 2 以上の polyline guard が存在することを pin。
+        gap-bridging 修正後は run 単位で guard するため `run.length >= 2` を許容する。"""
         template = _load_template()
         body_start = template.index('function renderSubagentFailureTrend')
         body_end = template.index('function ', body_start + 10)
         body = template[body_start:body_end]
-        assert 'pts.length >= 2' in body, "polyline guard `pts.length >= 2` missing"
+        assert ('pts.length >= 2' in body) or ('run.length >= 2' in body), \
+            "polyline length guard (>= 2) missing"
 
     def test_trend_polyline_splits_at_gaps_no_bridging(self):
-        """Codex Round 1 / P3 反映: type 別に観測なし週 (gap) を跨ぐ単一 polyline は描かず、
-        連続 run ごとに分割して polyline を出す (= consecutive index で run を組む)。
-        renderer body 内で run/segment 概念を実装している痕跡 (i 比較で連続性判定) を pin。"""
+        """type 別に観測なし週 (gap) を跨ぐ単一 polyline を描かない: weeks 軸上で連続
+        index ごとに run を組み、run 単位で polyline を吐く実装になっていること。
+        renderer body 内で連続性判定 (consecutive index check) を pin する。"""
         template = _load_template()
         body_start = template.index('function renderSubagentFailureTrend')
         body_end = template.index('function ', body_start + 10)
@@ -123,10 +126,11 @@ class TestQualityPageDOM:
             "gap-aware polyline split (consecutive index check) が未実装"
 
     def test_trend_xaxis_densified_for_empty_calendar_weeks(self):
-        """Codex Round 2 / P2#2 反映: server が観測なし週を返さない仕様のため、
-        renderer 側で weekSet を 7-day 増分で densify して空週も x-axis に表示する。
-        renderer body 内で week 増分 (Date 操作 / setUTCDate / 7-day 加算) を実装している
-        痕跡を pin。これにより inactivity 期間が timeline 上に可視化される。"""
+        """server が観測なし週を返さない仕様 (sparse axis) のため、renderer 側で
+        observedWeeks を 7-day 増分で densify して空週も x-axis に展開する。
+        これにより全 type で観測 0 だった週も timeline 上に inactivity 期間として
+        可視化される (xOf(i) が暦週位置に揃う)。
+        renderer body 内で週増分 (setUTCDate + 7) を実装している痕跡を pin する。"""
         template = _load_template()
         body_start = template.index('function renderSubagentFailureTrend')
         body_end = template.index('function ', body_start + 10)

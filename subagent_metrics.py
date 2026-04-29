@@ -122,16 +122,19 @@ def _pair_invocations_with_stops(
 ) -> list[tuple[dict, dict | None]]:
     """invocation と stop を pairing し `[(invocation, paired_stop_or_None), ...]` を返す。
 
-    `_process_bucket` と `_bucket_invocation_records` の両方から呼ばれ、failure_count
-    drift guard (Issue #60 / Q1) を構造的に保証する単一ペアリング関数。
+    `_process_bucket` と `_bucket_invocation_records` の両方から呼ばれる単一ペアリング
+    関数。両者が同一 pair 列を共有することで failure_count drift を構造的に防ぐ
+    (= `aggregate_subagent_metrics` と `aggregate_subagent_failure_trend` の
+    failure_count が type 単位の合計で常に一致する)。
 
     - 件数一致 (`paired_stops = True`) → sequential 1:1 (重複発火扱い、timestamp 検査なし)
     - 件数不一致:
       - `start.success=False` → 起動失敗で stop なしと扱い stop プール非消費
       - `start.success=True` → **timestamp-window pairing**: `start.ts` 以降かつ次 invocation
-        の `start.ts` 未満 (最終 invocation は +∞) の未消費 stop を最初に採る
-        (Codex Round 2 / P2#1: 後続週の failed stop を earlier 週の successful start に
-        誤 attribute する cross-week 失敗 shift を防ぐ)
+        の `start.ts` 未満 (最終 invocation は +∞) の未消費 stop を最初に採る。
+        sequential 1:1 だと「2 succeeded starts (W1, W2) + 1 failed stop (W2)」のような
+        入力で stop[0] が start[0] にマッチし failure が earlier 週へ shift する
+        cross-week 誤 attribute が起きるため、timestamp で window を切って防ぐ
     """
     paired_stops = len(invocations) == len(stops_sorted)
     if paired_stops:
@@ -179,8 +182,10 @@ def _process_bucket(
     """1 バケット (session×type) の invocation 群を処理し (failure_count, durations) を返す。
 
     Pairing は `_pair_invocations_with_stops` に委譲。失敗判定は invocation 単位の
-    `start.success=False OR paired_stop.success=False`。orphan stops は durations に
-    積まれない (Codex Round 1 / P2 反映で sample_count <= count invariant 維持)。
+    `start.success=False OR paired_stop.success=False`。余り stops は durations に
+    積まない: invocation 単位集計なので stop 単独イベントは sample にならず、
+    `sample_count <= count` invariant を構造的に保つ (= percentile 母集団を invocation
+    数と一致させる)。
     """
     failures = 0
     durations: list[float] = []
@@ -225,7 +230,8 @@ def _percentiles(durations: list[float]) -> tuple[float | None, float | None, fl
 
     `method="inclusive"` は **Excel `PERCENTILE.INC` 等価** (端点を含めた線形補間)。
     numpy の `method="linear"` (exclusive endpoints) とは別物なので「numpy default 等価」
-    という言い方はしない (Issue #60 / P1)。
+    という言い方はしない (test では既知サンプル `[1,2,3,4]` で p50=2.5 / p90=3.7 / p99=3.97
+    を pin して method 切替えによる回帰を検出する)。
     """
     if not durations:
         return (None, None, None)
@@ -267,12 +273,13 @@ def _bucket_invocation_records(
     """1 バケット (session×type) の invocation 単位 [(timestamp, name, failed)] を返す。
 
     Pairing は `_pair_invocations_with_stops` に委譲し `_process_bucket` と同一の
-    pair 列を共有する。これにより failure_count drift guard (Issue #60 / Q1)
-    と Codex R2 / P2#1 の cross-week 誤 attribute fix が両者に同時に効く。
+    pair 列を共有する。これにより `aggregate_subagent_metrics` の failure_count と
+    `aggregate_subagent_failure_trend` の failure_count が type 単位の合計で常に
+    一致する (drift guard / `test_failure_count_matches_metrics_failure_count`)。
 
     余り stops (`stops_sorted[len(invocations):]`) は **record 化しない**:
     invocation 単位集計なので stop 単独イベントは trend に寄与しないのが正解
-    (`_process_bucket` も同じ理由で durations に積まない / 2-P1 drift guard)。
+    (`_process_bucket` も同じ理由で durations に積まない)。
     """
     records: list[dict] = []
     for inv, stop in _pair_invocations_with_stops(invocations, stops_sorted):
@@ -316,11 +323,10 @@ def invocation_records(events: list[dict]) -> list[dict]:
 def _week_start_iso(timestamp: str) -> str | None:
     """ISO timestamp string → monday-UTC week_start ISO date string ("YYYY-MM-DD")。
 
-    naive datetime は UTC として扱う safety belt (Issue #60 / P3): `usage.jsonl` は通常
-    `+00:00` 付き ISO だが、Stop hook 経由 `_merge_stop_hook_list` や
-    `rescan_transcripts.py --append` 由来で naive ISO が紛れた場合に local TZ shift を
-    structurally 塞ぐ。Python 3.11+ では naive `astimezone()` が local TZ 解釈で silent
-    shift する非対称があるため特に厳格に。
+    naive datetime は UTC として扱う safety belt: `usage.jsonl` は通常 `+00:00` 付き ISO
+    だが、Stop hook 経由 `_merge_stop_hook_list` や `rescan_transcripts.py --append`
+    由来で naive ISO が紛れた場合に local TZ shift を構造的に塞ぐ。Python 3.11+ では
+    naive `astimezone()` が local TZ 解釈で silent shift する非対称があるため特に厳格に。
     """
     if not timestamp:
         return None
@@ -340,9 +346,10 @@ def aggregate_subagent_failure_trend(events: list[dict]) -> list[dict]:
 
     監視しているのは end-to-end 成功 (start.success=False OR stop.success=False を 1 failure)。
     sort: (week_start, subagent_type) lexicographic 昇順。
-    **server は top-N で切らず観測された全 (week, subagent_type) を返す** (Issue #60 / P2)。
-    UI 側の top-5 描画はあくまで affordance であり schema には現れない。
-    naive datetime は UTC として扱う (Issue #60 / P3)。
+    **server は top-N で切らず観測された全 (week, subagent_type) を返す**: client 側の
+    top-5 描画は affordance であり schema には現れない (programmatic な consumer は
+    全 type の trend を受け取る前提で読む)。
+    naive datetime は UTC として扱う (`_week_start_iso` の safety belt 参照)。
 
     出力: list[{"week_start": "YYYY-MM-DD", "subagent_type": str,
                "count": int, "failure_count": int, "failure_rate": float}]
