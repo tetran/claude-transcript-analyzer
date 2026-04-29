@@ -1377,7 +1377,7 @@
               <button class="help-btn" type="button" aria-label="説明を表示" aria-expanded="false" aria-describedby="hp-source" data-help-id="hp-source">?</button>
               <span class="help-pop" id="hp-source" role="tooltip" data-place="right">
                 <span class="pop-ttl">expansion / submit 比率</span>
-                <span class="pop-body"><code>user_slash_command</code> イベントの <code>source</code> を skill ごとに集計。<strong>expansion</strong> = LLM が slash command を理解して展開した経路、<strong>submit</strong> = 展開できず raw prompt として送信された経路。<strong>legacy</strong> 列は旧 schema (source 欠落) や未知 source 値を分離記録 (rate 計算からは除外)。<code>expansion_rate</code> が低い skill は description / glob 設計が弱く LLM が「思いつかない」可能性。0.5 未満の rate を peach 色で強調。modern data 0 件の skill は「観測待ち」表示。</span>
+                <span class="pop-body"><code>user_slash_command</code> イベントの <code>source</code> を skill ごとに集計。<strong>expansion</strong> = LLM が slash command を理解して展開した経路、<strong>submit</strong> = 展開できず raw prompt として送信された経路。<code>expansion_rate</code> が低い skill は description / glob 設計が弱く LLM が「思いつかない」可能性。0.5 未満の rate を peach 色で強調。</span>
               </span>
             </span>
           </div>
@@ -1390,7 +1390,6 @@
                 <th>Skill</th>
                 <th class="num">Expansion</th>
                 <th class="num">Submit</th>
-                <th class="num">Legacy</th>
                 <th class="num">Rate</th>
               </tr>
             </thead>
@@ -2225,30 +2224,23 @@
     if (!tbody) return;
     const list = Array.isArray(items) ? items : [];
     if (list.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="5" class="empty">観測なし</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="4" class="empty">観測なし</td></tr>';
     } else {
       tbody.innerHTML = list.map(it => {
         const e = it.expansion_count || 0;
         const s = it.submit_count || 0;
-        const lg = it.legacy_count || 0;
-        // P1 反映: rate が null (= modern data 0 件) のとき "観測待ち" 表示し
-        // peach 強調から除外する。
-        const rate = (it.expansion_rate === null || it.expansion_rate === undefined)
-          ? null : Number(it.expansion_rate);
-        const rateClass = (rate !== null && rate < 0.5) ? 'num rate-warn' : 'num';
-        const rateText = rate === null ? '<span class="dim">— 観測待ち</span>'
-                                       : (Math.round(rate * 100) + '%');
-        const al = it.skill + ': expansion ' + e + ' / submit ' + s + ' / legacy ' + lg +
-          (rate === null ? ' (observation pending)' : ' (' + Math.round(rate * 100) + '%)');
+        const rate = Number(it.expansion_rate || 0);
+        const rateClass = rate < 0.5 ? 'num rate-warn' : 'num';
+        const ratePct = Math.round(rate * 100);
+        const al = it.skill + ': expansion ' + e + ' / submit ' + s + ' (' + ratePct + '%)';
         return '<tr data-tip="source" data-name="' + esc(it.skill) +
-          '" data-e="' + e + '" data-s="' + s + '" data-lg="' + lg +
-          '" data-rate="' + (rate === null ? '' : rate) +
+          '" data-e="' + e + '" data-s="' + s +
+          '" data-rate="' + rate +
           '" tabindex="0" role="row" aria-label="' + esc(al) + '">' +
           '<td class="name">' + esc(it.skill) + '</td>' +
           '<td class="num">' + fmtN(e) + '</td>' +
           '<td class="num dim">' + fmtN(s) + '</td>' +
-          '<td class="num dim">' + fmtN(lg) + '</td>' +
-          '<td class="' + rateClass + '">' + rateText + '</td>' +
+          '<td class="' + rateClass + '">' + ratePct + '%</td>' +
           '</tr>';
       }).join('');
     }
@@ -2630,16 +2622,13 @@
       const name = el.getAttribute('data-name') || '';
       const e = el.getAttribute('data-e') || '0';
       const s = el.getAttribute('data-s') || '0';
-      const lg = el.getAttribute('data-lg') || '0';
-      const rateRaw = el.getAttribute('data-rate') || '';
-      const rateText = rateRaw === '' ? '観測待ち'
-                                      : (Math.round(parseFloat(rateRaw) * 100) + '%');
+      const rateRaw = el.getAttribute('data-rate') || '0';
+      const rateText = Math.round(parseFloat(rateRaw) * 100) + '%';
       return {
         kind: 'source',
         html: '<span class="ttl">' + esc(name) + '</span>' +
               '<span class="lbl">expansion</span><span class="val">' + fmtN(e) + '</span>' +
               '<span class="lbl">submit</span><span class="val">' + fmtN(s) + '</span>' +
-              '<span class="lbl">legacy</span><span class="val">' + fmtN(lg) + '</span>' +
               '<span class="lbl">rate</span><span class="val">' + rateText + '</span>'
       };
     }

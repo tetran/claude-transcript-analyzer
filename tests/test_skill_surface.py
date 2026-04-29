@@ -1,8 +1,8 @@
 """tests/test_skill_surface.py — Issue #62 skill surface (A4 + B4) のテスト。
 
 A4: user_slash_command.source を skill ごとに集計し、expansion_rate を返す。
-    旧 schema (source 欠落) と未知値は `legacy_count` 列に分離し、rate 分母から
-    除外する (P1 反映)。modern data 0 件の skill は rate=None (= 観測待ち)。
+    旧 schema (source 欠落) や未知 source 値は **silent skip** (= エラー回避のみ)。
+    集計に含めない / output に出さない (modern data 0 件の skill は出力対象外)。
 
 B4: instructions_loaded event の memory_type / load_reason / file_path を集計。
     glob_match_top は file_path home 圧縮 + count desc / path asc + top_n=10。
@@ -86,8 +86,8 @@ class TestSlashCommandSourceBreakdown:
         assert row["skill"] == "/foo"
         assert row["expansion_count"] == 3
         assert row["submit_count"] == 0
-        assert row["legacy_count"] == 0
         assert row["expansion_rate"] == 1.0
+        assert "legacy_count" not in row
 
     def test_single_submit_only_skill(self, tmp_path):
         mod = load_dashboard_module(tmp_path / "n.jsonl")
@@ -97,8 +97,8 @@ class TestSlashCommandSourceBreakdown:
         row = out[0]
         assert row["expansion_count"] == 0
         assert row["submit_count"] == 4
-        assert row["legacy_count"] == 0
         assert row["expansion_rate"] == 0.0
+        assert "legacy_count" not in row
 
     def test_mixed_expansion_and_submit_skill(self, tmp_path):
         mod = load_dashboard_module(tmp_path / "n.jsonl")
@@ -111,22 +111,25 @@ class TestSlashCommandSourceBreakdown:
         row = out[0]
         assert row["expansion_count"] == 3
         assert row["submit_count"] == 1
-        assert row["legacy_count"] == 0
         assert row["expansion_rate"] == 0.75
 
-    def test_legacy_count_separate_field(self, tmp_path):
-        # P1 反映: source 欠落 3 件 → legacy=3, expansion=0, submit=0
+    def test_old_schema_silently_skipped(self, tmp_path):
+        # 旧 schema (source 欠落) は silent skip。modern が 0 なら skill 自体が出力対象外。
         mod = load_dashboard_module(tmp_path / "n.jsonl")
-        events = [_slash("/legacy", source=None) for _ in range(3)]
+        events = [_slash("/old-only", source=None) for _ in range(5)]
         out = mod.aggregate_slash_command_source_breakdown(events)
-        assert len(out) == 1
-        row = out[0]
-        assert row["expansion_count"] == 0
-        assert row["submit_count"] == 0
-        assert row["legacy_count"] == 3
+        assert out == []
 
-    def test_expansion_rate_excludes_legacy_from_denominator(self, tmp_path):
-        # P1 反映: expansion=2, submit=2, legacy=10 → rate = 2 / (2+2) = 0.5
+    def test_unknown_source_value_silently_skipped(self, tmp_path):
+        # 未知 source 値も silent skip。modern が 0 なら skill 自体が出力対象外。
+        mod = load_dashboard_module(tmp_path / "n.jsonl")
+        events = [_slash("/u", source="something_new") for _ in range(2)]
+        out = mod.aggregate_slash_command_source_breakdown(events)
+        assert out == []
+
+    def test_old_schema_ignored_in_rate_with_modern_present(self, tmp_path):
+        # modern (expansion=2, submit=2) + 旧 schema 10 件 → rate = 2/(2+2) = 0.5
+        # 旧 schema は count に積まず (silent skip)、rate 分母にも入らない
         mod = load_dashboard_module(tmp_path / "n.jsonl")
         events = (
             [_slash("/x", source="expansion") for _ in range(2)]
@@ -138,29 +141,7 @@ class TestSlashCommandSourceBreakdown:
         row = out[0]
         assert row["expansion_count"] == 2
         assert row["submit_count"] == 2
-        assert row["legacy_count"] == 10
         assert row["expansion_rate"] == 0.5
-
-    def test_expansion_rate_null_when_no_modern_data(self, tmp_path):
-        # P1 反映: expansion=0, submit=0, legacy=5 → rate = None (= 観測待ち)
-        mod = load_dashboard_module(tmp_path / "n.jsonl")
-        events = [_slash("/legacy-only", source=None) for _ in range(5)]
-        out = mod.aggregate_slash_command_source_breakdown(events)
-        assert len(out) == 1
-        row = out[0]
-        assert row["expansion_rate"] is None
-
-    def test_unknown_source_value_treated_as_legacy(self, tmp_path):
-        # P1 反映: source="something_new" → legacy 扱い
-        mod = load_dashboard_module(tmp_path / "n.jsonl")
-        events = [_slash("/u", source="something_new") for _ in range(2)]
-        out = mod.aggregate_slash_command_source_breakdown(events)
-        assert len(out) == 1
-        row = out[0]
-        assert row["expansion_count"] == 0
-        assert row["submit_count"] == 0
-        assert row["legacy_count"] == 2
-        assert row["expansion_rate"] is None
 
     def test_empty_skill_name_skipped(self, tmp_path):
         mod = load_dashboard_module(tmp_path / "n.jsonl")
@@ -168,16 +149,18 @@ class TestSlashCommandSourceBreakdown:
         out = mod.aggregate_slash_command_source_breakdown(events)
         assert out == []
 
-    def test_zero_observed_skill_not_in_output(self, tmp_path):
-        # 構造的に発生しないが invariant 確認: 何かしら observed されないと出力対象外
+    def test_modern_only_skill_emitted(self, tmp_path):
+        # 旧 schema が他 skill に紛れていても、modern data ある skill は出力される
         mod = load_dashboard_module(tmp_path / "n.jsonl")
-        # 別 skill に対する event のみ。/zero に関する event は無い → /zero は出力されない
-        events = [_slash("/other", source="expansion")]
+        events = [
+            _slash("/other", source="expansion"),
+            _slash("/legacy", source=None),
+        ]
         out = mod.aggregate_slash_command_source_breakdown(events)
-        assert all(r["skill"] != "/zero" for r in out)
+        assert [r["skill"] for r in out] == ["/other"]
 
     def test_sort_by_total_desc_then_skill_asc(self, tmp_path):
-        # total = expansion + submit + legacy 降順 / skill 昇順
+        # total = expansion + submit 降順 / skill 昇順
         # alpha total=5 / beta total=5 / gamma total=3 → alpha, beta, gamma
         mod = load_dashboard_module(tmp_path / "n.jsonl")
         events = (
@@ -187,18 +170,6 @@ class TestSlashCommandSourceBreakdown:
         )
         out = mod.aggregate_slash_command_source_breakdown(events)
         assert [r["skill"] for r in out] == ["alpha", "beta", "gamma"]
-
-    def test_sort_includes_legacy_in_total(self, tmp_path):
-        # P1 反映: A modern=2 + legacy=10 = 12 / B modern=10 + legacy=0 = 10
-        # → A 先 (total 降順)、legacy が sort 分母に入ること
-        mod = load_dashboard_module(tmp_path / "n.jsonl")
-        events = (
-            [_slash("A", source="expansion") for _ in range(2)]
-            + [_slash("A", source=None) for _ in range(10)]
-            + [_slash("B", source="expansion") for _ in range(10)]
-        )
-        out = mod.aggregate_slash_command_source_breakdown(events)
-        assert [r["skill"] for r in out] == ["A", "B"]
 
     def test_top_n_cap(self, tmp_path):
         # 25 skill が observed のとき返り値は 20 件
@@ -215,6 +186,7 @@ class TestSlashCommandSourceBreakdown:
         events = [_slash("/e", source="expansion") for _ in range(10)]
         out = mod.aggregate_slash_command_source_breakdown(events)
         assert out[0]["expansion_rate"] == 1.0
+        assert out[0]["expansion_rate"] is not None
 
     def test_expansion_rate_when_no_expansion(self, tmp_path):
         mod = load_dashboard_module(tmp_path / "n.jsonl")
@@ -502,13 +474,3 @@ class TestBuildDashboardDataIncludesSurfaceFields:
     def test_constant_TOP_N_GLOB_MATCH(self, tmp_path):
         mod = load_dashboard_module(tmp_path / "n.jsonl")
         assert mod.TOP_N_GLOB_MATCH == 10
-
-    def test_expansion_rate_null_serializes_to_json_null(self, tmp_path):
-        # 2-P2 反映: aggregator が返す Python None が JSON null に round-trip する
-        mod = load_dashboard_module(tmp_path / "n.jsonl")
-        events = [_slash("/legacy-only", source=None) for _ in range(5)]
-        data = mod.build_dashboard_data(events)
-        roundtripped = json.loads(json.dumps(data))
-        rows = roundtripped["slash_command_source_breakdown"]
-        assert len(rows) == 1
-        assert rows[0]["expansion_rate"] is None

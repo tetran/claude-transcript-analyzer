@@ -481,10 +481,9 @@ histogram の 0 bucket 分母を「実観測 session 数」に揃えるため。
 ```json
 {
   "slash_command_source_breakdown": [
-    {"skill": "/codex-review",      "expansion_count": 12, "submit_count": 3, "legacy_count": 0,  "expansion_rate": 0.8},
-    {"skill": "/usage-summary",     "expansion_count": 0,  "submit_count": 5, "legacy_count": 0,  "expansion_rate": 0.0},
-    {"skill": "/usage-export-html", "expansion_count": 8,  "submit_count": 0, "legacy_count": 0,  "expansion_rate": 1.0},
-    {"skill": "/legacy-only",       "expansion_count": 0,  "submit_count": 0, "legacy_count": 23, "expansion_rate": null}
+    {"skill": "/codex-review",      "expansion_count": 12, "submit_count": 3, "expansion_rate": 0.8},
+    {"skill": "/usage-summary",     "expansion_count": 0,  "submit_count": 5, "expansion_rate": 0.0},
+    {"skill": "/usage-export-html", "expansion_count": 8,  "submit_count": 0, "expansion_rate": 1.0}
   ]
 }
 ```
@@ -494,30 +493,21 @@ histogram の 0 bucket 分母を「実観測 session 数」に揃えるため。
 - `skill`: slash command 名 (先頭 `/` 含む)
 - `expansion_count`: `source == "expansion"` の event 件数 (= LLM が展開した経路)
 - `submit_count`: `source == "submit"` の event 件数 (= raw prompt 送信経路)
-- `legacy_count`: 上記以外の event 件数 (= 旧 schema で `source` 欠落 / 未知 source 値)
-- `expansion_rate`: **`float (4 桁丸め) | null`**
-  - `modern_total = expansion_count + submit_count > 0` のとき
-    `round(expansion_count / modern_total, 4)`
-  - `modern_total == 0` のとき `null` (観測待ち / renderer 側で peach 強調から除外)
+- `expansion_rate`: **`float (4 桁丸め)`**
+  `round(expansion_count / (expansion_count + submit_count), 4)`
 
 ### sort / top-N
 
-- sort key: `(expansion_count + submit_count + legacy_count)` 降順 → `skill` 昇順
+- sort key: `(expansion_count + submit_count)` 降順 → `skill` 昇順
 - top-N: `TOP_N_SLASH_COMMAND_BREAKDOWN = 20` で cap
-- legacy も sort 分母に入れることで retention 経過後も上位順位の安定を保つ
-  (trade-off は memory/skill_surface.md 参照)
 
-### legacy 分類の根拠
+### 旧 schema / 未知 source 値の扱い
 
-実機観測 (`<missing>: 202 / expansion: 75 / submit: 0`) で旧 schema を expansion
-扱いに混ぜると `expansion_rate ≈ 1.0` 偏重で peach 強調 (= 改善余地 signal) が
-出ず、本 viz の主目的「LLM が想起できない skill」を浮かび上がらせるのが
-無効化される → legacy 列分離 + rate 分母から legacy を除外する設計に。
-
-`record_skill.py` の dedup ロジック (`source != "submit"` を expansion 由来とみなす)
-は **重複落とさない安全側** の判断であり、本 viz の **signal を出す方向の判断**
-とは要件が違う。整合は dedup 側で取れていれば十分で、集計側は別判断 (= legacy 分離)
-を採用する。
+`source` フィールドが `"expansion"` / `"submit"` 以外の event (旧 schema で
+`source` 欠落 / 将来追加されうる未知文字列) は **silent skip** する (= エラーに
+せず、集計に含めないだけ)。`expansion + submit == 0` の skill は output rows に
+含まれない。これは reader-side で旧 record を読み込んでもエラーにしないという
+互換性確保のためで、UI 側の表示要素にもしない。
 
 ## `instructions_loaded_breakdown` (Issue #62, v0.7.0〜)
 

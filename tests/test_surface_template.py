@@ -60,19 +60,20 @@ class TestSurfacePagePanels:
             assert f'id="{el_id}"' in section, f"id={el_id} missing from Surface section"
 
     def test_source_table_has_thead_columns(self):
-        # P1 反映: 列順 Skill / Expansion / Submit / Legacy / Rate
+        # 列順 Skill / Expansion / Submit / Rate (legacy 列は user 判断で削除)
         section = _extract_section(_load_template(), 'surface')
         idx = section.index('id="surface-source"')
         thead_start = section.index('<thead>', idx)
         thead_end = section.index('</thead>', thead_start)
         thead = section[thead_start:thead_end]
         positions = []
-        for col in ['Skill', 'Expansion', 'Submit', 'Legacy', 'Rate']:
+        for col in ['Skill', 'Expansion', 'Submit', 'Rate']:
             i = thead.find(col)
             assert i >= 0, f"surface-source thead missing column: {col}"
             positions.append((i, col))
         assert positions == sorted(positions), \
             f"surface-source columns not in expected order: {positions}"
+        assert 'Legacy' not in thead, "Legacy column should be removed"
 
     def test_glob_table_has_thead_columns(self):
         section = _extract_section(_load_template(), 'surface')
@@ -123,12 +124,6 @@ class TestSurfacePagePanels:
         body = _extract_function_body(_load_template(), 'renderInstructionsLoadedBreakdown')
         assert "activePage !== 'surface'" in body[:500], \
             "renderInstructionsLoadedBreakdown missing page-scoped early-out"
-
-    def test_source_renderer_handles_null_rate(self):
-        # P1 反映: renderer JS が `expansion_rate === null` 分岐 + "観測待ち" 表示
-        body = _extract_function_body(_load_template(), 'renderSlashCommandSourceBreakdown')
-        assert '観測待ち' in body, "renderSlashCommandSourceBreakdown should show '観測待ち' for null rate"
-        assert '=== null' in body, "renderSlashCommandSourceBreakdown should branch on `=== null`"
 
     def test_help_popups_present(self):
         template = _load_template()
