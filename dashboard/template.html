@@ -893,6 +893,67 @@
     vertical-align: middle;
   }
   .data-tip[data-kind="trend"] { border-left-color: var(--mint); }
+
+  /* permission breakdown table (Issue #61 / A2) */
+  .perm-table {
+    width: 100%; border-collapse: collapse; font-size: 12px;
+    font-family: var(--ff-mono);
+  }
+  .perm-table th {
+    text-align: left; color: var(--ink-faint); font-weight: 500;
+    padding: 6px 8px; border-bottom: 1px solid var(--line);
+  }
+  .perm-table th.num, .perm-table td.num {
+    text-align: right; font-variant-numeric: tabular-nums;
+  }
+  .perm-table tbody tr { border-bottom: 1px solid rgba(255, 255, 255, 0.04); }
+  .perm-table tbody tr:hover { background: rgba(255, 255, 255, 0.03); }
+  .perm-table tbody tr:focus-visible { outline: 2px solid var(--mint); outline-offset: -1px; }
+  .perm-table td { padding: 5px 8px; color: var(--ink); }
+  .perm-table td.name { color: var(--mint); }   /* skill = mint */
+  .perm-table#quality-perm-subagent td.name { color: var(--coral); }  /* subagent = coral */
+  .perm-table td.dim { color: var(--ink-faint); }
+  .perm-table td.rate-warn { color: var(--peach); font-weight: 500; }
+  .perm-table .empty { text-align: center; color: var(--ink-faint); padding: 24px 0; }
+  .data-tip[data-kind="perm-skill"] { border-left-color: var(--mint); }
+  .data-tip[data-kind="perm-subagent"] { border-left-color: var(--coral); }
+
+  /* compact density (Issue #61 / A3) */
+  .compact-grid {
+    display: grid; grid-template-columns: minmax(280px, 1fr) minmax(320px, 2fr);
+    gap: 24px; align-items: start;
+  }
+  @media (max-width: 720px) {
+    .compact-grid { grid-template-columns: 1fr; }
+  }
+  .compact-hist {
+    width: 100%; max-width: 360px; aspect-ratio: 360 / 180;
+  }
+  .compact-hist svg { width: 100%; height: 100%; display: block; }
+  .compact-hist .bar { fill: var(--peach); cursor: pointer; }
+  .compact-hist .bar:hover, .compact-hist .bar:focus-visible {
+    fill-opacity: 0.85; outline: 2px solid var(--peach); outline-offset: 1px;
+  }
+  .compact-hist .axis-label { fill: var(--ink-faint); font-size: 10px; font-family: var(--ff-mono); }
+  .compact-hist .bar-num { fill: var(--ink); font-size: 10px; font-family: var(--ff-mono); text-anchor: middle; }
+  .worst-table { width: 100%; border-collapse: collapse; font-size: 12px; font-family: var(--ff-mono); }
+  .worst-table th {
+    text-align: left; color: var(--ink-faint); font-weight: 500;
+    padding: 6px 8px; border-bottom: 1px solid var(--line);
+  }
+  .worst-table th.num, .worst-table td.num {
+    text-align: right; font-variant-numeric: tabular-nums;
+  }
+  .worst-table tbody tr { border-bottom: 1px solid rgba(255, 255, 255, 0.04); }
+  .worst-table tbody tr:hover { background: rgba(255, 255, 255, 0.03); }
+  .worst-table tbody tr:focus-visible { outline: 2px solid var(--peach); outline-offset: -1px; }
+  .worst-table td { padding: 5px 8px; color: var(--ink); }
+  .worst-table td.sid { color: var(--peach); font-family: var(--ff-mono); }
+  .worst-table td.proj { color: var(--ink-faint); }
+  .worst-table td.proj .dim { color: var(--ink-faint); font-style: italic; }
+  .worst-table .empty { text-align: center; color: var(--ink-faint); padding: 16px 0; }
+  .data-tip[data-kind="histogram"] { border-left-color: var(--peach); }
+  .data-tip[data-kind="worst-session"] { border-left-color: var(--peach); }
 </style>
 </head>
 <body>
@@ -1133,6 +1194,98 @@
         <div class="panel-body">
           <div class="trend-chart" id="quality-trend"></div>
           <div class="trend-legend" id="quality-trend-legend"></div>
+        </div>
+      </div>
+
+      <!-- (3) A2-skill: Permission per skill ranking (Issue #61) -->
+      <div class="panel" id="quality-perm-skill-panel">
+        <div class="panel-head c-mint">
+          <div class="ttl-wrap">
+            <span class="ttl"><span class="dot"></span>Permission prompt × skill (top 10)</span>
+            <span class="help-host">
+              <button class="help-btn" type="button" aria-label="説明を表示" aria-expanded="false" aria-describedby="hp-perm-skill" data-help-id="hp-perm-skill">?</button>
+              <span class="help-pop" id="hp-perm-skill" role="tooltip" data-place="right">
+                <span class="pop-ttl">Permission per skill</span>
+                <span class="pop-body">permission notification の <strong>直前 30 秒以内 (or 実行中)</strong> に発火していた <code>skill_tool</code> に帰属。1 prompt は 1 候補にのみ帰属 (skill / subagent disjoint)。<code>permission_rate</code> = 帰属 prompt 数 / 総 skill_tool 数。<strong>1 invocation で複数回 permission を聞かれる skill</strong> は rate &gt; 1.0 になる (clamp しない)。<code>fewer-permission-prompts</code> skill / settings.json allowlist 整理のヒントとして使う。</span>
+              </span>
+            </span>
+          </div>
+          <span class="sub" id="quality-perm-skill-sub"></span>
+        </div>
+        <div class="panel-body">
+          <table class="perm-table" id="quality-perm-skill">
+            <thead>
+              <tr>
+                <th>Skill</th>
+                <th class="num">Prompts</th>
+                <th class="num">Invocations</th>
+                <th class="num">Rate</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- (4) A2-subagent: Permission per subagent ranking (Issue #61) -->
+      <div class="panel" id="quality-perm-subagent-panel">
+        <div class="panel-head c-coral">
+          <div class="ttl-wrap">
+            <span class="ttl"><span class="dot"></span>Permission prompt × subagent (top 10)</span>
+            <span class="help-host">
+              <button class="help-btn" type="button" aria-label="説明を表示" aria-expanded="false" aria-describedby="hp-perm-sub" data-help-id="hp-perm-sub">?</button>
+              <span class="help-pop" id="hp-perm-sub" role="tooltip" data-place="right">
+                <span class="pop-ttl">Permission per subagent</span>
+                <span class="pop-body">permission notification を <strong>subagent invocation の execution interval</strong> に帰属。長時間 subagent の途中で発火した prompt も interval-cover で正しく拾う。skill table と disjoint (= 1 prompt は 1 candidate のみ)。</span>
+              </span>
+            </span>
+          </div>
+          <span class="sub" id="quality-perm-subagent-sub"></span>
+        </div>
+        <div class="panel-body">
+          <table class="perm-table" id="quality-perm-subagent">
+            <thead>
+              <tr>
+                <th>Subagent</th>
+                <th class="num">Prompts</th>
+                <th class="num">Invocations</th>
+                <th class="num">Rate</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- (5) A3: Compact density (Issue #61) -->
+      <div class="panel" id="quality-compact-panel">
+        <div class="panel-head c-peach">
+          <div class="ttl-wrap">
+            <span class="ttl"><span class="dot"></span>Compact 発生密度 (per session)</span>
+            <span class="help-host">
+              <button class="help-btn" type="button" aria-label="説明を表示" aria-expanded="false" aria-describedby="hp-compact" data-help-id="hp-compact">?</button>
+              <span class="help-pop" id="hp-compact" role="tooltip" data-place="right">
+                <span class="pop-ttl">Compact 密度</span>
+                <span class="pop-body">session ごとの <code>compact_start</code> 回数 histogram (0 / 1 / 2 / 3+)。<strong>3+ session が多い</strong> = タスク粒度過大 / <code>/clear</code> タイミングを逃した signal。worst session に載った session_id は session 切り出し / 早期リスタートの示唆。</span>
+              </span>
+            </span>
+          </div>
+          <span class="sub" id="quality-compact-sub"></span>
+        </div>
+        <div class="panel-body">
+          <div class="compact-grid">
+            <div class="compact-hist" id="quality-compact-hist"></div>
+            <table class="worst-table" id="quality-compact-worst">
+              <thead>
+                <tr>
+                  <th>Session</th>
+                  <th>Project</th>
+                  <th class="num">Compacts</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
         </div>
       </div>
     </section>
@@ -1454,6 +1607,12 @@
   renderSubagentPercentile(data.subagent_ranking);
   // ---- subagent failure weekly trend (Issue #60 / B3) ----
   renderSubagentFailureTrend(data.subagent_failure_trend);
+
+  // ---- A2 permission breakdowns (Issue #61) ----
+  renderPermissionSkillBreakdown(data.permission_prompt_skill_breakdown);
+  renderPermissionSubagentBreakdown(data.permission_prompt_subagent_breakdown);
+  // ---- A3 compact density (Issue #61) ----
+  renderCompactDensity(data.compact_density);
 
   // dynamic re-render 後の help-pop 再配置 (Issue #41)。kpiRow を含む全 popup を
   // walk して、右端 KPI tooltip の viewport overflow を防ぐ。
@@ -1779,6 +1938,138 @@
     }
   }
 
+  // ============================================================
+  //  Permission breakdowns (Issue #61 / A2) — skill / subagent
+  //  page-scoped early-out で Quality 非表示中は skip。
+  // ============================================================
+  function renderPermissionSkillBreakdown(items) {
+    if (document.body.dataset.activePage !== 'quality') return;
+    const tbody = document.querySelector('#quality-perm-skill tbody');
+    const sub = document.getElementById('quality-perm-skill-sub');
+    if (!tbody) return;
+    const list = Array.isArray(items) ? items : [];
+    if (list.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="4" class="empty">permission prompt なし</td></tr>';
+    } else {
+      tbody.innerHTML = list.map(it => {
+        const c = it.prompt_count || 0;
+        const inv = it.invocation_count || 0;
+        const rate = it.permission_rate || 0;
+        const rateClass = rate >= 0.5 ? 'num rate-warn' : 'num';
+        const al = it.skill + ': ' + c + ' prompts / ' + inv + ' invocations (' + Math.round(rate * 100) + '%)';
+        return '<tr data-tip="perm-skill" data-name="' + esc(it.skill) +
+          '" data-c="' + c + '" data-inv="' + inv + '" data-rate="' + rate +
+          '" tabindex="0" role="row" aria-label="' + esc(al) + '">' +
+          '<td class="name">' + esc(it.skill) + '</td>' +
+          '<td class="num">' + fmtN(c) + '</td>' +
+          '<td class="num dim">' + fmtN(inv) + '</td>' +
+          '<td class="' + rateClass + '">' + Math.round(rate * 100) + '%</td>' +
+          '</tr>';
+      }).join('');
+    }
+    if (sub) sub.textContent = list.length + ' skill(s)';
+  }
+
+  function renderPermissionSubagentBreakdown(items) {
+    if (document.body.dataset.activePage !== 'quality') return;
+    const tbody = document.querySelector('#quality-perm-subagent tbody');
+    const sub = document.getElementById('quality-perm-subagent-sub');
+    if (!tbody) return;
+    const list = Array.isArray(items) ? items : [];
+    if (list.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="4" class="empty">permission prompt なし</td></tr>';
+    } else {
+      tbody.innerHTML = list.map(it => {
+        const c = it.prompt_count || 0;
+        const inv = it.invocation_count || 0;
+        const rate = it.permission_rate || 0;
+        const rateClass = rate >= 0.5 ? 'num rate-warn' : 'num';
+        const al = it.subagent_type + ': ' + c + ' prompts / ' + inv + ' invocations (' + Math.round(rate * 100) + '%)';
+        return '<tr data-tip="perm-subagent" data-name="' + esc(it.subagent_type) +
+          '" data-c="' + c + '" data-inv="' + inv + '" data-rate="' + rate +
+          '" tabindex="0" role="row" aria-label="' + esc(al) + '">' +
+          '<td class="name">' + esc(it.subagent_type) + '</td>' +
+          '<td class="num">' + fmtN(c) + '</td>' +
+          '<td class="num dim">' + fmtN(inv) + '</td>' +
+          '<td class="' + rateClass + '">' + Math.round(rate * 100) + '%</td>' +
+          '</tr>';
+      }).join('');
+    }
+    if (sub) sub.textContent = list.length + ' subagent type(s)';
+  }
+
+  // ============================================================
+  //  Compact density (Issue #61 / A3) — histogram + worst sessions
+  // ============================================================
+  function renderCompactDensity(payload) {
+    if (document.body.dataset.activePage !== 'quality') return;
+    const histRoot = document.getElementById('quality-compact-hist');
+    const worstTbody = document.querySelector('#quality-compact-worst tbody');
+    const sub = document.getElementById('quality-compact-sub');
+    const data = (payload && typeof payload === 'object') ? payload : {};
+    const hist = (data.histogram && typeof data.histogram === 'object') ? data.histogram : {};
+    const worst = Array.isArray(data.worst_sessions) ? data.worst_sessions : [];
+
+    // histogram SVG (4 bars)
+    const buckets = ['0', '1', '2', '3+'];
+    const counts = buckets.map(b => Number(hist[b] || 0));
+    const maxC = Math.max(1, ...counts);
+    const W = 360, H = 180, padL = 28, padR = 12, padT = 18, padB = 30;
+    const innerW = W - padL - padR;
+    const innerH = H - padT - padB;
+    const barW = (innerW / buckets.length) * 0.6;
+    const gap = (innerW - barW * buckets.length) / (buckets.length + 1);
+
+    if (histRoot) {
+      let svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Compact 回数 histogram (per session)">';
+      buckets.forEach((b, i) => {
+        const c = counts[i];
+        const h = (c / maxC) * innerH;
+        const x = padL + gap + i * (barW + gap);
+        const y = padT + innerH - h;
+        const al = b + ' compact(s): ' + c + ' session(s)';
+        svg += '<rect class="bar" x="' + x + '" y="' + y + '" width="' + barW +
+          '" height="' + h + '" data-tip="histogram" data-bucket="' + esc(b) +
+          '" data-c="' + c + '" tabindex="0" role="img" aria-label="' + esc(al) + '"/>';
+        svg += '<text class="bar-num" x="' + (x + barW / 2) + '" y="' + (y - 4) + '">' + c + '</text>';
+        svg += '<text class="axis-label" x="' + (x + barW / 2) + '" y="' + (H - 10) +
+          '" text-anchor="middle">' + esc(b) + '</text>';
+      });
+      svg += '</svg>';
+      histRoot.innerHTML = svg;
+    }
+
+    // worst sessions table
+    if (worstTbody) {
+      if (worst.length === 0) {
+        worstTbody.innerHTML = '<tr><td colspan="3" class="empty">compact なし</td></tr>';
+      } else {
+        worstTbody.innerHTML = worst.map(w => {
+          const sid = w.session_id || '';
+          const sidShort = sid.length > 8 ? sid.slice(0, 8) : sid;
+          const proj = w.project || '';
+          const c = w.count || 0;
+          // P3 反映: 空 project は (unknown) ラベルで明示。空セルだと「データ欠損」と
+          // 「project が空文字」が見分けつかなくなる UX 問題を回避。
+          const projCell = proj === '' ? '<span class="dim">(unknown)</span>' : esc(proj);
+          const projForLabel = proj === '' ? 'unknown' : proj;
+          const al = sidShort + ' (' + projForLabel + '): ' + c + ' compacts';
+          return '<tr data-tip="worst-session" data-sid="' + esc(sid) + '" data-proj="' + esc(proj) +
+            '" data-c="' + c + '" tabindex="0" role="row" aria-label="' + esc(al) + '">' +
+            '<td class="sid" title="' + esc(sid) + '">' + esc(sidShort) + '</td>' +
+            '<td class="proj">' + projCell + '</td>' +
+            '<td class="num">' + fmtN(c) + '</td>' +
+            '</tr>';
+        }).join('');
+      }
+    }
+
+    if (sub) {
+      const total = counts.reduce((a, b) => a + b, 0);
+      sub.textContent = total + ' session(s) tracked';
+    }
+  }
+
   function fmtDur(ms) {
     if (ms == null || ms === '') return '-';
     const v = Number(ms);
@@ -2041,6 +2332,46 @@
         html: '<span class="ttl">' + esc(name) + '</span>' +
               '<span class="lbl">' + esc(w) + '</span>' +
               '<span class="val">' + Math.round(rate * 100) + '% (' + fc + '/' + c + ')</span>'
+      };
+    }
+    if (kind === 'perm-skill' || kind === 'perm-subagent') {
+      // permission breakdown row (Issue #61 / A2)
+      const name = el.getAttribute('data-name') || '';
+      const c = el.getAttribute('data-c') || '0';
+      const inv = el.getAttribute('data-inv') || '0';
+      const rate = parseFloat(el.getAttribute('data-rate') || '0');
+      return {
+        kind,
+        html: '<span class="ttl">' + esc(name) + '</span>' +
+              '<span class="lbl">prompts</span><span class="val">' + fmtN(c) + '</span>' +
+              '<span class="sep">·</span>' +
+              '<span class="lbl">invocations</span><span class="val">' + fmtN(inv) + '</span>' +
+              '<span class="sep">·</span>' +
+              '<span class="lbl">rate</span><span class="val">' + Math.round(rate * 100) + '%</span>'
+      };
+    }
+    if (kind === 'histogram') {
+      // compact density histogram bar (Issue #61 / A3)
+      const bucket = el.getAttribute('data-bucket') || '';
+      const c = el.getAttribute('data-c') || '0';
+      return {
+        kind: 'histogram',
+        html: '<span class="ttl">' + esc(bucket) + ' compact(s)</span>' +
+              '<span class="lbl">sessions</span><span class="val">' + fmtN(c) + '</span>'
+      };
+    }
+    if (kind === 'worst-session') {
+      // worst-session row (Issue #61 / A3)
+      const sid = el.getAttribute('data-sid') || '';
+      const proj = el.getAttribute('data-proj') || '';
+      const c = el.getAttribute('data-c') || '0';
+      const projDisplay = proj === '' ? '(unknown)' : proj;
+      return {
+        kind: 'worst-session',
+        html: '<span class="ttl">' + esc(sid) + '</span>' +
+              '<span class="lbl">project</span><span class="val">' + esc(projDisplay) + '</span>' +
+              '<span class="sep">·</span>' +
+              '<span class="lbl">compacts</span><span class="val">' + fmtN(c) + '</span>'
       };
     }
     return null;

@@ -20,6 +20,7 @@ from subagent_metrics import (
     aggregate_subagent_failure_trend,
     aggregate_subagent_metrics,
     usage_invocation_events,
+    usage_invocation_intervals,
 )
 # Issue #24 PR#31 codex P2: server.json の lock + compare-and-delete primitives は
 # `server_registry` に切り出して `hooks/launch_dashboard.py` の cleanup パスと
@@ -302,6 +303,256 @@ def aggregate_hourly_heatmap(usage_events: list[dict]) -> dict:
     return {"timezone": "UTC", "buckets": buckets}
 
 
+# Issue #61 / A2: permission notification を直前 skill_tool / subagent invocation に
+# 帰属させる際の backward fallback 窓 (秒)。execution-window (interval-cover) で拾えない
+# permission を「直前 30 秒以内に終了した invocation」に紐付けるためのもの。
+# 値の根拠は Issue #61 本文。実機 orphan ratio (= attribution 失敗 / 全 permission)
+# を見て fine-tune する (memory/friction_signals.md 参照)。
+PERMISSION_LINK_WINDOW_SECONDS = 30
+
+
+def _skill_event_interval(ev: dict) -> tuple[float, float]:
+    """skill_tool event の execution interval `[end - duration, end]` を返す。
+
+    skill_tool の timestamp は PostToolUse 発火時刻 = ツール終了時刻なので、
+    `end_ts = ev.timestamp` / `start_ts = end_ts - duration_ms/1000`。
+    duration_ms 不在 / 不正 timestamp は `start == end` (point interval) に倒す。
+
+    subagent 側は `subagent_metrics.usage_invocation_intervals()` に委譲する
+    (subagent_metrics.py の責務スコープ内)。skill_tool 側は本モジュール内に残置:
+    skill_tool は subagent_metrics.py の責務スコープ外なので、共有化圧力 = reports
+    /summary.py 等が同 algorithm を必要とする — が来たときに改めて移管先を判断する。
+    """
+    ts_str = ev.get("timestamp", "")
+    try:
+        dt = datetime.fromisoformat(ts_str)
+    except (TypeError, ValueError):
+        return (0.0, 0.0)
+    end = dt.timestamp()
+    duration_ms = ev.get("duration_ms")
+    if not isinstance(duration_ms, (int, float)) or duration_ms <= 0:
+        return (end, end)
+    return (end - float(duration_ms) / 1000.0, end)
+
+
+def _attribute_permission(
+    notif_ts: float,
+    skill_candidates: list[tuple[float, float, dict]],
+    subagent_candidates: list[tuple[float, float, dict]],
+) -> tuple[str, dict] | None:
+    """1 notification を skill / subagent 候補列から「直近 1 個」に帰属させる。
+
+    `(start_ts, end_ts, ev)` の tuple 列を受け取り、execution interval covers
+    (`start_ts <= notif_ts <= end_ts`) 優先 / なければ backward window
+    (`end_ts <= notif_ts <= end_ts + PERMISSION_LINK_WINDOW_SECONDS`) で候補化。
+    skill / subagent をまとめて評価し、最も直近 (covers なら start_ts 最大、
+    after なら end_ts 最大) の 1 個に帰属させる。どちらの window にも入らなければ
+    `None` を返す (= orphan permission)。
+
+    返り値: `("skill" | "subagent", ev)` または `None`。
+    """
+    covers: list[tuple[float, str, dict]] = []
+    afters: list[tuple[float, str, dict]] = []
+    for kind, candidates in (("skill", skill_candidates), ("subagent", subagent_candidates)):
+        for start_ts, end_ts, ev in candidates:
+            if start_ts <= notif_ts <= end_ts:
+                covers.append((start_ts, kind, ev))
+            elif end_ts <= notif_ts <= end_ts + PERMISSION_LINK_WINDOW_SECONDS:
+                afters.append((end_ts, kind, ev))
+    if covers:
+        # covers: 直近 = start_ts が最大 (= notification 直前に始まった interval)
+        covers.sort(key=lambda x: x[0], reverse=True)
+        _, kind, ev = covers[0]
+        return (kind, ev)
+    if afters:
+        afters.sort(key=lambda x: x[0], reverse=True)
+        _, kind, ev = afters[0]
+        return (kind, ev)
+    return None
+
+
+def aggregate_permission_breakdowns(events: list[dict], top_n: int = TOP_N) -> dict:
+    """notification(permission) を直前 skill_tool / subagent invocation に帰属させる。
+
+    algorithm: execution-window (interval-cover) 優先 + backward fallback の 2 段階。
+    long-running subagent の途中で発火した permission を構造的に取りこぼさないため
+    interval-cover を併用する。1 notification は **skill OR subagent の 1 候補のみ**
+    に帰属 (= skill table と subagent table の prompt_count は disjoint で合算可能)。
+
+    user_slash_command は対象外 (Issue 本文「`skill_tool` / `subagent_start`」明記;
+    slash command はモデル発話の prefix で tool 実行を伴わず permission の起因に
+    ならない)。subagent invocation の interval 解釈は
+    `subagent_metrics.usage_invocation_intervals()` に委譲する (paired stop の
+    duration_ms を fallback に使うことで lifecycle-only invocation の interval
+    縮退を防ぐ)。
+
+    sort: prompt_count 降順 → 同点は name 昇順。`prompt_count == 0` は出力から除外
+    (top-N は prompt_count 降順で切る慣習)。`permission_rate > 1.0` は normal な
+    状態 (1 invocation で複数 permission) なので clamp しない。
+
+    返り値: `{"skill": [...], "subagent": [...]}` 各要素は
+        skill: `{"skill": str, "prompt_count": int, "invocation_count": int, "permission_rate": float}`
+        subagent: `{"subagent_type": str, "prompt_count": int, "invocation_count": int, "permission_rate": float}`
+    """
+    # session 単位で skill_tool / subagent invocation / notification を集める
+    skill_by_session: dict[str, list[dict]] = {}
+    notif_by_session: dict[str, list[dict]] = {}
+    for ev in events:
+        et = ev.get("event_type")
+        session = ev.get("session_id", "")
+        if not session:
+            continue
+        if et == "skill_tool":
+            skill_by_session.setdefault(session, []).append(ev)
+        elif et == "notification" and ev.get("notification_type") in _PERMISSION_NOTIFICATION_TYPES:
+            notif_by_session.setdefault(session, []).append(ev)
+
+    # subagent invocation は usage_invocation_intervals で dedup 済み 1 invocation 1 interval を取る。
+    # paired stop の duration_ms を fallback に使うため lifecycle-only invocation
+    # (`record_subagent.py` は subagent_lifecycle_start に duration_ms を書かない)
+    # でも interval が point に縮退せず長時間 invocation 中の permission を拾える。
+    subagent_intervals_by_session: dict[str, list[tuple[float, float, dict]]] = {}
+    for start_ts, end_ts, ev in usage_invocation_intervals(events):
+        session = ev.get("session_id", "")
+        if not session:
+            continue
+        if start_ts == 0.0 and end_ts == 0.0:
+            continue
+        subagent_intervals_by_session.setdefault(session, []).append((start_ts, end_ts, ev))
+
+    # invocation_count は metrics と一致させる (drift guard)
+    subagent_metrics_by_name = aggregate_subagent_metrics(events)
+    skill_invocation_count: Counter = Counter()
+    for evs in skill_by_session.values():
+        for ev in evs:
+            name = ev.get("skill", "")
+            if name:
+                skill_invocation_count[name] += 1
+
+    skill_prompt_count: Counter = Counter()
+    subagent_prompt_count: Counter = Counter()
+    for session in set(notif_by_session) | set(skill_by_session) | set(subagent_intervals_by_session):
+        notifs = sorted(notif_by_session.get(session, []), key=lambda e: e.get("timestamp", ""))
+        skill_candidates: list[tuple[float, float, dict]] = []
+        for ev in skill_by_session.get(session, []):
+            start_ts, end_ts = _skill_event_interval(ev)
+            if start_ts == 0.0 and end_ts == 0.0:
+                continue
+            skill_candidates.append((start_ts, end_ts, ev))
+        subagent_candidates: list[tuple[float, float, dict]] = list(
+            subagent_intervals_by_session.get(session, [])
+        )
+        for notif in notifs:
+            try:
+                notif_ts = datetime.fromisoformat(notif.get("timestamp", "")).timestamp()
+            except (TypeError, ValueError):
+                continue
+            attr = _attribute_permission(notif_ts, skill_candidates, subagent_candidates)
+            if attr is None:
+                continue
+            kind, ev = attr
+            if kind == "skill":
+                name = ev.get("skill", "")
+                if name:
+                    skill_prompt_count[name] += 1
+            else:
+                name = ev.get("subagent_type", "")
+                if name:
+                    subagent_prompt_count[name] += 1
+
+    skill_items = []
+    for name, prompt in skill_prompt_count.items():
+        inv = skill_invocation_count.get(name, 0)
+        if inv == 0:
+            continue
+        skill_items.append({
+            "skill": name,
+            "prompt_count": prompt,
+            "invocation_count": inv,
+            "permission_rate": prompt / inv,
+        })
+    skill_items.sort(key=lambda r: (-r["prompt_count"], r["skill"]))
+    skill_items = skill_items[:top_n]
+
+    subagent_items = []
+    for name, prompt in subagent_prompt_count.items():
+        inv = subagent_metrics_by_name.get(name, {}).get("count", 0)
+        if inv == 0:
+            continue
+        subagent_items.append({
+            "subagent_type": name,
+            "prompt_count": prompt,
+            "invocation_count": inv,
+            "permission_rate": prompt / inv,
+        })
+    subagent_items.sort(key=lambda r: (-r["prompt_count"], r["subagent_type"]))
+    subagent_items = subagent_items[:top_n]
+
+    return {"skill": skill_items, "subagent": subagent_items}
+
+
+def aggregate_compact_density(events: list[dict], top_n: int = TOP_N) -> dict:
+    """session 単位 compact_start を集計し histogram (0/1/2/3+) と worst_sessions を返す。
+
+    histogram bucket:
+      - "0": session_start を持つ session のうち compact_start 0 件
+      - "1" / "2": 同 1 件 / 2 件
+      - "3+": 同 3 件以上 (3 / 4 / 5 ... すべて同じ bucket)
+
+    session pool は **session_start event の session_id 集合**。compact_start のみで
+    session_start が無い orphan session_id は histogram から除外 (= 0 bucket への
+    混入を避ける) するが worst_sessions には載せる。histogram の 0 bucket 分母を
+    「実観測 session 数」に揃えるため。
+
+    worst_sessions: 全 compact_start を session_id で groupby し count 降順で top_n。
+    同点は session_id 昇順。各要素 `{"session_id": str, "count": int, "project": str}`。
+    project は当該 session の **最後に観測した** compact_start.project (空なら "")。
+
+    返り値:
+      `{"histogram": {"0": int, "1": int, "2": int, "3+": int},
+        "worst_sessions": [{"session_id": str, "count": int, "project": str}]}`
+    """
+    session_pool: set[str] = set()
+    compact_count_by_session: Counter = Counter()
+    last_project_by_session: dict[str, str] = {}
+    for ev in events:
+        et = ev.get("event_type")
+        session = ev.get("session_id", "")
+        if not session:
+            continue
+        if et == "session_start":
+            session_pool.add(session)
+        elif et == "compact_start":
+            compact_count_by_session[session] += 1
+            project = ev.get("project", "")
+            last_project_by_session[session] = project
+
+    histogram = {"0": 0, "1": 0, "2": 0, "3+": 0}
+    for session in session_pool:
+        count = compact_count_by_session.get(session, 0)
+        if count == 0:
+            histogram["0"] += 1
+        elif count == 1:
+            histogram["1"] += 1
+        elif count == 2:
+            histogram["2"] += 1
+        else:
+            histogram["3+"] += 1
+
+    worst_sessions = [
+        {
+            "session_id": session,
+            "count": count,
+            "project": last_project_by_session.get(session, ""),
+        }
+        for session, count in compact_count_by_session.items()
+    ]
+    worst_sessions.sort(key=lambda r: (-r["count"], r["session_id"]))
+    worst_sessions = worst_sessions[:top_n]
+
+    return {"histogram": histogram, "worst_sessions": worst_sessions}
+
+
 def aggregate_session_stats(events: list[dict]) -> dict:
     total_sessions = 0
     resume_count = 0
@@ -347,6 +598,7 @@ def load_health_alerts() -> list[dict]:
 
 def build_dashboard_data(events: list[dict]) -> dict:
     usage_events = _filter_usage_events(events)
+    permission_breakdowns = aggregate_permission_breakdowns(events)
     return {
         "last_updated": _now_iso(),
         "total_events": len(usage_events),
@@ -358,6 +610,9 @@ def build_dashboard_data(events: list[dict]) -> dict:
         "skill_cooccurrence": aggregate_skill_cooccurrence(events),
         "project_skill_matrix": aggregate_project_skill_matrix(events),
         "subagent_failure_trend": aggregate_subagent_failure_trend(events),
+        "permission_prompt_skill_breakdown": permission_breakdowns["skill"],
+        "permission_prompt_subagent_breakdown": permission_breakdowns["subagent"],
+        "compact_density": aggregate_compact_density(events),
         "session_stats": aggregate_session_stats(events),
         "health_alerts": load_health_alerts(),
     }
