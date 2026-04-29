@@ -17,6 +17,7 @@
 """
 # pylint: disable=line-too-long
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -250,9 +251,15 @@ class TestLocalDailyFromHourlyNode(unittest.TestCase):
             + "const __out = localDailyFromHourly(__input);\n"
             + "process.stdout.write(JSON.stringify(__out));\n"
         )
+        # `os.environ` を継承して TZ だけ override する。env 全体を minimal dict で
+        # 置き換える書き方だと Windows で `SystemRoot` 等が消えて Node の CSPRNG
+        # (bcrypt) 初期化が `Assertion failed: ncrypto::CSPRNG(nullptr, 0)` で死ぬ。
+        # Linux/macOS では PATH=/usr/bin:/bin だけで動いていたが Windows CI で発覚。
+        env = os.environ.copy()
+        env["TZ"] = tz
         proc = subprocess.run(
             [_NODE, "-e", script],
-            env={"TZ": tz, "PATH": "/usr/bin:/bin:/usr/local/bin"},
+            env=env,
             capture_output=True,
             text=True,
             check=False,
