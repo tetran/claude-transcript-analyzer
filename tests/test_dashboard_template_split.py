@@ -34,7 +34,10 @@ _DASHBOARD_PATH = Path(__file__).parent.parent / "dashboard" / "server.py"
 #   - f53d0dab...: Issue #69 UX 調整 / toast を横方向中央寄せ + coral 系 color に変更
 #   - a4885a23...: Issue #69 UX 調整 / toast 表示時間を 4s → 6s に延長
 #   - f7bcb6b0...: Issue #69 UX 調整 / toast fade-out transition を 240ms 完走させる二段 timer 設計
-EXPECTED_TEMPLATE_SHA256 = "f7bcb6b02968bb2b1dd1672cb9938a8638055c197b1b04ee841e68950eed3054"
+#   - 42d23915...: Issue #69 UX 調整 / 表示中上書き時の slide-in 再生 + 表示時間を 6s → 4s に戻す
+#   - 2964f3e9...: Issue #69 UX 調整 / requestAnimationFrame で frame 分割 (style 変更 collapse 回避)
+#   - e787b78b...: Issue #69 UX 調整 / CSS animation (@keyframes toast-in/out) に切替 (CSS transition 方式は実機で再生されない問題への対処)
+EXPECTED_TEMPLATE_SHA256 = "e787b78b9d4bdf106972f9675dc3f033bf55dbca2c0370e1def44a9119c6b4be"
 
 
 def _load_dashboard_module(tmp_path: Path):

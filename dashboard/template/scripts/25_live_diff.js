@@ -11,7 +11,7 @@
   //   するため、per-element timer state は WeakMap (NOT Map) で持つ。
   let __livePrev = null;
   let __toastTimer = null;       // display 期間終了 → fade-out 開始 timer
-  let __toastFadeTimer = null;   // fade-out transition 終了 → hidden = true timer
+  let __toastFadeTimer = null;   // fade-out animation 終了 → hidden = true timer
   const __highlightTimers = new WeakMap();
 
   // KPI / lede / ranking row のラベル定義。toast 対象 (LABEL テーブル) と
@@ -28,7 +28,7 @@
   ];
   const __TOAST_MAX_SEGMENTS = 4;
   const __HIGHLIGHT_MS = 1500;
-  const __TOAST_MS = 6000;
+  const __TOAST_MS = 4000;
   // CSS の `.toast { transition: opacity 240ms ease, transform 240ms ease }` と同期。
   // `.show` を remove したあと `__TOAST_FADE_MS` 経過してから `hidden = true` にする
   // ことで fade-out transition を見える状態で完走させる (display: none で transition
@@ -187,23 +187,33 @@
       el.hidden = true;
       el.textContent = '';
       el.classList.remove('show');
+      el.classList.remove('fading');
       return;
     }
     el.textContent = msg;
     el.hidden = false;
+    // 「上書きされた」signal を確実に出すため CSS animation (@keyframes toast-in)
+    // を毎回再起動する。CSS transition (前後値の差分判定) ではなく CSS animation
+    // (class が付いた瞬間に再生) を使うことで、表示中の toast に re-trigger が
+    // 来ても reflow trick (`.remove + offsetWidth + .add`) で確実に slide-in が
+    // 再生される (CSS transition 方式だと Browser が同フレーム内の連続 style 変更を
+    // collapse して transition を skip する問題があり、実機検証で動かないことを確認済)。
+    //
+    // prefers-reduced-motion 環境では CSS 側で animation を無効化し opacity の
+    // transition のみ残す (10_components.css 参照)。
     el.classList.remove('show');
+    el.classList.remove('fading');
     void el.offsetWidth;
     el.classList.add('show');
     __toastTimer = setTimeout(() => {
-      // fade-out transition を発火。`.show` を remove することで CSS の
-      // `opacity: 1 → 0` / `transform: translate(-50%, 0) → translate(-50%, -6px)`
-      // が走り出す。display: none を即座に当てると transition が打ち切られるため、
-      // __TOAST_FADE_MS 後に `hidden = true` にする (順序が逆だと fade-out が
-      // 視覚的に見えない)。
+      // fade-out animation (@keyframes toast-out) を発火。display: none を即座に
+      // 当てると animation が打ち切られるため、__TOAST_FADE_MS 後に hidden = true。
       el.classList.remove('show');
+      el.classList.add('fading');
       __toastTimer = null;
       __toastFadeTimer = setTimeout(() => {
         el.hidden = true;
+        el.classList.remove('fading');
         __toastFadeTimer = null;
       }, __TOAST_FADE_MS);
     }, __TOAST_MS);

@@ -345,11 +345,12 @@
   }
 
   /* Toast — 横方向中央寄せ + coral 系 attention color。
-     transform: translateX(-50%) は center 配置のため常に必要。slide-in 用の
-     translateY は show class の有無で 0 / -6px に切り替える (translate 関数で
-     X/Y 同時指定)。reduced-motion 環境では translateX(-50%) のみ残し translateY
-     を 0 固定にすることで "static center" を保つ (CSS で translate を完全 unset
-     すると左寄せに戻ってしまうため)。 */
+     transform: translateX(-50%) は center 配置のため常に必要 (translate 関数で
+     X/Y 同時指定)。slide-in / fade-out は CSS @keyframes で実装。CSS transition
+     方式だと表示中の上書き re-trigger 時に Browser が同フレーム内の連続 style 変更を
+     collapse して transition を skip する問題がある (実機検証で確認)。CSS animation
+     は class の remove → reflow → add で確実に再起動する classic pattern を取れる
+     ため、「上書きされた」signal を毎回確実に見せられる。 */
   .toast {
     position: fixed;
     top: 14px;
@@ -366,16 +367,30 @@
     opacity: 0;
     transform: translate(-50%, -6px);
     pointer-events: none;
-    transition: opacity 240ms ease, transform 240ms ease;
+  }
+  @keyframes toast-in {
+    from { opacity: 0; transform: translate(-50%, -6px); }
+    to   { opacity: 1; transform: translate(-50%, 0); }
+  }
+  @keyframes toast-out {
+    from { opacity: 1; transform: translate(-50%, 0); }
+    to   { opacity: 0; transform: translate(-50%, -6px); }
   }
   .toast.show {
     opacity: 1;
     transform: translate(-50%, 0);
+    animation: toast-in 240ms ease both;
+  }
+  .toast.fading {
+    opacity: 0;
+    transform: translate(-50%, -6px);
+    animation: toast-out 240ms ease forwards;
   }
 
   @media (prefers-reduced-motion: reduce) {
     /* pulse keyframe を切って静止 outline のみで「変化があった」signal を残す。
-       toast の slide-in も opacity fade のみに簡略化。 */
+       toast の slide も止めて opacity fade のみに簡略化 (translate(-50%, 0) は
+       center 配置のため必須なので keep)。 */
     .kpi.bumped,
     .lede .num.bumped,
     .rank-row.bumped {
@@ -384,11 +399,15 @@
       outline-offset: 1px;
     }
     .toast {
+      transform: translate(-50%, 0);
+    }
+    .toast.show,
+    .toast.fading {
+      animation: none !important;
+      transform: translate(-50%, 0);
       transition: opacity 200ms ease;
-      transform: translate(-50%, 0);
     }
-    .toast.show {
-      transform: translate(-50%, 0);
-    }
+    .toast.show { opacity: 1; }
+    .toast.fading { opacity: 0; }
   }
 

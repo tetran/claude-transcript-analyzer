@@ -100,6 +100,61 @@ class TestLiveDiffJsStructure:
         assert "new WeakMap(" in body, \
             "25_live_diff.js に new WeakMap(...) が無い (timer state は WeakMap 必須)"
 
+    def test_show_live_toast_replays_slide_in_on_overwrite(self):
+        """表示中の toast に上書き表示が来たとき slide-in animation を再生する構造。
+
+        CSS transition 方式では Browser が同フレーム内の連続 style 変更を collapse
+        して transition を skip する問題があり、実機で「text だけ瞬時置換」になる。
+        CSS animation (@keyframes toast-in) を使い、reflow trick (`.remove + offsetWidth
+        + .add`) で確実に animation を再起動する classic pattern を pin する。
+
+        pins:
+          - @keyframes toast-in / toast-out が CSS に含まれる (concat 後 _HTML_TEMPLATE)
+          - .toast.show に animation: toast-in が適用される
+          - showLiveToast で `.show` remove → reflow → re-add の順序がある
+        """
+        body = _read(_LIVE_DIFF_JS)
+        match = re.search(
+            r"function\s+showLiveToast\s*\([^)]*\)\s*\{",
+            body,
+        )
+        assert match is not None
+        start = match.end()
+        depth = 1
+        i = start
+        while i < len(body) and depth > 0:
+            if body[i] == "{":
+                depth += 1
+            elif body[i] == "}":
+                depth -= 1
+            i += 1
+        fn_body = body[start:i - 1]
+        # `.show` を一度 remove してから reflow trick を経て再 add する pattern
+        assert "classList.remove('show')" in fn_body, \
+            "showLiveToast に classList.remove('show') が無い (animation 再起動の起点)"
+        assert "void el.offsetWidth" in fn_body, \
+            "showLiveToast に void el.offsetWidth が無い (CSS animation 再起動の reflow trick)"
+        assert "classList.add('show')" in fn_body, \
+            "showLiveToast に classList.add('show') が無い (animation 再起動の終点)"
+        # 順序確認: remove('show') → offsetWidth → add('show')
+        i_rem = fn_body.find("classList.remove('show')")
+        i_reflow = fn_body.find("void el.offsetWidth")
+        i_add = fn_body.find("classList.add('show')")
+        assert i_rem < i_reflow < i_add, \
+            "showLiveToast の reflow trick 順序が誤っている (remove → reflow → add でないと animation 再起動しない)"
+        # CSS 側に @keyframes toast-in / toast-out が定義されている
+        css_body = _read(_COMPONENTS_CSS)
+        assert "@keyframes toast-in" in css_body, \
+            "10_components.css に @keyframes toast-in が無い (CSS animation 不在)"
+        assert "@keyframes toast-out" in css_body, \
+            "10_components.css に @keyframes toast-out が無い (fade-out animation 不在)"
+        # .toast.show に animation: toast-in が当たる
+        assert re.search(r"\.toast\.show\s*\{[^}]*animation:\s*toast-in", css_body), \
+            ".toast.show に animation: toast-in が当たっていない (slide-in 再生されない)"
+        # .toast.fading に animation: toast-out が当たる
+        assert re.search(r"\.toast\.fading\s*\{[^}]*animation:\s*toast-out", css_body), \
+            ".toast.fading に animation: toast-out が当たっていない (fade-out 再生されない)"
+
     def test_show_live_toast_fade_out_completes_before_hidden(self):
         """showLiveToast の fade-out transition が display: none で打ち切られない構造。
 
