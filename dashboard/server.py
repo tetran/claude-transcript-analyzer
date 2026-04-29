@@ -16,7 +16,11 @@ from typing import Callable, Optional
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from subagent_metrics import aggregate_subagent_metrics, usage_invocation_events
+from subagent_metrics import (
+    aggregate_subagent_failure_trend,
+    aggregate_subagent_metrics,
+    usage_invocation_events,
+)
 # Issue #24 PR#31 codex P2: server.json の lock + compare-and-delete primitives は
 # `server_registry` に切り出して `hooks/launch_dashboard.py` の cleanup パスと
 # 共有する。本モジュール内では従来 API 名で再 export し、既存テスト
@@ -353,6 +357,7 @@ def build_dashboard_data(events: list[dict]) -> dict:
         "hourly_heatmap": aggregate_hourly_heatmap(usage_events),
         "skill_cooccurrence": aggregate_skill_cooccurrence(events),
         "project_skill_matrix": aggregate_project_skill_matrix(events),
+        "subagent_failure_trend": aggregate_subagent_failure_trend(events),
         "session_stats": aggregate_session_stats(events),
         "health_alerts": load_health_alerts(),
     }

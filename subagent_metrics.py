@@ -2,8 +2,9 @@
 
 dashboard/server.py と reports/summary.py の両方から利用される。
 """
+import statistics
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 # subagent_start (PostToolUse 由来) と subagent_lifecycle_start (SubagentStart 由来) を
 # 同一 invocation とみなすための時間ウィンドウ。Claude Code は両 hook をほぼ同時に発火するため
@@ -168,6 +169,27 @@ def _aggregate_bucket(
     return name, len(invocations), failures, durations
 
 
+def _percentiles(durations: list[float]) -> tuple[float | None, float | None, float | None]:
+    """duration list から (p50, p90, p99) を返す。
+
+    - 空 → (None, None, None)
+    - 1 件 → 全 percentile が data[0] (退化扱い)
+    - 2 件以上 → `statistics.quantiles(n=100, method="inclusive")` で 99 cuts を取り
+      index 49/89/98 を採用
+
+    `method="inclusive"` は **Excel `PERCENTILE.INC` 等価** (端点を含めた線形補間)。
+    numpy の `method="linear"` (exclusive endpoints) とは別物なので「numpy default 等価」
+    という言い方はしない (Issue #60 / P1)。
+    """
+    if not durations:
+        return (None, None, None)
+    if len(durations) == 1:
+        v = durations[0]
+        return (v, v, v)
+    cuts = statistics.quantiles(durations, n=100, method="inclusive")
+    return (cuts[49], cuts[89], cuts[98])
+
+
 def _build_metrics(
     type_count: Counter,
     failure_counter: Counter,
@@ -178,13 +200,136 @@ def _build_metrics(
     for name, count in type_count.items():
         failure = failure_counter.get(name, 0)
         durations = invocation_durations.get(name, [])
+        p50, p90, p99 = _percentiles(durations)
         metrics[name] = {
             "count": count,
             "failure_count": failure,
             "failure_rate": (failure / count) if count else 0.0,
             "avg_duration_ms": (sum(durations) / len(durations)) if durations else None,
+            # ── Issue #60 / A5: percentile + sample_count (additive) ──
+            "p50_duration_ms": p50,
+            "p90_duration_ms": p90,
+            "p99_duration_ms": p99,
+            "sample_count": len(durations),
         }
     return metrics
+
+
+def _bucket_invocation_records(
+    invocations: list[dict], stops_sorted: list[dict], name: str
+) -> list[dict]:
+    """1 バケット (session×type) の invocation 単位 [(timestamp, name, failed)] を返す。
+
+    ペアリング戦略は `_process_bucket` と同じ:
+      - starts と stops の件数が一致 → 1:1 ペアリング (同 invocation の重複発火扱い)
+      - 件数不一致 → start.success=False は「起動失敗で stop なし」とみなし stop プールを
+        進めず failed=True
+
+    余り stops (`stops_sorted[len(invocations):]`) は **record 化しない**。
+    invocation 単位集計なので stop 単独イベントは trend に寄与しないのが正解。
+    `_process_bucket` 側も余り stop の failure はカウントしないため、両者の failure_count は
+    **構造的に一致** する (Issue #60 / Q1 drift guard / 2-P1)。
+    """
+    paired_stops = len(invocations) == len(stops_sorted)
+    stop_idx = 0
+    records: list[dict] = []
+    for inv in invocations:
+        start = inv.get("start")
+        lifecycle = inv.get("lifecycle")
+        rep = start or lifecycle
+        ts = rep.get("timestamp", "") if rep else ""
+        start_failed = bool(start) and start.get("success") is False
+        if start_failed and not paired_stops:
+            failed = True
+        else:
+            stop = stops_sorted[stop_idx] if stop_idx < len(stops_sorted) else None
+            if stop is not None:
+                stop_idx += 1
+            stop_failed = bool(stop) and stop.get("success") is False
+            failed = start_failed or stop_failed
+        records.append({"timestamp": ts, "subagent_type": name, "failed": failed})
+    return records
+
+
+def invocation_records(events: list[dict]) -> list[dict]:
+    """各 invocation を `{"timestamp": str, "subagent_type": str, "failed": bool}` で返す。
+
+    `aggregate_subagent_metrics` と同じ invocation 同定 (`_bucket_events` +
+    `_build_invocations` + start↔stop pairing) を使い、各 invocation の
+    `failed` flag (start.success=False OR stop.success=False) を計算する。
+    timestamp は invocation の代表時刻 = `start.timestamp` 優先 / 無ければ `lifecycle.timestamp`。
+
+    用途: 週次 trend (`aggregate_subagent_failure_trend`) の入力など、invocation 単位
+    時系列が必要な集計のための共通 helper (Issue #60 / B3)。
+    """
+    starts_by_key, stops_by_key, lifecycle_by_key = _bucket_events(events)
+    result: list[dict] = []
+    for key in set(starts_by_key) | set(lifecycle_by_key):
+        _, name = key
+        starts_sorted = sorted(starts_by_key.get(key, []), key=_ts_key)
+        lifecycle_sorted = sorted(lifecycle_by_key.get(key, []), key=_ts_key)
+        invocations = _build_invocations(starts_sorted, lifecycle_sorted)
+        stops_sorted = sorted(stops_by_key.get(key, []), key=_ts_key)
+        result.extend(_bucket_invocation_records(invocations, stops_sorted, name))
+    return result
+
+
+def _week_start_iso(timestamp: str) -> str | None:
+    """ISO timestamp string → monday-UTC week_start ISO date string ("YYYY-MM-DD")。
+
+    naive datetime は UTC として扱う safety belt (Issue #60 / P3): `usage.jsonl` は通常
+    `+00:00` 付き ISO だが、Stop hook 経由 `_merge_stop_hook_list` や
+    `rescan_transcripts.py --append` 由来で naive ISO が紛れた場合に local TZ shift を
+    structurally 塞ぐ。Python 3.11+ では naive `astimezone()` が local TZ 解釈で silent
+    shift する非対称があるため特に厳格に。
+    """
+    if not timestamp:
+        return None
+    try:
+        dt = datetime.fromisoformat(timestamp)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    dt = dt.astimezone(timezone.utc)
+    week_start = dt.date() - timedelta(days=dt.weekday())  # Mon=0..Sun=6
+    return week_start.isoformat()
+
+
+def aggregate_subagent_failure_trend(events: list[dict]) -> list[dict]:
+    """subagent invocation を (monday-UTC week, subagent_type) で bucket して trend を返す。
+
+    監視しているのは end-to-end 成功 (start.success=False OR stop.success=False を 1 failure)。
+    sort: (week_start, subagent_type) lexicographic 昇順。
+    **server は top-N で切らず観測された全 (week, subagent_type) を返す** (Issue #60 / P2)。
+    UI 側の top-5 描画はあくまで affordance であり schema には現れない。
+    naive datetime は UTC として扱う (Issue #60 / P3)。
+
+    出力: list[{"week_start": "YYYY-MM-DD", "subagent_type": str,
+               "count": int, "failure_count": int, "failure_rate": float}]
+    """
+    counts: Counter = Counter()
+    failures: Counter = Counter()
+    for rec in invocation_records(events):
+        week = _week_start_iso(rec.get("timestamp", ""))
+        if week is None:
+            continue
+        key = (week, rec["subagent_type"])
+        counts[key] += 1
+        if rec["failed"]:
+            failures[key] += 1
+    result = []
+    for key in sorted(counts.keys()):
+        c = counts[key]
+        f = failures.get(key, 0)
+        result.append({
+            "week_start": key[0],
+            "subagent_type": key[1],
+            "count": c,
+            "failure_count": f,
+            "failure_rate": (f / c) if c else 0.0,
+        })
+    return result
 
 
 def aggregate_subagent_metrics(events: list[dict]) -> dict[str, dict]:
