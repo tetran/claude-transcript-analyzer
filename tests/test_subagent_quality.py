@@ -345,19 +345,41 @@ class TestInvocationRecords:
         assert len(recs) == 1
         assert recs[0]["failed"] is False
 
-    def test_timestamp_uses_start_when_present(self):
+    def test_timestamp_uses_lifecycle_when_present(self):
+        # Issue #71 Finding 1: lifecycle.timestamp は SubagentStart hook で記録される
+        # = 起動時刻に近い。一方 start.timestamp は PostToolUse(Task|Agent) 由来で
+        # invocation 完了時刻 (record_subagent.py の `_now_iso()`)。週次 trend を
+        # 起動週で bucket するため lifecycle を優先採用、無ければ start に fallback。
         events = [
-            _start("Explore", "s", "2026-04-21T00:00:00+00:00"),
-            _lifecycle("Explore", "s", "2026-04-21T00:00:00.500+00:00"),  # 0.5s 後 → 同一 invocation
+            _lifecycle("Explore", "s", "2026-04-21T00:00:00+00:00"),
+            _start("Explore", "s", "2026-04-21T00:00:00.500+00:00"),  # 0.5s 後 → 同一 invocation
         ]
         recs = subagent_metrics.invocation_records(events)
         assert len(recs) == 1
         assert recs[0]["timestamp"] == "2026-04-21T00:00:00+00:00"
 
-    def test_timestamp_falls_back_to_lifecycle(self):
-        events = [_lifecycle("Explore", "s", "2026-04-21T00:00:00+00:00")]
+    def test_timestamp_falls_back_to_start(self):
+        # lifecycle が無いとき (= SubagentStart hook が発火しなかった invocation) は
+        # start.timestamp に fallback。
+        events = [_start("Explore", "s", "2026-04-21T00:00:00+00:00")]
         recs = subagent_metrics.invocation_records(events)
         assert recs[0]["timestamp"] == "2026-04-21T00:00:00+00:00"
+
+    def test_failure_trend_buckets_by_lifecycle_week_not_completion_week(self):
+        # Issue #71 Finding 1: 週境界を跨ぐ invocation を起動週にバケットする。
+        # 2026-04-26 (Sun 23:59:59.500) lifecycle → 起動週 = 2026-04-20 (Mon)
+        # 2026-04-27 (Mon 00:00:00.000) start    → 完了週 = 2026-04-27 (Mon)
+        # 0.5s 差で同一 invocation。lifecycle 優先採用なので 04-20 週が正解。
+        events = [
+            _lifecycle("Explore", "s", "2026-04-26T23:59:59.500+00:00"),
+            _start("Explore", "s", "2026-04-27T00:00:00+00:00", success=False),
+            _stop("Explore", "s", "2026-04-27T00:00:05+00:00", success=False),
+        ]
+        result = subagent_metrics.aggregate_subagent_failure_trend(events)
+        assert len(result) == 1
+        assert result[0]["week_start"] == "2026-04-20"
+        assert result[0]["subagent_type"] == "Explore"
+        assert result[0]["failure_count"] == 1
 
     def test_invocation_count_matches_metrics_count(self):
         """invocation_records と aggregate_subagent_metrics の type 別 count が一致。"""

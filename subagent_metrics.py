@@ -360,7 +360,11 @@ def _bucket_invocation_records(
     for inv, stop in _pair_invocations_with_stops(invocations, stops_sorted):
         start = inv.get("start")
         lifecycle = inv.get("lifecycle")
-        rep = start or lifecycle
+        # lifecycle.timestamp は SubagentStart hook 由来 (= 起動時刻に近い)。
+        # start.timestamp は PostToolUse(Task|Agent) 由来で invocation 完了時刻
+        # (record_subagent.py の `_now_iso()`)。週次 trend を起動週で bucket
+        # するため lifecycle 優先、無ければ start に fallback (Issue #71)。
+        rep = lifecycle or start
         ts = rep.get("timestamp", "") if rep else ""
         start_failed = bool(start) and start.get("success") is False
         stop_failed = bool(stop) and stop.get("success") is False
@@ -378,7 +382,8 @@ def invocation_records(events: list[dict]) -> list[dict]:
     `aggregate_subagent_metrics` と同じ invocation 同定 (`_bucket_events` +
     `_build_invocations` + start↔stop pairing) を使い、各 invocation の
     `failed` flag (start.success=False OR stop.success=False) を計算する。
-    timestamp は invocation の代表時刻 = `start.timestamp` 優先 / 無ければ `lifecycle.timestamp`。
+    timestamp は invocation の代表時刻 = `lifecycle.timestamp` 優先 (= 起動時刻)、
+    無ければ `start.timestamp` に fallback。
 
     用途: 週次 trend (`aggregate_subagent_failure_trend`) の入力など、invocation 単位
     時系列が必要な集計のための共通 helper (Issue #60 / B3)。
