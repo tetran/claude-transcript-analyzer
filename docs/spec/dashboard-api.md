@@ -23,7 +23,9 @@
   "project_skill_matrix":    { ... },
   "subagent_failure_trend":  [...],
   "session_stats":           { ... },
-  "health_alerts":           [...]
+  "health_alerts":           [...],
+  "slash_command_source_breakdown":   [...],
+  "instructions_loaded_breakdown":    { ... }
 }
 ```
 
@@ -468,3 +470,110 @@ histogram の 0 bucket 分母を「実観測 session 数」に揃えるため。
 - 各要素 `{"session_id": str, "count": int, "project": str}`
 - `project` は当該 session の **最後に観測した** `compact_start.project` (空なら `""`)
 - 空入力なら `[]` を返す
+
+## `slash_command_source_breakdown` (Issue #62, v0.7.0〜)
+
+`user_slash_command` event を skill ごとに `source` 分類して `expansion_rate` を
+返す。Surface ページの「Slash command 起動経路 (top 20)」table が消費する。
+
+### 形
+
+```json
+{
+  "slash_command_source_breakdown": [
+    {"skill": "/codex-review",      "expansion_count": 12, "submit_count": 3, "legacy_count": 0,  "expansion_rate": 0.8},
+    {"skill": "/usage-summary",     "expansion_count": 0,  "submit_count": 5, "legacy_count": 0,  "expansion_rate": 0.0},
+    {"skill": "/usage-export-html", "expansion_count": 8,  "submit_count": 0, "legacy_count": 0,  "expansion_rate": 1.0},
+    {"skill": "/legacy-only",       "expansion_count": 0,  "submit_count": 0, "legacy_count": 23, "expansion_rate": null}
+  ]
+}
+```
+
+### 形 — 各フィールド
+
+- `skill`: slash command 名 (先頭 `/` 含む)
+- `expansion_count`: `source == "expansion"` の event 件数 (= LLM が展開した経路)
+- `submit_count`: `source == "submit"` の event 件数 (= raw prompt 送信経路)
+- `legacy_count`: 上記以外の event 件数 (= 旧 schema で `source` 欠落 / 未知 source 値)
+- `expansion_rate`: **`float (4 桁丸め) | null`**
+  - `modern_total = expansion_count + submit_count > 0` のとき
+    `round(expansion_count / modern_total, 4)`
+  - `modern_total == 0` のとき `null` (観測待ち / renderer 側で peach 強調から除外)
+
+### sort / top-N
+
+- sort key: `(expansion_count + submit_count + legacy_count)` 降順 → `skill` 昇順
+- top-N: `TOP_N_SLASH_COMMAND_BREAKDOWN = 20` で cap
+- legacy も sort 分母に入れることで retention 経過後も上位順位の安定を保つ
+  (trade-off は memory/skill_surface.md 参照)
+
+### legacy 分類の根拠
+
+実機観測 (`<missing>: 202 / expansion: 75 / submit: 0`) で旧 schema を expansion
+扱いに混ぜると `expansion_rate ≈ 1.0` 偏重で peach 強調 (= 改善余地 signal) が
+出ず、本 viz の主目的「LLM が想起できない skill」を浮かび上がらせるのが
+無効化される → legacy 列分離 + rate 分母から legacy を除外する設計に。
+
+`record_skill.py` の dedup ロジック (`source != "submit"` を expansion 由来とみなす)
+は **重複落とさない安全側** の判断であり、本 viz の **signal を出す方向の判断**
+とは要件が違う。整合は dedup 側で取れていれば十分で、集計側は別判断 (= legacy 分離)
+を採用する。
+
+## `instructions_loaded_breakdown` (Issue #62, v0.7.0〜)
+
+`instructions_loaded` event を `memory_type` / `load_reason` の頻度分布と、
+`load_reason == "glob_match"` が多発した `file_path` top 10 に集計する。
+Surface ページの「Instructions ロード分布」panel が消費する。
+
+### 形
+
+```json
+{
+  "instructions_loaded_breakdown": {
+    "memory_type_dist": {"User": 65, "Project": 62},
+    "load_reason_dist": {"session_start": 127},
+    "glob_match_top": [
+      {"file_path": "~/.claude/skills/skill-creator/SKILL.md", "count": 42},
+      {"file_path": "~/.claude/skills/codex-review/SKILL.md",  "count": 18}
+    ]
+  }
+}
+```
+
+### dict iteration order — count desc → key asc
+
+- `memory_type_dist` / `load_reason_dist` は **dict** で観測されたキーのみを返す
+- aggregator は **count 降順 → key 昇順 の insertion order** で組み立てる
+- Python 3.7+ dict は insertion order を保持し、`json.dumps` は dict の
+  iteration order でキーを出す。ECMAScript 仕様で string key の挿入順保持が
+  規定されているため `JSON.parse` も同順を保つ
+- consumer (renderer / static export) は server-side sort 済みを **信頼** する
+  (= renderer 側で sort し直さない)
+- 値の正規化はしない (TitleCase / lowercase verbatim)
+
+### top-N cap の対象
+
+- `top_n = TOP_N_GLOB_MATCH = 10` は **`glob_match_top` のみ** に適用
+- `memory_type_dist` / `load_reason_dist` は **全観測キー** を返す
+  (キー数が hooks 仕様で bounded = `{"User", "Project", "Skill", ...}` の固定値域に
+  収まるため cap 不要)
+
+### glob_match_top 仕様
+
+- `load_reason == "glob_match"` の event だけを対象に `file_path` で count
+- 同じ `file_path` が他の `load_reason` で出現しても **glob_match スコープ内の
+  count しか積まない**
+- sort: count 降順 → file_path 昇順、最大 10 件
+- `file_path` は **home 圧縮済み** (`/Users/<user>/...` → `~/...`)
+- empty events / observed 0 件のとき `[]`
+
+### file_path home 圧縮
+
+- 集計関数 (`aggregate_instructions_loaded_breakdown`) 内で `_compress_home_path`
+  を適用してから dict に積む (= server-side responsibility)
+- export_html (静的) でも同じ表示になる + 単一箇所のメンテで済む
+- 集計後のキーが圧縮済みなのでキーが分かれない (= raw path と圧縮 path で
+  count が分割される事故を構造的に避ける)
+- prefix 比較は `home + os.sep` で行う (= "/Users/foo" を "/Users/foo-extended"
+  に false-match させない)
+- input events は **in-place rewrite しない** (raw event は無加工 / 後続処理影響なし)
