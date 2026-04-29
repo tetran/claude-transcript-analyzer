@@ -314,6 +314,12 @@ def _node_eval(script: str) -> object:
 
     helpers.js + 25_live_diff.js を IIFE 内側で動く前提でそのまま eval する。
     Windows CI で os.environ を継承して PATH 等が消えないように env.copy する。
+
+    encoding='utf-8' を明示する理由: subprocess.run(text=True) は Windows で
+    OS デフォルト encoding (cp932 / cp1252 等) を使うため、Node stdout の UTF-8
+    multibyte 文字 (本機能の toast separator " · " = U+00B7 等) が誤 decode され
+    'Â·' / '·' のような mojibake になり、Windows CI 上で test 失敗する
+    (Linux/macOS では `LANG=*.UTF-8` がデフォルトなので顕在化しない)。
     """
     helpers_src = _read(_HELPERS_JS)
     live_src = _read(_LIVE_DIFF_JS)
@@ -324,6 +330,7 @@ def _node_eval(script: str) -> object:
         env=env,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=False,
         timeout=10,
     )
