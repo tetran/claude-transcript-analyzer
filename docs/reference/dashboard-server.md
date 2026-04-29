@@ -216,3 +216,69 @@ def __init__(self, ...):
 
 明示的 1 行 delegate のほうが冗長でも保守性で勝つ。
 
+---
+
+## §4. Template 分割 — 起動時 concat (Issue #67)
+
+`dashboard/template.html` (123 KB / 2886 行) を `dashboard/template/` 配下の shell + styles + scripts に分割し、`server.py` が起動時に concat して `_HTML_TEMPLATE` を組み立てる。export 経路 (`render_static_html` の `</head>` replace) や live 経路の前提は無改修。
+
+### ディレクトリ構成
+
+```
+dashboard/template/
+├── shell.html              # head + nav + 4 page sections + footer。__INCLUDE_*__ センチネル 3 つ
+├── styles/
+│   ├── 00_base.css         # root vars / reset / body / .app
+│   ├── 10_components.css   # header / live badge / KPI / panel / two-up / ranking / spark / projects / footer
+│   ├── 20_help_tooltip.css # help button + data tooltip
+│   ├── 30_pages.css        # multipage shell (Issue #57)
+│   ├── 40_patterns.css     # heatmap + cooccurrence + project×skill (Issue #58/59)
+│   ├── 50_quality.css      # subagent percentile/failure + permission + compact (Issue #60/61)
+│   └── 60_surface.css      # Surface 3 panel + tooltip border (Issue #74)
+└── scripts/
+    ├── 00_router.js              # hash router IIFE (独立 <script>)
+    ├── 10_helpers.js             # esc / fmtN / pad / setConnStatus
+    ├── 20_load_and_render.js     # async loadAndRender (KPI / ranking / sparkline / projects)
+    ├── 30_renderers_patterns.js  # heatmap / cooccurrence / matrix renderers
+    ├── 40_renderers_quality.js   # percentile / failure / permission / compact renderers
+    ├── 50_renderers_surface.js   # Surface invocation / lifecycle / hibernating + fmtDur
+    ├── 60_hashchange_listener.js # hashchange → loadAndRender 再実行
+    ├── 70_init_eventsource.js    # 初回描画 + EventSource (live refresh)
+    ├── 80_help_popup.js          # help popover behavior
+    └── 90_data_tooltip.js        # [data-tip] graph data tooltip
+```
+
+### Sentinel 戦略
+
+`shell.html` には 3 つの `__INCLUDE_*__` センチネルを **単独行** で配置する。`server.py` の `_build_html_template()` がそれぞれを styles / router / main の concat 結果で置換する：
+
+```python
+return (shell
+        .replace("__INCLUDE_STYLES__\n", styles)
+        .replace("__INCLUDE_ROUTER_JS__\n", router_js)
+        .replace("__INCLUDE_MAIN_JS__\n", main_js))
+```
+
+ポイント：
+
+- 置換対象が `__INCLUDE_*__\n` (改行込み) なので、置換結果側に重複改行が入らない
+- 各 split file は元 `template.html` の **連続スライス** で、concat で改行や空行が完全に再現される (byte 等価)
+- `tests/test_dashboard_template_split.py::test_html_template_byte_equivalent_to_pre_split_snapshot` が sha256 で loss-less を保証
+
+### Where to add what
+
+| 追加したいもの | 編集先 |
+|---|---|
+| 新しい `<section data-page="...">` ページ | `shell.html` (HTML 構造) + `template/styles/X_<page>.css` 新設 + `template/scripts/X_renderers_<page>.js` 新設 + `server.py` の `_CSS_FILES` / `_MAIN_JS_FILES` tuple に追加 |
+| 既存ページの新 panel | 該当 page の `*.css` / `*.js` に追記 (ファイル名は据え置き、内部のみ更新) |
+| 共通 helper / renderer | `10_helpers.js` (state-less util) / `20_load_and_render.js` (loadAndRender 直下に hook を追加) |
+| 共通スタイル (KPI / panel / ranking など) | `10_components.css` |
+| 起動 IIFE 内の subscriber (新 EventSource event 型 / 新 keydown handler) | `70_init_eventsource.js` / `80_help_popup.js` のいずれか分担に従う |
+
+### 注意点
+
+- **連結順は固定**。CSS のカスケード順 / JS の TDZ 配置を変えるとレイアウトや初期化順が壊れる。`_CSS_FILES` / `_MAIN_JS_FILES` tuple のコメントが分担表
+- **新 split file 追加時は `server.py` 側の tuple も更新**。tuple に無いファイルは concat されない
+- `(async function(){` / `})();` の IIFE wrapper は **shell.html 側に置いている**。split file は IIFE body の連続スライスのみ含み、自前で IIFE を開閉しない
+- byte 等価 smoke test (sha256) は強い regression guard。意図的に template を変更したら期待値の hash を更新する
+

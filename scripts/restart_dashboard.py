@@ -2,8 +2,9 @@
 """scripts/restart_dashboard.py — Issue #52: ライブダッシュボードを明示的に再起動する
 
 `hooks/launch_dashboard.py` は **idempotent な spawn 経路** で「既起動なら何もしない」
-設計のため、`/plugin update` で `dashboard/template.html` が更新されても既存プロセスが
-古い HTML をメモリに保持し続け、UI 変更が反映されない問題があった (Issue #52)。
+設計のため、`/plugin update` で `dashboard/template/` (shell.html / styles / scripts) が
+更新されても既存プロセスが古い HTML をメモリに保持し続け、UI 変更が反映されない
+問題があった (Issue #52)。
 
 このスクリプトは **明示的な再起動経路** として:
 

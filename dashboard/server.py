@@ -915,7 +915,54 @@ def render_static_html(data: dict) -> str:
     return _HTML_TEMPLATE.replace('</head>', inline + '</head>', 1)
 
 
-_HTML_TEMPLATE = (Path(__file__).resolve().parent / "template.html").read_text(encoding="utf-8")
+# `template/` 配下に分割した shell + styles + scripts を起動時に concat する (Issue #67)。
+# `_HTML_TEMPLATE` は外部から見たら従来通り「単一の HTML 文字列」契約を維持しているので、
+# `render_static_html` の `</head>` replace 戦略や export_html 経路は無改修で動く。
+#
+# 連結順は CSS のカスケード順 / JS の closure 内での宣言順を再現するため厳密に決まっている。
+# 個別ファイルへの分割境界は元 template.html のセクションコメント (例: `/* ---------- KPI ---------- */`)
+# を踏襲。新しいセクションを追加するときはこの list に追記し、
+# 既存セクション内へ追記するときは該当ファイルを開いて編集する。
+_TEMPLATE_DIR = Path(__file__).resolve().parent / "template"
+_CSS_FILES = (
+    "00_base.css",          # root vars / reset / body / .app
+    "10_components.css",    # header / live badge / KPI / panel / two-up / ranking / spark / projects / footer
+    "20_help_tooltip.css",  # help button + data tooltip (graph data points)
+    "30_pages.css",         # multipage shell (Issue #57)
+    "40_patterns.css",      # hourly heatmap + skill cooccurrence + project×skill (Issue #58/59)
+    "50_quality.css",       # subagent percentile/failure + permission breakdown + compact density (Issue #60/61)
+    "60_surface.css",       # Surface 3 panel + tooltip border colors (Issue #74)
+)
+_MAIN_JS_FILES = (
+    "10_helpers.js",              # esc / fmtN / pad / STATUS_LABEL / setConnStatus
+    "20_load_and_render.js",      # async loadAndRender (KPI / ranking / sparkline / projects)
+    "30_renderers_patterns.js",   # heatmap / cooccurrence / project×skill matrix renderers
+    "40_renderers_quality.js",    # subagent percentile / failure / permission / compact renderers
+    "50_renderers_surface.js",    # Surface invocation / lifecycle / hibernating + fmtDur
+    "60_hashchange_listener.js",  # hashchange → loadAndRender 再実行 (Issue #58 Q2)
+    "70_init_eventsource.js",     # 初回描画 + EventSource (live refresh)
+    "80_help_popup.js",           # help popover behavior (click / Escape / resize)
+    "90_data_tooltip.js",         # data tooltip ([data-tip] elements)
+)
+
+
+def _build_html_template() -> str:
+    """`template/` 配下を起動時に 1 度だけ concat して `_HTML_TEMPLATE` を作る。
+
+    shell.html に置いた `__INCLUDE_*\\n` センチネルを、styles / scripts の concat 結果で
+    line-aligned に置換する (置換は trailing `\\n` ごと吸収するので前後の改行が二重化しない)。
+    """
+    styles = "".join((_TEMPLATE_DIR / "styles" / name).read_text(encoding="utf-8") for name in _CSS_FILES)
+    router_js = (_TEMPLATE_DIR / "scripts" / "00_router.js").read_text(encoding="utf-8")
+    main_js = "".join((_TEMPLATE_DIR / "scripts" / name).read_text(encoding="utf-8") for name in _MAIN_JS_FILES)
+    shell = (_TEMPLATE_DIR / "shell.html").read_text(encoding="utf-8")
+    return (shell
+            .replace("__INCLUDE_STYLES__\n", styles)
+            .replace("__INCLUDE_ROUTER_JS__\n", router_js)
+            .replace("__INCLUDE_MAIN_JS__\n", main_js))
+
+
+_HTML_TEMPLATE = _build_html_template()
 
 
 # SSE handler の peer-disconnect チェック周期 (秒)。
