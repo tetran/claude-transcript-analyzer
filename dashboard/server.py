@@ -492,6 +492,80 @@ def aggregate_permission_breakdowns(events: list[dict], top_n: int = TOP_N) -> d
 
 
 TOP_N_SLASH_COMMAND_BREAKDOWN = 20
+TOP_N_GLOB_MATCH = 10
+
+
+def _compress_home_path(path: str) -> str:
+    """`/Users/<user>/...` を `~/...` に圧縮する。一致しなければ無加工 path を返す。
+
+    `home + os.sep` で prefix 比較するため "/Users/foo-extended/x" は HOME="/Users/foo"
+    に false-match しない。HOME と完全一致 (sep 無し) の path も圧縮しない仕様。
+    """
+    home = os.path.expanduser("~")
+    if home and path.startswith(home + os.sep):
+        return "~" + path[len(home):]
+    return path
+
+
+def aggregate_instructions_loaded_breakdown(
+    events: list[dict],
+    top_n: int = TOP_N_GLOB_MATCH,
+) -> dict:
+    """instructions_loaded event を memory_type / load_reason / glob_match_top に集計。
+
+    memory_type / load_reason の値はそのまま (lower-case 正規化しない / 実機データの
+    真実を歪めない)。glob_match_top は file_path home 圧縮済み。
+
+    P2 反映: dict (memory_type_dist / load_reason_dist) は count 降順 → key 昇順
+    の insertion order で組み立てる。Python 3.7+ dict / JSON 仕様で順序保持される
+    ため、consumer (renderer / static export) はこの順を信頼可能。
+
+    Q1 反映: glob_match_top は load_reason="glob_match" の event だけを対象に
+    file_path で count する。同じ file_path が他の load_reason で出現しても
+    glob_match スコープ内の count しか積まない。
+
+    3-P2 反映: top_n は glob_match_top にのみ適用。memory_type_dist /
+    load_reason_dist は全観測キーを返す (キー数が hooks 仕様で bounded =
+    `{"User", "Project", "Skill", ...}` の固定値域に収まるため cap 不要)。
+
+    P3 反映: input events は in-place rewrite しない (集計後の dict キーに対してのみ
+    `_compress_home_path` を適用)。
+
+    実装注意 (2-P1 反映): `json.dumps(..., sort_keys=True)` を本関数の戻り値の
+    serialize 経路で混入させると dict 順序契約が破壊される。
+    `tests/test_skill_surface.py::test_dict_iteration_order_survives_json_roundtrip`
+    が regression guard として動く。
+    """
+    memory_type_counter: Counter = Counter()
+    load_reason_counter: Counter = Counter()
+    glob_match_counter: Counter = Counter()
+    for ev in events:
+        if ev.get("event_type") != "instructions_loaded":
+            continue
+        mt = ev.get("memory_type", "")
+        lr = ev.get("load_reason", "")
+        fp = ev.get("file_path", "")
+        if mt:
+            memory_type_counter[mt] += 1
+        if lr:
+            load_reason_counter[lr] += 1
+        if lr == "glob_match" and fp:
+            glob_match_counter[_compress_home_path(fp)] += 1
+
+    def _to_sorted_dict(counter: Counter) -> dict:
+        # count desc → key asc。Python 3.7+ dict は insertion order を保持。
+        return {k: c for k, c in sorted(counter.items(), key=lambda kv: (-kv[1], kv[0]))}
+
+    glob_match_top = [
+        {"file_path": k, "count": c}
+        for k, c in sorted(glob_match_counter.items(), key=lambda kv: (-kv[1], kv[0]))[:top_n]
+    ]
+    return {
+        "memory_type_dist": _to_sorted_dict(memory_type_counter),
+        "load_reason_dist": _to_sorted_dict(load_reason_counter),
+        "glob_match_top": glob_match_top,
+    }
+
 
 # 既知の source 値。これ以外 (None / 未知文字列) は legacy 扱いに倒す。
 _SOURCE_EXPANSION = "expansion"
@@ -677,6 +751,7 @@ def build_dashboard_data(events: list[dict]) -> dict:
         "session_stats": aggregate_session_stats(events),
         "health_alerts": load_health_alerts(),
         "slash_command_source_breakdown": aggregate_slash_command_source_breakdown(events),
+        "instructions_loaded_breakdown": aggregate_instructions_loaded_breakdown(events),
     }
 
 
