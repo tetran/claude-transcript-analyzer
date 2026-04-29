@@ -595,6 +595,42 @@ class TestFormatToastSummaryNode(unittest.TestCase):
 
 
 @unittest.skipUnless(_NODE, "node not installed; skipping behavior round-trip")
+class TestFirstRefreshAfterReloadNode(unittest.TestCase):
+    """page reload 直後の SSE refresh 1 発目で toast が出ない構造保証。
+
+    module 評価から始まるので __livePrev = null で初期化される。reload 直後の
+    初回 refresh は diff 不能で toast 出ない (= ユーザーが意図的に reload した
+    直後の noise を構造的に防ぐ)。
+    """
+
+    def test_first_refresh_after_reload_does_not_emit_toast(self):
+        out = _node_eval(
+            "// reload 直後の状態 = __livePrev === null。20_load_and_render.js が\n"
+            "// 末尾でやることの抜粋: __livePrev !== null をガードに toast を出す。\n"
+            "// commit 前の livePrev probe = null。\n"
+            "const probe = (typeof window !== 'undefined' && window.__liveDiff)\n"
+            "  ? window.__liveDiff.getLivePrev()\n"
+            "  : __livePrev;\n"
+            "const next = buildLiveSnapshot({\n"
+            "  total_events: 100,\n"
+            "  skill_ranking: [{name:'a', count:5}],\n"
+            "});\n"
+            "// __livePrev === null のため diff = empty / toast = 空文字\n"
+            "const d = diffLiveSnapshot(probe, next);\n"
+            "const toast = formatToastSummary(d);\n"
+            "process.stdout.write(JSON.stringify({\n"
+            "  probeIsNull: probe === null,\n"
+            "  kpiLen: d.kpi.length,\n"
+            "  toast: toast,\n"
+            "}));\n"
+        )
+        self.assertTrue(out["probeIsNull"], "reload 直後 __livePrev は null のはず")
+        self.assertEqual(out["kpiLen"], 0)
+        self.assertEqual(out["toast"], "",
+                         "reload 直後の初回 refresh で toast が出てしまっている")
+
+
+@unittest.skipUnless(_NODE, "node not installed; skipping behavior round-trip")
 class TestCommitLiveSnapshotNode(unittest.TestCase):
     def test_commit_then_diff_accumulates_across_skipped_commit(self):
         """commitLiveSnapshot(snap1) → (skip commit for snap2) → diff(getLivePrev(), snap3)

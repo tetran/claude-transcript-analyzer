@@ -29,7 +29,8 @@ _DASHBOARD_PATH = Path(__file__).parent.parent / "dashboard" / "server.py"
 #   - 39ad755c...: v0.7.0 / Issue #67 split 直後
 #   - 7538e22b...: Issue #65 / local TZ 化で 10_helpers.js + 20_load_and_render.js 改修
 #   - f27e07c7...: Issue #65 fix-up / formatLocalTimestamp に falsy ガード追加
-EXPECTED_TEMPLATE_SHA256 = "f27e07c762a321a8c9d89f4c183b13a57e7e5ccd2e9d313ab743d386a9286ec9"
+#   - e7440528...: Issue #69 / live diff highlight + toast (25_live_diff.js 追加, shell.html / 10_components.css / 20_load_and_render.js / _MAIN_JS_FILES 改修)
+EXPECTED_TEMPLATE_SHA256 = "e7440528645d274418c2435cddc57dbd6db92305dcaa2bac0d53fff8d087ef6f"
 
 
 def _load_dashboard_module(tmp_path: Path):
