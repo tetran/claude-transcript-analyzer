@@ -292,8 +292,11 @@ def aggregate_hourly_heatmap(usage_events: list[dict]) -> dict:
         except (TypeError, ValueError):
             continue
         if dt.tzinfo is None:
-            # naive datetime は仕様外 (hooks は必ず +00:00 / +HH:MM 付き)。silent skip。
-            continue
+            # naive datetime は UTC として扱う (`subagent_metrics._week_start_iso`
+            # と同じ policy)。`rescan_transcripts.py --append` 経由で過去 transcript
+            # から再投入された event が naive のまま流れるケースで silent drop しない
+            # (Issue #71)。
+            dt = dt.replace(tzinfo=timezone.utc)
         hour_dt = dt.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)
         counter[hour_dt.isoformat()] += 1
     buckets = [
