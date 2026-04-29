@@ -322,3 +322,149 @@ client 側 top-5 と sync させたい consumer は `subagent_ranking` の `coun
   などを additive で追加できる足場。週境界は本仕様 (monday-UTC start) を踏襲する
 - 月次 / 日次 trend が必要になった場合は別キー (`subagent_<metric>_daily_trend` 等) を
   起こす。粒度を明示する命名で混在を避ける
+
+## `permission_prompt_*_breakdown` (Issue #61, v0.7.0〜)
+
+permission notification を直前 `skill_tool` / subagent invocation に **session 内
+時系列リンク** で帰属させ、skill / subagent ごとに `permission_rate` を返す。
+Quality ページの「Permission per skill / subagent (top 10)」2 panel が消費する。
+
+```json
+{
+  "permission_prompt_skill_breakdown": [
+    {"skill": "user-story-creation", "prompt_count": 3, "invocation_count": 12, "permission_rate": 0.25}
+  ],
+  "permission_prompt_subagent_breakdown": [
+    {"subagent_type": "Explore", "prompt_count": 5, "invocation_count": 10, "permission_rate": 0.5}
+  ]
+}
+```
+
+### 帰属 algorithm — 2 段階 (execution-window + backward fallback)
+
+`PERMISSION_LINK_WINDOW_SECONDS = 30` を backward fallback 窓に使う。
+v1 simple な「timestamp backward window のみ」だと、長時間 subagent の途中で発火した
+permission が `subagent_start.timestamp` (= 終了時刻) より前に来てしまい構造的にミス
+する。execution interval を併用して防ぐ。
+
+```
+for each notification N (permission|permission_prompt) in session S:
+  candidates = []
+  for ev in skill_tool events of S:
+    end_ts = ev.timestamp
+    start_ts = end_ts - (ev.duration_ms / 1000) if ev.duration_ms else end_ts
+    if start_ts <= N.ts <= end_ts:                 covers, start_ts
+    elif end_ts <= N.ts <= end_ts + 30s:           after, end_ts
+  for ev in usage_invocation_events(S):
+    start_ts, end_ts = subagent_metrics.subagent_invocation_interval(ev)
+    # subagent_start (= 終了時刻 ts): [end - duration, end]
+    # subagent_lifecycle_start (lifecycle-only): [start, start + duration]
+    if start_ts <= N.ts <= end_ts:                 covers, start_ts
+    elif end_ts <= N.ts <= end_ts + 30s:           after, end_ts
+  if any covers: pick most recent start_ts
+  elif any after: pick most recent end_ts
+  else: drop (orphan permission)
+```
+
+### 単一帰属ポリシー
+
+- 1 notification は **skill OR subagent の 1 候補のみ** に帰属 (= disjoint)
+  → skill table と subagent table の `prompt_count` は合算可能 (合算 invariant:
+  `sum(skill[i].prompt_count) + sum(subagent[j].prompt_count) <= 全 permission 数`)
+- 候補が両方ある場合は **直近 1 個** (start_ts または end_ts がより新しい方) を選ぶ
+- 帰属できない notification は本 schema に出さない (= orphan / 本 PR では捨てる)。
+  実観測値で orphan ratio を見て後続で `permission_prompt_orphan_count` を additive
+  で出すかを判断 (`memory/friction_signals.md` 参照)
+
+### user_slash_command 対象外
+
+`user_slash_command` は **候補にしない**。slash command はモデル発話の prefix で
+ツール実行を伴わず permission の起因にならないため、Issue #61 本文「直前の
+`skill_tool` / `subagent_start`」明記に従い skill_tool のみリンク対象とする。
+
+### sort / top-N
+
+- `prompt_count` 降順 → 同点は `name` 昇順 (lexicographic) で **明示 sort**
+- 上位 **10 件** を返す
+- `prompt_count == 0` で `invocation_count > 0` の skill / subagent は **配列に
+  含めない** (top-N は prompt_count 降順で切る慣習)
+- `permission_rate > 1.0` は normal な状態 (1 invocation で複数回 permission を
+  聞かれるケース) なので **clamp しない**。client 側で help-pop 注釈
+
+### invocation_count の出処 (drift guard)
+
+- skill: 同 session で観測された `skill_tool` events 数 (success / failure 区別なし)
+- subagent: `aggregate_subagent_metrics(events)[name].count` と **完全一致**
+  (= drift guard / `test_subagent_attribution_count_matches_metrics_count`)。
+  type 単位の合計が必ず metrics count と一致する
+
+### notification_type の同一視
+
+`frozenset({"permission", "permission_prompt"})` で同一視
+(`_PERMISSION_NOTIFICATION_TYPES` 既存定数を再利用)。
+
+### Known limitation — 実機 attribution 率は低めに出ること
+
+実機 `usage.jsonl` の qualitative 観測 (本仕様 ship 時点) では、permission
+notification の **多く** は直前 30 秒以内に終了した skill_tool / subagent invocation
+を持たない傾向にある。これは Claude Code の hook fire 順序が
+`Notification(permission) → user approves → tool 実行 → PostToolUse(skill_tool)
+/ Task(subagent) の timestamp` という時系列を取るため、permission の "直前" には
+帰属候補となる invocation が **まだ存在していない** ケースが構造的に多いため。
+
+本 PR は Issue #61 本文 spec (「直前 N 秒以内に発火していた skill_tool / subagent
+invocation」) に literal に従う v1 実装で、`PERMISSION_LINK_WINDOW_SECONDS = 30`
+を初期値として ship する。orphan ratio (= 帰属できなかった permission / 全 permission)
+が定常的に高い場合、後続 issue で以下のいずれかを検討する:
+
+- **forward window**: `[notif_ts, notif_ts + N]` を追加し、permission の **直後** に
+  実行された invocation に帰属させる (= 現実の causal 順序に沿う)
+- **next-gated-invocation algorithm**: window 不採用、同 session 内 permission
+  以降の最初の skill_tool / subagent invocation に帰属
+- 上記 2 つの組み合わせ + window 値の調整
+
+algorithm 仕様変更は schema 互換 (= `permission_prompt_*_breakdown` の field 名 /
+形は維持) で行えるため、後続 issue で additive に進化させる。本 PR では schema
+を固定し、orphan_count は schema に出さない (実観測値での後続判断のため捨てる)。
+
+## `compact_density` (Issue #61, v0.7.0〜)
+
+session 単位の `compact_start` 集計。histogram (`0` / `1` / `2` / `3+`) と
+worst session top 10 を返す。Quality ページの「Compact 発生密度 (per session)」
+panel が消費する。
+
+```json
+{
+  "compact_density": {
+    "histogram": {"0": 50, "1": 12, "2": 4, "3+": 2},
+    "worst_sessions": [
+      {"session_id": "abc-123", "count": 5, "project": "chirper"},
+      {"session_id": "def-456", "count": 4, "project": "claude-transcript-analyzer"}
+    ]
+  }
+}
+```
+
+### histogram bucket 仕様
+
+- key は **string で固定 4 種** (`"0" / "1" / "2" / "3+"`)。空入力でも 4 キー
+  すべて 0 で出力 (browser 側 defensive 不要を維持)
+- bucket 境界:
+  - `"0"`: session_start を持つ session のうち compact 0 件
+  - `"1"` / `"2"`: 同 1 件 / 2 件
+  - `"3+"`: 3 件以上 (3 / 4 / 5 ... すべて同じ bucket)
+
+### session pool 定義
+
+`session_start` event の `session_id` 集合を **session pool** とする。
+compact_start のみで session_start が無い orphan session_id は histogram から
+**除外** (= 0 bucket への混入を避ける) するが、`worst_sessions` には載せる。
+histogram の 0 bucket 分母を「実観測 session 数」に揃えるため。
+
+### worst_sessions
+
+- 全 `compact_start` を `session_id` で groupby し count 降順で **top 10** を返す
+- 同点は `session_id` 昇順で stable sort
+- 各要素 `{"session_id": str, "count": int, "project": str}`
+- `project` は当該 session の **最後に観測した** `compact_start.project` (空なら `""`)
+- 空入力なら `[]` を返す

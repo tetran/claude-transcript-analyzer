@@ -50,6 +50,37 @@ def _build_invocations(starts_sorted: list[dict], lifecycle_sorted: list[dict]) 
     return invocations
 
 
+def subagent_invocation_interval(ev: dict) -> tuple[float, float]:
+    """subagent invocation の代表 event から `(start_epoch, end_epoch)` を返す。
+
+    permission attribution (Issue #61 / A2) で、permission notification が
+    invocation の execution interval にカブっていたかを判定するための helper。
+    `usage_invocation_events()` は両 hook 発火 invocation で `subagent_start` を
+    代表に選ぶため、通常は ev.timestamp が **終了時刻** → `[end - duration, end]`
+    を返す。`event_type == "subagent_lifecycle_start"` (lifecycle-only invocation)
+    のみ例外分岐: ev.timestamp が **開始時刻** → `[start, start + duration]` を返す。
+    `duration_ms` 不在 / 不正 timestamp の場合は `start == end` (point interval)
+    に倒し、caller 側で interval-cover 判定の "broken candidate" にしない。
+
+    後続で `reports/summary.py` 等が permission breakdown を必要としたら、
+    同じ helper をそのまま import して共有する (#60 2-Q1 教訓踏襲: subagent
+    invocation の interval 解釈は `subagent_metrics.py` に閉じる)。
+    """
+    ts = _parse_ts(ev.get("timestamp", ""))
+    if ts is None:
+        return (0.0, 0.0)
+    base = ts.timestamp()
+    duration_ms = ev.get("duration_ms")
+    if not isinstance(duration_ms, (int, float)) or duration_ms <= 0:
+        return (base, base)
+    duration_s = float(duration_ms) / 1000.0
+    if ev.get("event_type") == "subagent_lifecycle_start":
+        # lifecycle-only invocation: timestamp = 開始時刻
+        return (base, base + duration_s)
+    # subagent_start (PostToolUse 由来): timestamp = 終了時刻
+    return (base - duration_s, base)
+
+
 def usage_invocation_events(events: list[dict]) -> list[dict]:
     """各 subagent invocation の代表イベントを 1 件ずつ返す。
 
@@ -83,6 +114,50 @@ def usage_invocation_events(events: list[dict]) -> list[dict]:
         lifecycle_sorted = sorted(lifecycle_by_key.get(key, []), key=lambda e: e.get("timestamp", ""))
         for inv in _build_invocations(starts_sorted, lifecycle_sorted):
             result.append(inv.get("start") or inv["lifecycle"])
+    return result
+
+
+def usage_invocation_intervals(events: list[dict]) -> list[tuple[float, float, dict]]:
+    """各 subagent invocation の `(start_epoch, end_epoch, rep_ev)` を返す。
+
+    `usage_invocation_events()` と同じ invocation 同定 + 代表イベント選択を行いつつ、
+    `aggregate_subagent_metrics` と同じ start↔stop pairing 結果を使って
+    **paired stop の duration_ms を fallback** に組み込む。
+
+    permission attribution (Issue #61 / A2) で execution-window cover 判定を行う
+    ときに、lifecycle-only invocation (`record_subagent.py:_handle_subagent_start` は
+    `duration_ms` を書き出さない) でも stop event の `duration_ms` を使って
+    interval の長さを復元するための専用 helper。`subagent_invocation_interval(ev)`
+    単体だと rep event に duration が無い lifecycle-only invocation が point
+    interval (start==end) に縮退して長時間 invocation 中の permission を
+    取りこぼすため。
+
+    返り値: `[(start_epoch, end_epoch, rep_ev), ...]`。timestamp parse 失敗の
+    invocation は (0.0, 0.0, rep_ev) で出すので caller 側で除外する。
+    """
+    starts_by_key, stops_by_key, lifecycle_by_key = _bucket_events(events)
+    result: list[tuple[float, float, dict]] = []
+    for key in set(starts_by_key) | set(lifecycle_by_key):
+        starts_sorted = sorted(starts_by_key.get(key, []), key=_ts_key)
+        lifecycle_sorted = sorted(lifecycle_by_key.get(key, []), key=_ts_key)
+        stops_sorted = sorted(stops_by_key.get(key, []), key=_ts_key)
+        invocations = _build_invocations(starts_sorted, lifecycle_sorted)
+        for inv, stop in _pair_invocations_with_stops(invocations, stops_sorted):
+            start = inv.get("start")
+            lifecycle = inv.get("lifecycle")
+            rep = start or lifecycle
+            if rep is None:
+                continue
+            # rep に duration_ms が無いとき paired stop の duration_ms を fallback。
+            # これで lifecycle-only invocation も interval 長さを保てる。
+            duration_ms = rep.get("duration_ms")
+            if not isinstance(duration_ms, (int, float)) or duration_ms <= 0:
+                if stop is not None:
+                    stop_d = stop.get("duration_ms")
+                    if isinstance(stop_d, (int, float)) and stop_d > 0:
+                        rep = {**rep, "duration_ms": stop_d}
+            start_epoch, end_epoch = subagent_invocation_interval(rep)
+            result.append((start_epoch, end_epoch, rep))
     return result
 
 
