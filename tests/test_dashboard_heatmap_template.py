@@ -6,6 +6,7 @@ SSE refresh / TZ 変換結果) は実機 smoke で担保するが、template の
 CI で守る。`test_dashboard_router.py` のパターンを踏襲。
 """
 # pylint: disable=line-too-long
+import re
 from pathlib import Path
 
 _TEMPLATE_PATH = Path(__file__).parent.parent / "dashboard" / "template.html"
@@ -16,12 +17,15 @@ def _load_template() -> str:
 
 
 def _extract_section(template: str, page: str) -> str:
-    """`<section data-page="<page>">` 〜 対応する `</section>` を返す。"""
-    marker = f'data-page="{page}"'
-    start = template.index(marker)
-    section_open = template.rfind('<section', 0, start)
-    assert section_open != -1, f"section open tag not found before {marker}"
-    end = template.index('</section>', start)
+    """`<section data-page="<page>">` 〜 対応する `</section>` を返す。
+
+    `data-page="X"` は CSS の attribute selector にも現れるので、
+    必ず `<section ...>` の開始タグから始まる本物の section だけを拾う。
+    """
+    match = re.search(rf'<section\b[^>]*data-page="{re.escape(page)}"[^>]*>', template)
+    assert match is not None, f"<section data-page={page!r}> not found"
+    section_open = match.start()
+    end = template.index('</section>', match.end())
     return template[section_open:end + len('</section>')]
 
 

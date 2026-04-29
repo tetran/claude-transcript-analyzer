@@ -10,6 +10,7 @@ JS 実行を伴う動作 (キーボード遷移 / SSE refresh 整合 / ブラウ
 担保するが、template の **構造的前提** は CI で守る。
 """
 # pylint: disable=line-too-long
+import re
 from pathlib import Path
 
 _TEMPLATE_PATH = Path(__file__).parent.parent / "dashboard" / "template.html"
@@ -23,12 +24,13 @@ def _extract_section(template: str, page: str) -> str:
     """`<section data-page="<page>">` 〜 対応する `</section>` を返す。
 
     nested section が存在しない前提 (本 issue の構造設計上の不変条件)。
+    `data-page="X"` は CSS の attribute selector にも現れるので、
+    必ず `<section ...>` の開始タグから始まる本物の section だけを拾う。
     """
-    marker = f'data-page="{page}"'
-    start = template.index(marker)
-    section_open = template.rfind('<section', 0, start)
-    assert section_open != -1, f"section open tag not found before {marker}"
-    end = template.index('</section>', start)
+    match = re.search(rf'<section\b[^>]*data-page="{re.escape(page)}"[^>]*>', template)
+    assert match is not None, f"<section data-page={page!r}> not found"
+    section_open = match.start()
+    end = template.index('</section>', match.end())
     return template[section_open:end + len('</section>')]
 
 
