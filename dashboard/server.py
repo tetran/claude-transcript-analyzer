@@ -162,6 +162,15 @@ def aggregate_subagents(events: list[dict], top_n: int = TOP_N) -> list[dict]:
 
 
 def aggregate_daily(events: list[dict]) -> list[dict]:
+    """events を UTC 日付で daily bucket に集計する。
+
+    NOTE (Issue #65): dashboard frontend は local TZ で再集計するため、本関数の
+    戻り値 (= /api/data の `daily_trend` field) を **直接は使わない**。frontend は
+    `hourly_heatmap.buckets` を `localDailyFromHourly()` (10_helpers.js) で
+    rebucket して sparkline / KPI subtitle に出している。
+    `daily_trend` field は /api/data の backward-compat のため残しているが、
+    将来 consumer が無いことが確定したら削除候補。
+    """
     counter: Counter = Counter()
     for ev in events:
         ts = ev.get("timestamp", "")

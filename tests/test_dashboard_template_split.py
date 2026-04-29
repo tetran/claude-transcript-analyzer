@@ -23,7 +23,12 @@ _DASHBOARD_PATH = Path(__file__).parent.parent / "dashboard" / "server.py"
 # 分割前 (v0.7.0 時点) の dashboard/template.html の sha256。
 # 分割後の `_HTML_TEMPLATE` がこれと一致することで、CSS/JS の concat 順や
 # 改行の取り扱いを含めた byte 等価性を保証する。
-EXPECTED_TEMPLATE_SHA256 = "39ad755cd667fcb07b6e9ec2ed66a014d8431998bf2e78a5101fd9dc4058d09a"
+#
+# 意図的な template 変更時は新 hash に更新する (docstring 参照)。
+# 履歴:
+#   - 39ad755c...: v0.7.0 / Issue #67 split 直後
+#   - 7538e22b...: Issue #65 / local TZ 化で 10_helpers.js + 20_load_and_render.js 改修
+EXPECTED_TEMPLATE_SHA256 = "7538e22b3965a4047969b3c64da943ad8a81b5c9634fdb1bdc3af0449ffaede6"
 
 
 def _load_dashboard_module(tmp_path: Path):

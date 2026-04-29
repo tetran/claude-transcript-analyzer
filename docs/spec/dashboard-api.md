@@ -32,6 +32,57 @@
 
 各フィールドは additive で増える前提 (browser 側は欠損キーに defensive)。
 
+## `last_updated` / `daily_trend` の local TZ 表示 (Issue #65, v0.7.1〜)
+
+dashboard frontend は **local TZ** で表示する。server は UTC のまま JSON を返す。
+client が `Date` の native methods で local 化する分担。
+
+### `last_updated`
+
+- server は `datetime.now(timezone.utc).isoformat()` (= ISO 8601 with `+00:00`
+  suffix) を返す。`Z` suffix も browser の `new Date()` で同じ instant に parse
+  されるので互換
+- frontend は `formatLocalTimestamp(iso)` (10_helpers.js) で
+  `"YYYY-MM-DD HH:mm <TZ>"` 形式に整形して header の「最終更新」に表示
+- `<TZ>` 部は `Intl.DateTimeFormat(undefined, { timeZoneName: 'short' })` の出力。
+  **環境依存** (例: macOS Chromium で `"GMT+9"`, Windows Edge で `"JST"` 等)。
+  値の具体形は仕様としない (= test pin は正規表現で吸収)
+
+### `daily_trend` (server は UTC 日付で返すが frontend は読まない)
+
+- server `aggregate_daily()` は引き続き **UTC 日付** で bucket した
+  `[{date: "YYYY-MM-DD", count: int}]` を返す (= /api/data の
+  backward-compat field)
+- dashboard frontend は **直接読まず**、`hourly_heatmap.buckets` を
+  `localDailyFromHourly()` (10_helpers.js) で local TZ 日付に再集計して
+  sparkline / `ledeDays` / "N 日間の観測" KPI subtitle に表示
+- 影響: JST から見ると UTC 23:00 hour bucket は翌日 JST に shift する。`count`
+  合計は UTC daily_trend と JST localDays で **不変** (hour bucket → 日付集約は
+  count 加算のみで保存される。DST 23h/25h 日も含めて invariant)
+- `localDailyFromHourly` の DST / 月またぎ / 年またぎは
+  `tests/test_dashboard_local_tz.py::TestLocalDailyFromHourlyNode` で behavior
+  pin (Node 経由の round-trip test)
+
+### export_html を別ホストにコピーした場合の TZ
+
+`reports/export_html.py` で生成した HTML は `<script>window.__DATA__ = ...</script>`
+にデータを inline しているが、`formatLocalTimestamp` / `localDailyFromHourly` は
+**閲覧ホスト** の `Date` で実行されるため、生成ホストと閲覧ホストの TZ が異なる
+場合は **閲覧ホスト** の local TZ で render される。これは仕様 (= 受け取った人が
+自分の TZ で見える方が体感に合う)。
+
+### Frontend 一覧 — local TZ 系の処理箇所
+
+| 場所 | 入力 | 表示 |
+|---|---|---|
+| header `lastRx` | `data.last_updated` | `formatLocalTimestamp` で local 整形 |
+| Overview sparkline | `data.hourly_heatmap.buckets` | `localDailyFromHourly` で local 日付 daily |
+| Overview KPI "N 日間の観測" | `localDailyFromHourly` の length | local 日付の observed days 数 |
+| Patterns hourly heatmap | `data.hourly_heatmap.buckets` | client 側 `(weekday, hour)` bin (既存 / Issue #58) |
+
+`subagent_failure_trend` は **Mon 00:00 UTC 起算** で固定 (本ドキュメントの該当節
+参照)。Issue #65 の射程外。
+
 ## `hourly_heatmap` (Issue #58, v0.7.0〜)
 
 時間帯 × 曜日のヒートマップ用 payload。Patterns ページで描画される。
