@@ -17,12 +17,13 @@
   "skill_ranking":     [...],
   "subagent_ranking":  [...],
   "daily_trend":       [...],
-  "project_breakdown":     [...],
-  "hourly_heatmap":        { ... },
-  "skill_cooccurrence":    [...],
-  "project_skill_matrix":  { ... },
-  "session_stats":         { ... },
-  "health_alerts":         [...]
+  "project_breakdown":       [...],
+  "hourly_heatmap":          { ... },
+  "skill_cooccurrence":      [...],
+  "project_skill_matrix":    { ... },
+  "subagent_failure_trend":  [...],
+  "session_stats":           { ... },
+  "health_alerts":           [...]
 }
 ```
 
@@ -231,3 +232,93 @@ trade-off:
 カバー率 sub label が (a) の cons を実用上カバーしている。(b) への migration が
 必要になったら `projects` / `skills` 配列の末尾に `"other"` 要素を additive で
 足す互換戦略を取る。
+
+## `subagent_ranking` percentile 拡張 (Issue #60, v0.7.0〜)
+
+`subagent_ranking` 配列の各要素に **percentile + sample_count** を additive 追加。
+既存フィールド (`name` / `count` / `failure_count` / `failure_rate` / `avg_duration_ms`)
+は破壊しない。
+
+### 形
+
+```json
+{
+  "name": "Explore",
+  "count": 12,
+  "failure_count": 1,
+  "failure_rate": 0.083,
+  "avg_duration_ms": 8200.0,
+  "p50_duration_ms": 7500.0,
+  "p90_duration_ms": 18400.0,
+  "p99_duration_ms": 32100.0,
+  "sample_count": 11
+}
+```
+
+- `p50_duration_ms` / `p90_duration_ms` / `p99_duration_ms`: **ミリ秒**。
+  duration が観測できなかった invocation は計算対象外なので `sample_count <= count` の
+  関係が常に成り立つ
+- `sample_count`: percentile 計算に入った sample 数 (= duration が None でない invocation 数)
+- 計算手法: `statistics.quantiles(data, n=100, method="inclusive")` で 99 cuts を取り
+  index 49/89/98 を採用 (= **Excel `PERCENTILE.INC` 等価**、線形補間)。
+  `numpy` のデフォルト (`method="linear"` exclusive) とは別物
+- edge case:
+  - `sample_count == 0` → 全 percentile が `null` (browser 側で `-` 表示)
+  - `sample_count == 1` → 全 percentile が同値 (退化扱い)
+
+### 集計範囲は全 consumer 対象 (Q3 反映)
+
+これらの新キーは `subagent_ranking` 配列の **全要素** に乗るため、Quality ページの
+percentile table 専用ではなく、Overview の subagent ranking や `reports/summary.py`
+(将来の `reports/summary.py` percentile 拡張) からも同じ schema を参照する。
+
+## `subagent_failure_trend` (Issue #60, v0.7.0〜)
+
+subagent invocation の **週次 failure_rate trend**。Quality ページで折れ線描画される。
+
+### 形
+
+```json
+[
+  {"week_start": "2026-04-21", "subagent_type": "Explore",        "count": 12, "failure_count": 2, "failure_rate": 0.166},
+  {"week_start": "2026-04-21", "subagent_type": "general-purpose", "count":  8, "failure_count": 0, "failure_rate": 0.0},
+  {"week_start": "2026-04-28", "subagent_type": "Explore",        "count": 15, "failure_count": 1, "failure_rate": 0.066}
+]
+```
+
+- `week_start`: ISO date string `"YYYY-MM-DD"`。**月曜 00:00 UTC 起算**
+  (= Sun 23:59 UTC と Mon 00:00 UTC は別 week)
+- `subagent_type`: invocation の type 名
+- `count`: 当該 (week, type) bucket の invocation 数
+- `failure_count`: そのうち `start.success=False OR stop.success=False` だった invocation 数
+- `failure_rate`: `failure_count / count` (Python float)。`count==0` bucket は構造的に
+  発生しないが、安全網として「もし 0 ならば 0.0」
+- 配列は `(week_start, subagent_type)` lexicographic 昇順で **明示 sort**
+  (`Counter.most_common` の insertion order 依存を避ける慣習を踏襲)
+- 空入力 / observed なし subagent は配列に含まれない (`[]` または該当 type のみ欠落)
+
+### 集計仕様
+
+- データ源: `subagent_metrics.invocation_records()` 経由で `_build_invocations` +
+  `_process_bucket` と同じ invocation 同定ロジックを使う (両 hook 並列発火 / lifecycle のみ /
+  flaky 経路すべてを 1 invocation にまとめる)
+- failure 判定: 各 invocation について `start.success=False OR stop.success=False` のとき failure
+- 週境界: `datetime.fromisoformat(timestamp)` を UTC aware に正規化 → `dt.weekday()` (Mon=0..Sun=6)
+  → `(dt.date() - timedelta(days=weekday))`
+- naive timestamp safety belt: TZ 情報なしの ISO は **UTC として扱う**
+  (Python 3.11+ で local TZ shift する非対称への構造防御)
+
+### server は top-N で切らない (P2 反映)
+
+server は **観測された全 (week, subagent_type)** を返す。クライアント側 (Quality ページ)
+は count 上位 5 type に絞って描画するが、それは **UI affordance** であり schema 仕様では
+ない。`/api/data` の programmatic な consumer は全 type の trend を受け取る前提で読む。
+client 側 top-5 と sync させたい consumer は `subagent_ranking` の `count` で再現可能
+(= `aggregate_subagents` の sort key と同一)。
+
+### 命名規約 (P7 反映)
+
+- **`subagent_<metric>_trend`** for **weekly time-series**: 後続で `subagent_duration_trend`
+  などを additive で追加できる足場。週境界は本仕様 (monday-UTC start) を踏襲する
+- 月次 / 日次 trend が必要になった場合は別キー (`subagent_<metric>_daily_trend` 等) を
+  起こす。粒度を明示する命名で混在を避ける
