@@ -954,6 +954,75 @@
   .worst-table .empty { text-align: center; color: var(--ink-faint); padding: 16px 0; }
   .data-tip[data-kind="histogram"] { border-left-color: var(--peach); }
   .data-tip[data-kind="worst-session"] { border-left-color: var(--peach); }
+
+  /* slash command source breakdown (Issue #62 / A4) */
+  .source-table {
+    width: 100%; border-collapse: collapse; font-size: 12px;
+    font-family: var(--ff-mono);
+  }
+  .source-table th {
+    text-align: left; color: var(--ink-faint); font-weight: 500;
+    padding: 6px 8px; border-bottom: 1px solid var(--line);
+  }
+  .source-table th.num, .source-table td.num {
+    text-align: right; font-variant-numeric: tabular-nums;
+  }
+  .source-table tbody tr { border-bottom: 1px solid rgba(255, 255, 255, 0.04); }
+  .source-table tbody tr:hover { background: rgba(255, 255, 255, 0.03); }
+  .source-table tbody tr:focus-visible { outline: 2px solid var(--mint); outline-offset: -1px; }
+  .source-table td { padding: 5px 8px; color: var(--ink); }
+  .source-table td.name { color: var(--mint); }
+  .source-table td.dim { color: var(--ink-faint); }
+  .source-table td.rate-warn { color: var(--peach); font-weight: 500; }
+  .source-table td .dim { color: var(--ink-faint); }
+  .source-table .empty { text-align: center; color: var(--ink-faint); padding: 24px 0; }
+  .data-tip[data-kind="source"] { border-left-color: var(--mint); }
+
+  /* instructions_loaded breakdown (Issue #62 / B4) */
+  .instr-grid {
+    display: grid;
+    grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) minmax(280px, 2fr);
+    gap: 24px; align-items: start;
+  }
+  @media (max-width: 720px) {
+    .instr-grid { grid-template-columns: 1fr; }
+  }
+  .instr-col-wide { min-width: 0; } /* table の overflow 回避 */
+  .instr-h {
+    margin: 0 0 8px; font-size: 11px; font-weight: 500;
+    color: var(--ink-faint); font-family: var(--ff-mono); text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .instr-bars { display: flex; flex-direction: column; gap: 4px; }
+  .instr-row {
+    display: grid; grid-template-columns: minmax(60px, max-content) 1fr 36px;
+    align-items: center; gap: 8px; font-size: 12px; font-family: var(--ff-mono);
+  }
+  .instr-row:focus-visible { outline: 2px solid var(--peri); outline-offset: 1px; }
+  .instr-row .lbl { color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .instr-row .bar-wrap { background: rgba(255, 255, 255, 0.05); height: 8px; border-radius: 2px; overflow: hidden; }
+  .instr-row .bar { height: 100%; background: var(--peri); border-radius: 2px; }
+  .instr-row .v { text-align: right; color: var(--ink); font-variant-numeric: tabular-nums; }
+  .instr-bars .empty { color: var(--ink-faint); font-size: 12px; padding: 8px 0; }
+
+  .glob-table { width: 100%; border-collapse: collapse; font-size: 12px; font-family: var(--ff-mono); table-layout: fixed; }
+  .glob-table th {
+    text-align: left; color: var(--ink-faint); font-weight: 500;
+    padding: 6px 8px; border-bottom: 1px solid var(--line);
+  }
+  .glob-table th.num, .glob-table td.num {
+    text-align: right; font-variant-numeric: tabular-nums; width: 56px;
+  }
+  .glob-table tbody tr { border-bottom: 1px solid rgba(255, 255, 255, 0.04); }
+  .glob-table tbody tr:hover { background: rgba(255, 255, 255, 0.03); }
+  .glob-table tbody tr:focus-visible { outline: 2px solid var(--peri); outline-offset: -1px; }
+  .glob-table td { padding: 5px 8px; color: var(--ink); }
+  .glob-table td.fp {
+    color: var(--peri); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .glob-table .empty { text-align: center; color: var(--ink-faint); padding: 16px 0; }
+  .data-tip[data-kind="instr-bar"] { border-left-color: var(--peri); }
+  .data-tip[data-kind="glob"] { border-left-color: var(--peri); }
 </style>
 </head>
 <body>
@@ -1291,12 +1360,84 @@
     </section>
 
     <!-- Surface ページ (Issue #62 で本実装) -->
-    <section data-page="surface" class="page page-placeholder" aria-labelledby="page-surface-title" hidden>
-      <h2 id="page-surface-title"><span class="accent">Surface</span> — Coming soon</h2>
-      <p class="placeholder-body">
-        スキル surface (発見性 / 想起性) を可視化するページです。<br>
-        expansion 比率 / instructions_loaded 分析 (<code>#62</code>) を追加予定。
-      </p>
+    <section data-page="surface" class="page" aria-labelledby="page-surface-title" hidden>
+      <header class="header">
+        <div>
+          <h1 id="page-surface-title"><span class="accent">Surface</span></h1>
+          <p class="lede">スキルの「呼ばれ方」と「載せられ方」を可視化します。</p>
+        </div>
+      </header>
+
+      <!-- (1) A4: Slash command expansion/submit breakdown -->
+      <div class="panel" id="surface-source-panel">
+        <div class="panel-head c-mint">
+          <div class="ttl-wrap">
+            <span class="ttl"><span class="dot"></span>Slash command 起動経路 (top 20)</span>
+            <span class="help-host">
+              <button class="help-btn" type="button" aria-label="説明を表示" aria-expanded="false" aria-describedby="hp-source" data-help-id="hp-source">?</button>
+              <span class="help-pop" id="hp-source" role="tooltip" data-place="right">
+                <span class="pop-ttl">expansion / submit 比率</span>
+                <span class="pop-body"><code>user_slash_command</code> イベントの <code>source</code> を skill ごとに集計。<strong>expansion</strong> = LLM が slash command を理解して展開した経路、<strong>submit</strong> = 展開できず raw prompt として送信された経路。<code>expansion_rate</code> が低い skill は description / glob 設計が弱く LLM が「思いつかない」可能性。0.5 未満の rate を peach 色で強調。</span>
+              </span>
+            </span>
+          </div>
+          <span class="sub" id="surface-source-sub"></span>
+        </div>
+        <div class="panel-body">
+          <table class="source-table" id="surface-source">
+            <thead>
+              <tr>
+                <th>Skill</th>
+                <th class="num">Expansion</th>
+                <th class="num">Submit</th>
+                <th class="num">Rate</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- (2) B4: InstructionsLoaded distribution -->
+      <div class="panel" id="surface-instr-panel">
+        <div class="panel-head c-peri">
+          <div class="ttl-wrap">
+            <span class="ttl"><span class="dot"></span>Instructions ロード分布</span>
+            <span class="help-host">
+              <button class="help-btn" type="button" aria-label="説明を表示" aria-expanded="false" aria-describedby="hp-instr" data-help-id="hp-instr">?</button>
+              <span class="help-pop" id="hp-instr" role="tooltip" data-place="right">
+                <span class="pop-ttl">Instructions ロード分布</span>
+                <span class="pop-body"><code>instructions_loaded</code> hook の <code>memory_type</code> / <code>load_reason</code> 頻度分布と、<code>load_reason="glob_match"</code> が多発した <code>file_path</code> top 10。glob_match top に頻出する skill / CLAUDE.md は description が広すぎて proactive にロードされすぎる候補 (description を絞る / glob 設計を見直すと改善)。</span>
+              </span>
+            </span>
+          </div>
+          <span class="sub" id="surface-instr-sub"></span>
+        </div>
+        <div class="panel-body">
+          <div class="instr-grid">
+            <div class="instr-col">
+              <h3 class="instr-h">memory_type</h3>
+              <div class="instr-bars" id="surface-instr-mt"></div>
+            </div>
+            <div class="instr-col">
+              <h3 class="instr-h">load_reason</h3>
+              <div class="instr-bars" id="surface-instr-lr"></div>
+            </div>
+            <div class="instr-col instr-col-wide">
+              <h3 class="instr-h">glob_match top 10</h3>
+              <table class="glob-table" id="surface-instr-glob">
+                <thead>
+                  <tr>
+                    <th>File path</th>
+                    <th class="num">Count</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
     </section>
 
     <!-- 全ページ共通の app-footer (Issue #57): 接続バッジ + 最終更新 + セッション数 + クレジット -->
@@ -1613,6 +1754,11 @@
   renderPermissionSubagentBreakdown(data.permission_prompt_subagent_breakdown);
   // ---- A3 compact density (Issue #61) ----
   renderCompactDensity(data.compact_density);
+
+  // ---- A4 slash command source breakdown (Issue #62) ----
+  renderSlashCommandSourceBreakdown(data.slash_command_source_breakdown);
+  // ---- B4 instructions_loaded breakdown (Issue #62) ----
+  renderInstructionsLoadedBreakdown(data.instructions_loaded_breakdown);
 
   // dynamic re-render 後の help-pop 再配置 (Issue #41)。kpiRow を含む全 popup を
   // walk して、右端 KPI tooltip の viewport overflow を防ぐ。
@@ -2070,6 +2216,103 @@
     }
   }
 
+  // ---- A4 slash command source breakdown (Issue #62) ----
+  function renderSlashCommandSourceBreakdown(items) {
+    if (document.body.dataset.activePage !== 'surface') return;
+    const tbody = document.querySelector('#surface-source tbody');
+    const sub = document.getElementById('surface-source-sub');
+    if (!tbody) return;
+    const list = Array.isArray(items) ? items : [];
+    if (list.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="4" class="empty">観測なし</td></tr>';
+    } else {
+      tbody.innerHTML = list.map(it => {
+        const e = it.expansion_count || 0;
+        const s = it.submit_count || 0;
+        const rate = Number(it.expansion_rate || 0);
+        const rateClass = rate < 0.5 ? 'num rate-warn' : 'num';
+        const ratePct = Math.round(rate * 100);
+        const al = it.skill + ': expansion ' + e + ' / submit ' + s + ' (' + ratePct + '%)';
+        return '<tr data-tip="source" data-name="' + esc(it.skill) +
+          '" data-e="' + e + '" data-s="' + s +
+          '" data-rate="' + rate +
+          '" tabindex="0" role="row" aria-label="' + esc(al) + '">' +
+          '<td class="name">' + esc(it.skill) + '</td>' +
+          '<td class="num">' + fmtN(e) + '</td>' +
+          '<td class="num dim">' + fmtN(s) + '</td>' +
+          '<td class="' + rateClass + '">' + ratePct + '%</td>' +
+          '</tr>';
+      }).join('');
+    }
+    if (sub) sub.textContent = list.length + ' skill(s)';
+  }
+
+  // ---- B4 instructions_loaded breakdown (Issue #62) ----
+  function renderInstructionsLoadedBreakdown(payload) {
+    if (document.body.dataset.activePage !== 'surface') return;
+    const data = (payload && typeof payload === 'object') ? payload : {};
+    const mt = (data.memory_type_dist && typeof data.memory_type_dist === 'object') ? data.memory_type_dist : {};
+    const lr = (data.load_reason_dist && typeof data.load_reason_dist === 'object') ? data.load_reason_dist : {};
+    // P4 反映: defensive default は [] (list) — typo の `: {}` を修正。
+    const glob = Array.isArray(data.glob_match_top) ? data.glob_match_top : [];
+    renderInstrBars('surface-instr-mt', mt, 'memory_type');
+    renderInstrBars('surface-instr-lr', lr, 'load_reason');
+    renderGlobTable('surface-instr-glob', glob);
+    const sub = document.getElementById('surface-instr-sub');
+    if (sub) {
+      const total = Object.values(lr).reduce((a, b) => a + Number(b || 0), 0);
+      sub.textContent = total + ' instruction load(s)';
+    }
+  }
+
+  function renderInstrBars(rootId, dict, kind) {
+    const root = document.getElementById(rootId);
+    if (!root) return;
+    // P2 反映: dict は server side で count desc / key asc の insertion order に
+    // 整列済み。Object.entries はその順を保持する (ECMAScript 仕様で string key の
+    // 挿入順保持が規定 + JSON parse 順序保持) ので renderer 側で sort し直さない
+    // (= server の契約を信頼する)。
+    const entries = Object.entries(dict || {})
+      .map(([k, v]) => [k, Number(v || 0)])
+      .filter(([k, v]) => k && v > 0);
+    if (entries.length === 0) {
+      root.innerHTML = '<div class="empty">観測なし</div>';
+      return;
+    }
+    const max = Math.max(...entries.map(([, v]) => v));
+    root.innerHTML = entries.map(([k, v]) => {
+      const pct = max > 0 ? (v / max) * 100 : 0;
+      const al = kind + '=' + k + ': ' + v;
+      return '<div class="instr-row" data-tip="instr-bar" data-kind="' + esc(kind) +
+        '" data-key="' + esc(k) + '" data-c="' + v + '" tabindex="0" role="row" aria-label="' + esc(al) + '">' +
+        '<span class="lbl" title="' + esc(k) + '">' + esc(k) + '</span>' +
+        '<span class="bar-wrap"><span class="bar" style="width:' + pct.toFixed(1) + '%"></span></span>' +
+        '<span class="v">' + fmtN(v) + '</span>' +
+        '</div>';
+    }).join('');
+  }
+
+  function renderGlobTable(rootId, items) {
+    const tbody = document.querySelector('#' + rootId + ' tbody');
+    if (!tbody) return;
+    const list = Array.isArray(items) ? items : [];
+    if (list.length === 0) {
+      // Question 反映: empty state 文言は "観測なし" に統一。
+      tbody.innerHTML = '<tr><td colspan="2" class="empty">観測なし</td></tr>';
+      return;
+    }
+    tbody.innerHTML = list.map(it => {
+      const fp = it.file_path || '';
+      const c = it.count || 0;
+      const al = fp + ': ' + c;
+      return '<tr data-tip="glob" data-fp="' + esc(fp) + '" data-c="' + c +
+        '" tabindex="0" role="row" aria-label="' + esc(al) + '">' +
+        '<td class="fp" title="' + esc(fp) + '">' + esc(fp) + '</td>' +
+        '<td class="num">' + fmtN(c) + '</td>' +
+        '</tr>';
+    }).join('');
+  }
+
   function fmtDur(ms) {
     if (ms == null || ms === '') return '-';
     const v = Number(ms);
@@ -2372,6 +2615,42 @@
               '<span class="lbl">project</span><span class="val">' + esc(projDisplay) + '</span>' +
               '<span class="sep">·</span>' +
               '<span class="lbl">compacts</span><span class="val">' + fmtN(c) + '</span>'
+      };
+    }
+    if (kind === 'source') {
+      // slash command source breakdown row (Issue #62 / A4)
+      const name = el.getAttribute('data-name') || '';
+      const e = el.getAttribute('data-e') || '0';
+      const s = el.getAttribute('data-s') || '0';
+      const rateRaw = el.getAttribute('data-rate') || '0';
+      const rateText = Math.round(parseFloat(rateRaw) * 100) + '%';
+      return {
+        kind: 'source',
+        html: '<span class="ttl">' + esc(name) + '</span>' +
+              '<span class="lbl">expansion</span><span class="val">' + fmtN(e) + '</span>' +
+              '<span class="lbl">submit</span><span class="val">' + fmtN(s) + '</span>' +
+              '<span class="lbl">rate</span><span class="val">' + rateText + '</span>'
+      };
+    }
+    if (kind === 'instr-bar') {
+      // instructions_loaded distribution bar (Issue #62 / B4)
+      const k = el.getAttribute('data-key') || '';
+      const c = el.getAttribute('data-c') || '0';
+      const fld = el.getAttribute('data-kind') || '';
+      return {
+        kind: 'instr-bar',
+        html: '<span class="ttl">' + esc(k) + '</span>' +
+              '<span class="lbl">' + esc(fld) + '</span><span class="val">' + fmtN(c) + '</span>'
+      };
+    }
+    if (kind === 'glob') {
+      // glob_match top row (Issue #62 / B4)
+      const fp = el.getAttribute('data-fp') || '';
+      const c = el.getAttribute('data-c') || '0';
+      return {
+        kind: 'glob',
+        html: '<span class="ttl">' + esc(fp) + '</span>' +
+              '<span class="lbl">loads</span><span class="val">' + fmtN(c) + '</span>'
       };
     }
     return null;

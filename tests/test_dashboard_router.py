@@ -64,17 +64,6 @@ class TestRouterShellStructure:
         for el_id in ['kpiRow', 'skillBody', 'subBody', 'spark', 'stack', 'stackLegend']:
             assert f'id="{el_id}"' in overview, f"id={el_id} missing from Overview section"
 
-    def test_non_overview_pages_are_placeholders(self):
-        """Surface のみ placeholder (Coming soon) で、Overview の widget ID を持たない。
-        patterns は #58/#59 で実 widget 化、quality は #60 で実 widget 化したため対象外。"""
-        template = _load_template()
-        for page in ['surface']:
-            section = _extract_section(template, page)
-            assert 'page-placeholder' in section, f"{page}: page-placeholder class missing"
-            # Overview 専用 ID は混入していないこと
-            for el_id in ['kpiRow', 'skillBody', 'subBody', 'spark']:
-                assert f'id="{el_id}"' not in section, f"{page}: should not contain Overview id={el_id}"
-
     def test_router_javascript_present(self):
         """router 中核 (hashchange listener / data-page-link / aria-current)"""
         template = _load_template()
