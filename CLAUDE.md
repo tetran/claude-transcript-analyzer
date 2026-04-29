@@ -79,7 +79,7 @@ data/usage.jsonl          ← append-only イベントログ (hot tier / 直近 
 |---|---|
 | ストレージ設計（JSONL primary / archive 不変性 / dedup 規律） | `docs/reference/storage.md` |
 | Cross-platform / Python launcher trilemma / Windows porting checklist | `docs/reference/cross-platform.md` |
-| Dashboard サーバー実装の非自明ポイント（SSE / JSON-in-`<script>` / component 分解） | `docs/reference/dashboard-server.md` |
+| Dashboard サーバー実装の非自明ポイント（SSE / JSON-in-`<script>` / component 分解 / template 分割の sentinel concat） | `docs/reference/dashboard-server.md` |
 | Subagent 二重観測の同定アルゴリズム + DRY 圧の教訓 | `docs/reference/subagent-invocation-pairing.md` |
 
 ## ファイル構成
@@ -111,7 +111,11 @@ claude-transcript-analyzer/
 │   ├── usage-export-html.md
 │   └── usage-summary.md
 ├── dashboard/
-│   └── server.py             # ローカル HTTP ダッシュボードサーバー
+│   ├── server.py             # ローカル HTTP ダッシュボードサーバー
+│   └── template/             # 起動時に concat される shell + styles + scripts (Issue #67)
+│       ├── shell.html        # head + nav + 4 page sections + footer + __INCLUDE_*__ センチネル
+│       ├── styles/           # 7 ファイル (base / components / help_tooltip / pages / patterns / quality / surface)
+│       └── scripts/          # 10 ファイル (router / helpers / load_and_render / 各 page renderers / hashchange / eventsource / help_popup / data_tooltip)
 ├── reports/
 │   ├── _archive_loader.py    # archive/*.jsonl.gz を opt-in で読む共通 loader (Issue #30)
 │   ├── summary.py            # ターミナル集計レポート (--include-archive 対応)

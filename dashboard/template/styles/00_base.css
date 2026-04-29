@@ -1,0 +1,53 @@
+  :root {
+    --bg-app: #1c1d22;
+    --bg-panel: #25272d;
+    --bg-panel-2: #2b2e35;
+    --bg-elevated: #2f3239;
+
+    --line: #353841;
+    --line-strong: #404453;
+
+    --ink: #f1f2f5;
+    --ink-soft: #b6bac6;
+    --ink-faint: #7e8290;
+
+    --mint: #6fe3c8;
+    --mint-soft: #2f6f63;
+    --coral: #ff8a76;
+    --coral-soft: #803f37;
+    --peri: #8aa6ff;
+    --peri-soft: #3f4d80;
+    --peach: #ffc97a;
+    --peach-soft: #80633d;
+    --rose: #ff6f9c;
+    --rose-soft: #803757;
+
+    --r-lg: 14px;
+    --r-md: 10px;
+    --r-sm: 6px;
+    --r-pill: 8px;
+
+    --ff-sans: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --ff-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin:0; padding:0; }
+  body {
+    font-family: var(--ff-sans);
+    font-feature-settings: "ss01", "cv11";
+    background: var(--bg-app);
+    color: var(--ink);
+    min-height: 100vh;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    background-image:
+      radial-gradient(ellipse 60% 50% at 15% 0%, rgba(111,227,200,0.05), transparent 60%),
+      radial-gradient(ellipse 40% 40% at 90% 10%, rgba(138,166,255,0.045), transparent 60%);
+  }
+
+  .app {
+    max-width: 1480px;
+    margin: 0 auto;
+    padding: 22px 22px 32px;
+  }
+
