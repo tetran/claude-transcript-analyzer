@@ -158,7 +158,7 @@ document.getElementById('ledeProjects').textContent =
   v: (data.project_total != null ? data.project_total : (data.project_breakdown||[]).length),
   s: 'distinct cwds', cls: 'c-peach',
   helpTtl: 'プロジェクト数',
-  helpBody: '利用が観測されたプロジェクト（cwd 単位）。同じディレクトリ配下のセッションは同一プロジェクトとして集計。横並びスタック表示は上位 10 件まで。' },
+  helpBody: '利用が観測されたプロジェクト（cwd 単位）。同じディレクトリ配下のセッションは同一プロジェクトとして集計。' },
 ```
 
 defensive fallback (`!= null` 三項演算子) は backward-compat 目的:

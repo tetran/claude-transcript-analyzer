@@ -42,7 +42,7 @@
     { id: 'kpi-projs', k: 'projects',
       v: (data.project_total != null ? data.project_total : (data.project_breakdown||[]).length),
       s: 'distinct cwds', cls: 'c-peach',
-      helpTtl: 'プロジェクト数', helpBody: '利用が観測されたプロジェクト（cwd 単位）。同じディレクトリ配下のセッションは同一プロジェクトとして集計。横並びスタック表示は上位 10 件まで。' },
+      helpTtl: 'プロジェクト数', helpBody: '利用が観測されたプロジェクト（cwd 単位）。同じディレクトリ配下のセッションは同一プロジェクトとして集計。' },
     { id: 'kpi-sess', k: 'sessions', v: ss.total_sessions || 0, cls: 'c-peri',
       helpTtl: 'セッション数', helpBody: 'SessionStart hook で観測された Claude Code セッションの開始回数。同じ session_id の startup と resume は別セッションとして数える。' },
     { id: 'kpi-resume', k: 'resume rate', v: ss.total_sessions ? Math.round((ss.resume_rate||0)*100)+'%' : '--', sm: true, cls: 'c-mute',
