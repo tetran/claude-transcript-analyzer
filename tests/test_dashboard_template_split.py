@@ -38,7 +38,8 @@ _DASHBOARD_PATH = Path(__file__).parent.parent / "dashboard" / "server.py"
 #   - 2964f3e9...: Issue #69 UX 調整 / requestAnimationFrame で frame 分割 (style 変更 collapse 回避)
 #   - e787b78b...: Issue #69 UX 調整 / CSS animation (@keyframes toast-in/out) に切替 (CSS transition 方式は実機で再生されない問題への対処)
 #   - 4f4b511f...: Issue #69 fix-up / scheduleLoadAndRender で SSE refresh と hashchange の loadAndRender 並行発火を直列化 (stale-snapshot race 対策)
-EXPECTED_TEMPLATE_SHA256 = "4f4b511f26e6ab599e69cad5d70d2319dfe8244c9271d6d5354c2753f44b430f"
+#   - ef1c669f...: v0.7.1 release / footer の version 表記 v0.7 → v0.7.1 に bump
+EXPECTED_TEMPLATE_SHA256 = "ef1c669fc38a8d4d55c4e0f879fbed12b756e2de0276a5badd415dadbb7df5c8"
 
 
 def _load_dashboard_module(tmp_path: Path):
