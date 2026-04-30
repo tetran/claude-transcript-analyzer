@@ -1,0 +1,124 @@
+  /* ---------- multipage shell (Issue #57) ---------- */
+  /* 4 タブの頂部 nav。`.app` 直下、全ページ共通。 */
+  .page-nav {
+    display: flex;
+    gap: 4px;
+    padding: 0 0 14px;
+    margin-bottom: 18px;
+    border-bottom: 1px solid var(--line);
+    flex-wrap: wrap;
+  }
+  .page-nav a {
+    padding: 8px 14px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--ink-soft);
+    text-decoration: none;
+    border-radius: var(--r-md) var(--r-md) 0 0;
+    transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
+    border: 1px solid transparent;
+    border-bottom: none;
+    margin-bottom: -1px;
+  }
+  .page-nav a:hover {
+    color: var(--ink);
+    background: var(--bg-panel);
+  }
+  .page-nav a.active {
+    color: var(--mint);
+    background: var(--bg-panel);
+    border-color: var(--line);
+    border-bottom: 2px solid var(--mint);
+  }
+  .page-nav a:focus-visible {
+    outline: 2px solid var(--peri);
+    outline-offset: 2px;
+  }
+
+  /* `<section data-page="...">` は hidden 切替で常駐。 */
+  .page[hidden] { display: none; }
+
+  /* Patterns / Quality / Surface タブの連続する panel 間マージン (Issue #71)。
+     Overview は `.two-up` gap + 後続 panel の inline `margin-top:14px` で既に
+     間隔が確保されている。adjacent-sibling combinator なので 1 件目の panel
+     には影響せず、`<header>` の margin-bottom が先頭間隔を決める。 */
+  .page > .panel + .panel { margin-top: 14px; }
+
+  /* 後続 PR (#58〜#62) で本実装するページの placeholder。 */
+  .page-placeholder {
+    padding: 80px 24px;
+    text-align: center;
+    background: var(--bg-panel);
+    border: 1px solid var(--line);
+    border-radius: var(--r-lg);
+    margin-top: 8px;
+  }
+  .page-placeholder h2 {
+    margin: 0 0 10px;
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--ink);
+  }
+  .page-placeholder h2 .accent {
+    color: var(--mint);
+    font-weight: 700;
+  }
+  .page-placeholder .placeholder-body {
+    margin: 0;
+    font-size: 13px;
+    color: var(--ink-soft);
+    line-height: 1.7;
+  }
+  .page-placeholder .placeholder-body code {
+    font-family: var(--ff-mono);
+    font-size: 12px;
+    background: var(--bg-elevated);
+    padding: 1px 6px;
+    border-radius: var(--r-sm);
+    color: var(--ink);
+  }
+
+  /* 全ページ共通の app-footer。conn-status / lastRx / sessVal を集約。 */
+  .app-footer {
+    margin-top: 32px;
+    padding-top: 16px;
+    border-top: 1px solid var(--line);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 14px;
+    font-size: 11.5px;
+    color: var(--ink-faint);
+  }
+  .app-footer .meta {
+    display: flex;
+    gap: 16px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .app-footer .meta-item {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 4px;
+  }
+  .app-footer .meta-item .k {
+    color: var(--ink-faint);
+  }
+  .app-footer .meta-item .v {
+    color: var(--ink-soft);
+    font-family: var(--ff-mono);
+  }
+  .app-footer .credits {
+    color: var(--ink-faint);
+    font-size: 11px;
+  }
+  .app-footer .credits .accent {
+    color: var(--mint);
+    font-weight: 600;
+  }
+  .app-footer .credits .sep {
+    margin: 0 8px;
+    opacity: 0.5;
+  }
+

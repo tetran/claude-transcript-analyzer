@@ -1,0 +1,75 @@
+  /* Surface 3 panel 共通テーブル (Issue #74) */
+  .surface-table {
+    width: 100%; border-collapse: collapse; font-size: 12px;
+    font-family: var(--ff-mono);
+  }
+  .surface-table th {
+    text-align: left; color: var(--ink-faint); font-weight: 500;
+    padding: 6px 8px; border-bottom: 1px solid var(--line);
+  }
+  .surface-table th.num, .surface-table td.num {
+    text-align: right; font-variant-numeric: tabular-nums;
+  }
+  .surface-table tbody tr { border-bottom: 1px solid rgba(255, 255, 255, 0.04); }
+  .surface-table tbody tr:hover { background: rgba(255, 255, 255, 0.03); }
+  .surface-table tbody tr:focus-visible { outline: 2px solid var(--mint); outline-offset: -1px; }
+  .surface-table td { padding: 5px 8px; color: var(--ink); }
+  .surface-table td.name { color: var(--mint); }
+  .surface-table td.dim { color: var(--ink-faint); }
+  .surface-table td.rate-warn { color: var(--peach); font-weight: 500; }
+  .surface-table .empty { text-align: center; color: var(--ink-faint); padding: 24px 0; }
+
+  /* Panel 1 — Mode chip (dual / llm-only / user-only) */
+  .mode-chip {
+    display: inline-block; padding: 1px 6px; border-radius: 3px;
+    font-size: 10px; letter-spacing: 0.02em;
+    background: rgba(255, 255, 255, 0.05); color: var(--ink-faint);
+  }
+  .mode-chip.mode-dual     { background: rgba(133, 188, 208, 0.10); color: var(--peri); }
+  .mode-chip.mode-llm-only { background: rgba(143, 188, 143, 0.12); color: var(--mint); }
+  .mode-chip.mode-user-only{ background: rgba(255, 200, 130, 0.12); color: var(--peach); }
+
+  /* Panel 2 — trend chip (📈 / ➡️ / 📉 / 🌱) */
+  .trend-chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 11px; padding: 1px 4px; border-radius: 3px;
+    background: rgba(255, 255, 255, 0.04);
+  }
+  .trend-chip.trend-accelerating { color: var(--mint); }
+  .trend-chip.trend-stable       { color: var(--ink); }
+  .trend-chip.trend-decelerating { color: var(--peach); }
+  .trend-chip.trend-new          { color: var(--peri); }
+
+  /* Panel 3 — status chip + scope-note callout */
+  .status-chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 11px; padding: 1px 4px; border-radius: 3px;
+    background: rgba(255, 255, 255, 0.04);
+  }
+  .status-chip.status-warming_up { color: var(--mint); }
+  .status-chip.status-resting    { color: var(--peri); }
+  .status-chip.status-idle       { color: var(--ink-faint); }
+
+  .scope-note {
+    margin: 0 0 12px; padding: 8px 12px;
+    display: flex; align-items: flex-start; gap: 8px;
+    background: rgba(133, 188, 208, 0.06);
+    border-left: 3px solid var(--peri);
+    border-radius: 4px;
+    font-size: 12px; color: var(--ink); line-height: 1.5;
+  }
+  .scope-note.scope-note-active {
+    background: rgba(255, 200, 130, 0.06);
+    border-left-color: var(--peach);
+  }
+  .scope-note .scope-note-ic { flex: 0 0 auto; }
+  .scope-note .scope-note-text { flex: 1 1 auto; }
+  .scope-note code {
+    background: rgba(255, 255, 255, 0.05); padding: 0 4px; border-radius: 2px;
+    font-size: 11px;
+  }
+
+  /* Surface tooltip border colors */
+  .data-tip[data-kind="inv"]  { border-left-color: var(--mint); }
+  .data-tip[data-kind="life"] { border-left-color: var(--peri); }
+  .data-tip[data-kind="hib"]  { border-left-color: var(--peach); }

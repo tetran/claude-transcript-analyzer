@@ -1,0 +1,163 @@
+  /* ---------- hourly heatmap (Issue #58) ---------- */
+  /* 7 weekday rows × 24 hour cols + 1 列の row label。ヘッダ軸 (00..23) は contents 子。 */
+  .heatmap {
+    display: grid;
+    grid-template-columns: 36px repeat(24, 1fr);
+    gap: 2px;
+    margin-top: 8px;
+    font-family: var(--ff-mono);
+    font-size: 10.5px;
+  }
+  .heatmap-col-axis {
+    display: contents;
+  }
+  .heatmap-col-axis > span {
+    color: var(--ink-faint);
+    text-align: center;
+    padding-bottom: 4px;
+  }
+  .heatmap-row-label {
+    color: var(--ink-soft);
+    text-align: right;
+    padding-right: 6px;
+    align-self: center;
+  }
+  .heatmap-cell {
+    aspect-ratio: 1 / 1;
+    min-height: 18px;
+    border-radius: 3px;
+    border: 1px solid var(--line);
+    background: transparent;
+    cursor: default;
+    transition: outline 100ms ease;
+  }
+  .heatmap-cell:hover,
+  .heatmap-cell:focus-visible {
+    outline: 2px solid var(--peri);
+    outline-offset: 1px;
+  }
+  .heatmap-legend {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 14px;
+    font-family: var(--ff-mono);
+    font-size: 10.5px;
+    color: var(--ink-faint);
+  }
+  .heatmap-legend-bar {
+    flex: 0 0 200px;
+    height: 10px;
+    border-radius: var(--r-sm);
+    background: linear-gradient(to right, rgba(111, 227, 200, 0.06), rgba(111, 227, 200, 1));
+    border: 1px solid var(--line);
+  }
+  .data-tip[data-kind="heatmap"] { border-left-color: var(--mint); }
+
+  /* ---------- skill cooccurrence (Issue #59 / B1) ---------- */
+  .cooc-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+    font-family: var(--ff-mono);
+    margin-top: 4px;
+  }
+  .cooc-table th {
+    text-align: left;
+    color: var(--ink-faint);
+    font-weight: 500;
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--line);
+  }
+  .cooc-table th.num,
+  .cooc-table td.num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  .cooc-table tbody tr {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    transition: background 100ms ease;
+  }
+  .cooc-table tbody tr:hover,
+  .cooc-table tbody tr:focus-visible {
+    background: var(--bg-panel-2);
+    outline: none;
+  }
+  .cooc-table td {
+    padding: 5px 8px;
+    color: var(--ink);
+  }
+  .cooc-table td.skill { color: var(--mint); }
+  .cooc-table .empty {
+    text-align: center;
+    color: var(--ink-faint);
+    padding: 24px 0;
+  }
+  .data-tip[data-kind="cooc"] { border-left-color: var(--coral); }
+
+  /* ---------- project × skill heatmap (Issue #59 / B2) ---------- */
+  .projskill {
+    display: grid;
+    /* grid-template-columns は JS で skills 数に応じて動的設定 */
+    gap: 2px;
+    margin-top: 8px;
+    font-family: var(--ff-mono);
+    font-size: 10.5px;
+    overflow-x: auto;
+  }
+  .projskill-col-axis { display: contents; }
+  .projskill-col-axis > span {
+    color: var(--ink-faint);
+    text-align: center;
+    padding-bottom: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100px;
+  }
+  .projskill-row-label {
+    color: var(--ink-soft);
+    text-align: right;
+    padding-right: 6px;
+    align-self: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .projskill-cell {
+    aspect-ratio: 1 / 1;
+    min-height: 22px;
+    border-radius: 3px;
+    border: 1px solid var(--line);
+    background: transparent;
+    cursor: default;
+    transition: outline 100ms ease;
+  }
+  .projskill-cell:hover,
+  .projskill-cell:focus-visible {
+    outline: 2px solid var(--peach);
+    outline-offset: 1px;
+  }
+  .projskill-empty {
+    padding: 24px 0;
+    text-align: center;
+    color: var(--ink-faint);
+  }
+  .projskill-legend {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 14px;
+    font-family: var(--ff-mono);
+    font-size: 10.5px;
+    color: var(--ink-faint);
+  }
+  .projskill-legend-bar {
+    flex: 0 0 200px;
+    height: 10px;
+    border-radius: var(--r-sm);
+    background: linear-gradient(to right, rgba(255, 201, 122, 0.06), rgba(255, 201, 122, 1));
+    border: 1px solid var(--line);
+  }
+  .data-tip[data-kind="projskill"] { border-left-color: var(--peach); }
+

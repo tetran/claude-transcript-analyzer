@@ -79,7 +79,7 @@ data/usage.jsonl          ← append-only イベントログ (hot tier / 直近 
 |---|---|
 | ストレージ設計（JSONL primary / archive 不変性 / dedup 規律） | `docs/reference/storage.md` |
 | Cross-platform / Python launcher trilemma / Windows porting checklist | `docs/reference/cross-platform.md` |
-| Dashboard サーバー実装の非自明ポイント（SSE / JSON-in-`<script>` / component 分解） | `docs/reference/dashboard-server.md` |
+| Dashboard サーバー実装の非自明ポイント（SSE / JSON-in-`<script>` / component 分解 / template 分割の sentinel concat） | `docs/reference/dashboard-server.md` |
 | Subagent 二重観測の同定アルゴリズム + DRY 圧の教訓 | `docs/reference/subagent-invocation-pairing.md` |
 
 ## ファイル構成
@@ -111,7 +111,11 @@ claude-transcript-analyzer/
 │   ├── usage-export-html.md
 │   └── usage-summary.md
 ├── dashboard/
-│   └── server.py             # ローカル HTTP ダッシュボードサーバー
+│   ├── server.py             # ローカル HTTP ダッシュボードサーバー
+│   └── template/             # 起動時に concat される shell + styles + scripts (Issue #67)
+│       ├── shell.html        # head + nav + 4 page sections + footer + __INCLUDE_*__ センチネル
+│       ├── styles/           # 7 ファイル (base / components / help_tooltip / pages / patterns / quality / surface)
+│       └── scripts/          # 10 ファイル (router / helpers / load_and_render / 各 page renderers / hashchange / eventsource / help_popup / data_tooltip)
 ├── reports/
 │   ├── _archive_loader.py    # archive/*.jsonl.gz を opt-in で読む共通 loader (Issue #30)
 │   ├── summary.py            # ターミナル集計レポート (--include-archive 対応)
@@ -129,11 +133,8 @@ claude-transcript-analyzer/
 └── docs/
     ├── transcript-format.md  # 生 transcript フォーマット + Hook 入力 schema + Archive 進化規約
     ├── spec/                 # 現行仕様 (contract) — README.md に振り分け基準
-    │   │   # dashboard-api / dashboard-runtime / usage-jsonl-events /
-    │   │   # archive-runtime / issue-authoring
     │   └── legacy/           # v0.1 時代の直接 parse 手順 (履歴アーカイブ)
     ├── reference/            # 設計判断・gotcha・パターン — README.md に振り分け基準
-    │       # storage / cross-platform / dashboard-server / subagent-invocation-pairing
     ├── plans/
     │   └── archive/          # 完了済 plan (履歴アーカイブ)
     └── review/resolved/      # 解決済レビューメモ
@@ -148,6 +149,22 @@ claude-transcript-analyzer/
 - **外部ライブラリ不使用**（stdlib のみ）
 - テスト隔離: `USAGE_JSONL` で `DATA_FILE`、`HEALTH_ALERTS_JSONL` で `verify_session.py` の `ALERTS_FILE`、`ARCHIVE_DIR` / `ARCHIVE_STATE_FILE` / `USAGE_JSONL_LOCK` で archive 関連、`USAGE_RETENTION_DAYS` で retention をオーバーライド
 - 組み込みコマンドは記録しない: `/exit /clear /help /compact /mcp /config /model /resume /context /skills /hooks /fast`
+
+## ブランチ運用
+
+**release branch model** で運用する。
+
+```
+main
+  └─ vX.Y.Z              ← release branch (リリース単位の集積点)
+       ├─ feature/<issue-number>-<slug>  → PR → vX.Y.Z にマージ
+       └─ ...             (リリース準備完了で vX.Y.Z → main の release PR)
+```
+
+- 新リリースサイクル開始時に `main` から `vX.Y.Z` を切って remote に push
+- 個別 feature は `feature/<issue-number>-<slug>` で `vX.Y.Z` から派生 — feature PR の base は `vX.Y.Z` (main ではない)
+- リリース準備完了で `vX.Y.Z` → `main` の release PR を立てる (詳細は `patch-release` skill)
+- 軽微な単独 fix (issue 1 件で完結 / 他作業と独立) は feature → main 直 PR でも可。ただし release 化するときは必ず `vX.Y.Z` を経由
 
 ## よく使うコマンド
 

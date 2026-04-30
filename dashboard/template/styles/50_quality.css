@@ -1,0 +1,137 @@
+  /* ---------- subagent percentile + failure trend (Issue #60 / A5+B3) ---------- */
+  .panel-head.c-mint .ttl .dot { background: var(--mint); }
+  .percentile-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+    font-family: var(--ff-mono);
+  }
+  .percentile-table th {
+    text-align: left;
+    color: var(--ink-faint);
+    font-weight: 500;
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--line);
+  }
+  .percentile-table th.num,
+  .percentile-table td.num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  .percentile-table tbody tr {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  }
+  .percentile-table tbody tr:hover,
+  .percentile-table tbody tr:focus-visible {
+    background: var(--bg-panel-2, rgba(255, 255, 255, 0.03));
+    outline: none;
+  }
+  .percentile-table td {
+    padding: 5px 8px;
+    color: var(--ink);
+  }
+  .percentile-table td.name { color: var(--coral); }
+  .percentile-table td.dim { color: var(--ink-faint); }
+  .percentile-table .empty {
+    text-align: center;
+    color: var(--ink-faint);
+    padding: 24px 0;
+  }
+  .data-tip[data-kind="percentile"] { border-left-color: var(--coral); }
+
+  .trend-chart {
+    width: 100%;
+    max-width: 600px;
+    aspect-ratio: 600 / 220;
+    margin-top: 4px;
+  }
+  .trend-chart svg { width: 100%; height: 100%; display: block; }
+  .trend-chart .grid { stroke: var(--line); stroke-dasharray: 2, 3; }
+  .trend-chart .axis-label {
+    fill: var(--ink-faint);
+    font-size: 9px;
+    font-family: var(--ff-mono);
+  }
+  .trend-chart .line { fill: none; stroke-width: 1.5; }
+  .trend-chart .pt { stroke-width: 1; cursor: pointer; }
+  .trend-chart .pt:focus-visible { outline: 2px solid var(--mint); outline-offset: 1px; }
+  .trend-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 12px;
+    font-size: 10.5px;
+    color: var(--ink-faint);
+    font-family: var(--ff-mono);
+  }
+  .trend-legend .marker {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+    margin-right: 4px;
+    vertical-align: middle;
+  }
+  .data-tip[data-kind="trend"] { border-left-color: var(--mint); }
+
+  /* permission breakdown table (Issue #61 / A2) */
+  .perm-table {
+    width: 100%; border-collapse: collapse; font-size: 12px;
+    font-family: var(--ff-mono);
+  }
+  .perm-table th {
+    text-align: left; color: var(--ink-faint); font-weight: 500;
+    padding: 6px 8px; border-bottom: 1px solid var(--line);
+  }
+  .perm-table th.num, .perm-table td.num {
+    text-align: right; font-variant-numeric: tabular-nums;
+  }
+  .perm-table tbody tr { border-bottom: 1px solid rgba(255, 255, 255, 0.04); }
+  .perm-table tbody tr:hover { background: rgba(255, 255, 255, 0.03); }
+  .perm-table tbody tr:focus-visible { outline: 2px solid var(--mint); outline-offset: -1px; }
+  .perm-table td { padding: 5px 8px; color: var(--ink); }
+  .perm-table td.name { color: var(--mint); }   /* skill = mint */
+  .perm-table#quality-perm-subagent td.name { color: var(--coral); }  /* subagent = coral */
+  .perm-table td.dim { color: var(--ink-faint); }
+  .perm-table td.rate-warn { color: var(--peach); font-weight: 500; }
+  .perm-table .empty { text-align: center; color: var(--ink-faint); padding: 24px 0; }
+  .data-tip[data-kind="perm-skill"] { border-left-color: var(--mint); }
+  .data-tip[data-kind="perm-subagent"] { border-left-color: var(--coral); }
+
+  /* compact density (Issue #61 / A3) */
+  .compact-grid {
+    display: grid; grid-template-columns: minmax(280px, 1fr) minmax(320px, 2fr);
+    gap: 24px; align-items: start;
+  }
+  @media (max-width: 720px) {
+    .compact-grid { grid-template-columns: 1fr; }
+  }
+  .compact-hist {
+    width: 100%; max-width: 360px; aspect-ratio: 360 / 180;
+  }
+  .compact-hist svg { width: 100%; height: 100%; display: block; }
+  .compact-hist .bar { fill: var(--peach); cursor: pointer; }
+  .compact-hist .bar:hover, .compact-hist .bar:focus-visible {
+    fill-opacity: 0.85; outline: 2px solid var(--peach); outline-offset: 1px;
+  }
+  .compact-hist .axis-label { fill: var(--ink-faint); font-size: 10px; font-family: var(--ff-mono); }
+  .compact-hist .bar-num { fill: var(--ink); font-size: 10px; font-family: var(--ff-mono); text-anchor: middle; }
+  .worst-table { width: 100%; border-collapse: collapse; font-size: 12px; font-family: var(--ff-mono); }
+  .worst-table th {
+    text-align: left; color: var(--ink-faint); font-weight: 500;
+    padding: 6px 8px; border-bottom: 1px solid var(--line);
+  }
+  .worst-table th.num, .worst-table td.num {
+    text-align: right; font-variant-numeric: tabular-nums;
+  }
+  .worst-table tbody tr { border-bottom: 1px solid rgba(255, 255, 255, 0.04); }
+  .worst-table tbody tr:hover { background: rgba(255, 255, 255, 0.03); }
+  .worst-table tbody tr:focus-visible { outline: 2px solid var(--peach); outline-offset: -1px; }
+  .worst-table td { padding: 5px 8px; color: var(--ink); }
+  .worst-table td.sid { color: var(--peach); font-family: var(--ff-mono); }
+  .worst-table td.proj { color: var(--ink-faint); }
+  .worst-table td.proj .dim { color: var(--ink-faint); font-style: italic; }
+  .worst-table .empty { text-align: center; color: var(--ink-faint); padding: 16px 0; }
+  .data-tip[data-kind="histogram"] { border-left-color: var(--peach); }
+  .data-tip[data-kind="worst-session"] { border-left-color: var(--peach); }
+

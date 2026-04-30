@@ -1,0 +1,413 @@
+  /* ---------- header ---------- */
+  .header {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 24px;
+    align-items: end;
+    margin-bottom: 22px;
+    padding-bottom: 18px;
+    border-bottom: 1px solid var(--line);
+  }
+  .header h1 {
+    margin: 0 0 4px;
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--ink);
+  }
+  .header h1 .accent {
+    color: var(--mint);
+    font-weight: 700;
+  }
+  .header .lede {
+    color: var(--ink-soft);
+    font-size: 13px;
+  }
+  .header .lede .num { font-family: var(--ff-mono); color: var(--ink); font-weight: 500; }
+  .header .meta {
+    text-align: right;
+    font-size: 11.5px;
+    color: var(--ink-faint);
+    line-height: 1.7;
+  }
+  .header .meta .k { display: inline-block; min-width: 78px; color: var(--ink-faint); }
+  .header .meta .v { color: var(--ink-soft); font-family: var(--ff-mono); }
+
+  /* ---------- live connection badge ---------- */
+  .conn-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 10px;
+    margin-bottom: 6px;
+    font-family: var(--ff-mono);
+    font-size: 11px;
+    border-radius: var(--r-pill);
+    border: 1px solid var(--line);
+    background: var(--bg-panel);
+    color: var(--ink-faint);
+    transition: color 180ms ease, border-color 180ms ease, background 180ms ease;
+  }
+  .conn-status::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    box-shadow: 0 0 0 0 currentColor;
+  }
+  .conn-status[data-state="online"] {
+    color: var(--mint);
+    border-color: var(--mint-soft);
+  }
+  .conn-status[data-state="online"]::before {
+    animation: conn-pulse 1.6s ease-out infinite;
+  }
+  .conn-status[data-state="reconnect"] {
+    color: var(--peach);
+    border-color: var(--peach-soft);
+  }
+  .conn-status[data-state="offline"] {
+    color: var(--coral);
+    border-color: var(--coral-soft);
+  }
+  .conn-status[data-state="static"] {
+    color: var(--ink-faint);
+    border-color: var(--line);
+  }
+  .conn-status[data-state="static"]::before {
+    display: none;
+  }
+  @keyframes conn-pulse {
+    0%   { box-shadow: 0 0 0 0 currentColor; opacity: 1; }
+    70%  { box-shadow: 0 0 0 6px transparent; opacity: 0.85; }
+    100% { box-shadow: 0 0 0 0 transparent; opacity: 1; }
+  }
+
+  /* ---------- KPI ---------- */
+  .kpi-row {
+    display: grid;
+    grid-template-columns: repeat(8, 1fr);
+    gap: 10px;
+    margin-bottom: 22px;
+  }
+  .kpi {
+    background: var(--bg-panel);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    padding: 13px 14px 14px;
+    position: relative;
+    overflow: visible;
+  }
+  .kpi::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 14px; right: 14px;
+    height: 2px;
+    border-radius: 0 0 4px 4px;
+    background: var(--mint);
+    opacity: 0.85;
+  }
+  .kpi.c-coral::before { background: var(--coral); }
+  .kpi.c-peri::before  { background: var(--peri); }
+  .kpi.c-peach::before { background: var(--peach); }
+  .kpi.c-mute::before  { background: var(--ink-faint); opacity: 0.5; }
+  .kpi.warn::before    { background: var(--peach); }
+
+  .kpi .k-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 6px;
+  }
+  .kpi .k {
+    font-size: 10.5px;
+    color: var(--ink-faint);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 500;
+  }
+  .kpi .v {
+    font-family: var(--ff-mono);
+    font-size: 26px;
+    font-weight: 600;
+    color: var(--ink);
+    margin-top: 6px;
+    line-height: 1.05;
+    letter-spacing: -0.01em;
+  }
+  .kpi .v.sm { font-size: 20px; }
+  .kpi .s {
+    font-size: 11px;
+    color: var(--ink-faint);
+    margin-top: 6px;
+  }
+  .kpi .s em { font-style: normal; color: var(--ink-soft); font-family: var(--ff-mono); }
+  .kpi.warn .v { color: var(--peach); }
+  @media (max-width: 1200px) { .kpi-row { grid-template-columns: repeat(4, 1fr); } }
+  @media (max-width: 720px)  { .kpi-row { grid-template-columns: repeat(2, 1fr); } }
+
+  /* ---------- panel ---------- */
+  .panel {
+    background: var(--bg-panel);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+  }
+  .panel-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding: 14px 18px 12px;
+    border-bottom: 1px solid var(--line);
+    gap: 12px;
+  }
+  .panel-head .ttl-wrap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .panel-head .ttl {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--ink);
+    letter-spacing: -0.005em;
+  }
+  .panel-head .ttl .dot {
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--mint);
+    margin-right: 9px;
+    vertical-align: 1px;
+  }
+  .panel-head.c-coral .ttl .dot { background: var(--coral); }
+  .panel-head.c-peri  .ttl .dot { background: var(--peri); }
+  .panel-head.c-peach .ttl .dot { background: var(--peach); }
+  .panel-head .sub {
+    font-size: 11.5px;
+    color: var(--ink-faint);
+    font-family: var(--ff-mono);
+  }
+  .panel-body { padding: 14px 18px 18px; }
+
+  /* ---------- two-up ---------- */
+  .two-up { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+  @media (max-width: 1080px) { .two-up { grid-template-columns: 1fr; } }
+
+  /* ---------- ranking rows ---------- */
+  .rank-row {
+    display: grid;
+    grid-template-columns: 24px 1fr 64px 200px;
+    gap: 12px;
+    align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--line);
+    font-size: 13px;
+  }
+  .rank-row:last-child { border-bottom: none; }
+  .rank-row .rk {
+    color: var(--ink-faint);
+    font-family: var(--ff-mono);
+    font-size: 11px;
+    font-weight: 500;
+    text-align: right;
+  }
+  .rank-row .rn {
+    color: var(--ink);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-family: var(--ff-mono);
+    font-size: 12.5px;
+  }
+  .rank-row .rn .slash { color: var(--mint); font-weight: 600; }
+  .rank-row.subagent .rn .slash { color: var(--coral); }
+  .rank-row .rn .ns { color: var(--ink-faint); }
+  .rank-row .rv {
+    color: var(--ink);
+    text-align: right;
+    font-weight: 600;
+    font-size: 14px;
+    font-family: var(--ff-mono);
+  }
+  .gauge-bar {
+    height: 8px;
+    background: rgba(111,227,200,0.10);
+    border-radius: var(--r-pill);
+    position: relative;
+    overflow: hidden;
+  }
+  .gauge-bar .gb {
+    position: absolute;
+    top: 0; bottom: 0; left: 0;
+    background: linear-gradient(90deg, var(--mint-soft), var(--mint));
+    border-radius: var(--r-pill);
+  }
+  .rank-row.subagent .gauge-bar { background: rgba(255,138,118,0.10); }
+  .rank-row.subagent .gauge-bar .gb { background: linear-gradient(90deg, var(--coral-soft), var(--coral)); }
+  .rank-row .meta {
+    grid-column: 2 / 5;
+    font-size: 10.5px;
+    color: var(--ink-faint);
+    margin-top: 2px;
+    font-family: var(--ff-mono);
+  }
+  .rank-row .meta .fail { color: var(--rose); font-weight: 500; }
+
+  /* ---------- spark ---------- */
+  .spark-wrap {
+    display: grid;
+    grid-template-columns: 1fr 220px;
+    gap: 16px;
+    align-items: stretch;
+  }
+  .spark-svg {
+    width: 100%;
+    height: 168px;
+    display: block;
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    background: var(--bg-panel-2);
+  }
+  .spark-stats {
+    display: grid;
+    grid-template-rows: repeat(4, auto);
+    gap: 6px;
+    align-content: start;
+    padding: 12px 14px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    background: var(--bg-panel-2);
+  }
+  .spark-stats .row { display: flex; justify-content: space-between; align-items: baseline; font-size: 12px; padding: 7px 0; border-bottom: 1px solid var(--line); }
+  .spark-stats .row:last-child { border-bottom: none; }
+  .spark-stats .k { color: var(--ink-faint); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 500; }
+  .spark-stats .v { color: var(--ink); font-weight: 600; font-size: 14px; font-family: var(--ff-mono); }
+
+  /* ---------- projects ---------- */
+  .stack {
+    display: flex;
+    height: 38px;
+    border-radius: var(--r-md);
+    overflow: hidden;
+    margin-bottom: 12px;
+    background: var(--bg-panel-2);
+  }
+  .stack .seg { position: relative; height: 100%; }
+  .stack .seg + .seg { border-left: 1px solid rgba(28,29,34,0.4); }
+  .stack-legend {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 4px 20px;
+    font-size: 12px;
+  }
+  @media (max-width: 900px) { .stack-legend { grid-template-columns: 1fr; } }
+  .stack-legend .leg-row {
+    display: grid;
+    grid-template-columns: 14px 1fr 64px 56px;
+    gap: 10px;
+    align-items: center;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .stack-legend .leg-row:last-child { border-bottom: none; }
+  .stack-legend .sw { width: 12px; height: 12px; border-radius: var(--r-sm); }
+  .stack-legend .pn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); font-family: var(--ff-mono); font-size: 12px; }
+  .stack-legend .pc { color: var(--ink); text-align: right; font-weight: 600; font-family: var(--ff-mono); }
+  .stack-legend .pp { color: var(--ink-faint); text-align: right; font-size: 11px; font-family: var(--ff-mono); }
+
+  /* ---------- footer ---------- */
+  footer {
+    margin-top: 22px;
+    padding-top: 14px;
+    border-top: 1px solid var(--line);
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: var(--ink-faint);
+  }
+  footer .accent { color: var(--mint); }
+
+  /* ---------- live diff highlight + toast (Issue #69) ---------- */
+  /* 数字が伸びた KPI / lede / ranking row に bumped class が 1.5s だけ載る。
+     box-shadow inset の単一プロパティアニメで layout-safe (隣 KPI を押しのけない)。 */
+  @keyframes pulse-bg {
+    0%   { box-shadow: inset 0 0 0 9999px rgba(111,227,200, 0.18); }
+    100% { box-shadow: inset 0 0 0 9999px rgba(111,227,200, 0); }
+  }
+  .kpi.bumped,
+  .lede .num.bumped,
+  .rank-row.bumped {
+    animation: pulse-bg 1.5s ease-out;
+  }
+  /* lede 数字は inline element で box-shadow が effective でない場合もあるので
+     念のため background-color の transition でも視認性を補う。 */
+  .lede .num.bumped {
+    border-radius: 3px;
+  }
+
+  /* Toast — 横方向中央寄せ + coral 系 attention color。
+     transform: translateX(-50%) は center 配置のため常に必要 (translate 関数で
+     X/Y 同時指定)。slide-in / fade-out は CSS @keyframes で実装。CSS transition
+     方式だと表示中の上書き re-trigger 時に Browser が同フレーム内の連続 style 変更を
+     collapse して transition を skip する問題がある (実機検証で確認)。CSS animation
+     は class の remove → reflow → add で確実に再起動する classic pattern を取れる
+     ため、「上書きされた」signal を毎回確実に見せられる。 */
+  .toast {
+    position: fixed;
+    top: 14px;
+    left: 50%;
+    z-index: 1000;
+    padding: 8px 14px;
+    border-radius: var(--r-pill);
+    background: var(--bg-panel);
+    border: 1px solid var(--coral-soft);
+    color: var(--coral);
+    font-family: var(--ff-mono);
+    font-size: 12px;
+    box-shadow: 0 4px 18px rgba(255,138,118, 0.22);
+    opacity: 0;
+    transform: translate(-50%, -6px);
+    pointer-events: none;
+  }
+  @keyframes toast-in {
+    from { opacity: 0; transform: translate(-50%, -6px); }
+    to   { opacity: 1; transform: translate(-50%, 0); }
+  }
+  @keyframes toast-out {
+    from { opacity: 1; transform: translate(-50%, 0); }
+    to   { opacity: 0; transform: translate(-50%, -6px); }
+  }
+  .toast.show {
+    opacity: 1;
+    transform: translate(-50%, 0);
+    animation: toast-in 240ms ease both;
+  }
+  .toast.fading {
+    opacity: 0;
+    transform: translate(-50%, -6px);
+    animation: toast-out 240ms ease forwards;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    /* pulse keyframe を切って静止 outline のみで「変化があった」signal を残す。
+       toast の slide も止めて opacity fade のみに簡略化 (translate(-50%, 0) は
+       center 配置のため必須なので keep)。 */
+    .kpi.bumped,
+    .lede .num.bumped,
+    .rank-row.bumped {
+      animation: none !important;
+      outline: 1px solid var(--mint);
+      outline-offset: 1px;
+    }
+    .toast {
+      transform: translate(-50%, 0);
+    }
+    .toast.show,
+    .toast.fading {
+      animation: none !important;
+      transform: translate(-50%, 0);
+      transition: opacity 200ms ease;
+    }
+    .toast.show { opacity: 1; }
+    .toast.fading { opacity: 0; }
+  }
+

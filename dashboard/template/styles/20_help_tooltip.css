@@ -1,0 +1,156 @@
+  /* ---------- help button & tooltip ---------- */
+  .help-host { position: relative; display: inline-flex; align-items: center; }
+
+  .help-btn {
+    appearance: none;
+    -webkit-appearance: none;
+    border: 1px solid var(--line-strong);
+    background: var(--bg-elevated);
+    color: var(--ink-faint);
+    width: 16px; height: 16px;
+    border-radius: 50%;
+    padding: 0;
+    font-family: var(--ff-sans);
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 1;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
+  }
+  .help-btn:hover,
+  .help-btn:focus-visible {
+    color: var(--ink);
+    background: var(--bg-panel-2);
+    border-color: var(--ink-faint);
+    outline: none;
+  }
+  .help-btn:focus-visible {
+    box-shadow: 0 0 0 2px rgba(138,166,255,0.45);
+  }
+  .help-btn[aria-expanded="true"] {
+    color: var(--peri);
+    border-color: var(--peri);
+    background: rgba(138,166,255,0.10);
+  }
+
+  .help-pop {
+    position: absolute;
+    top: calc(100% + 8px);
+    z-index: 50;
+    width: max-content;
+    max-width: 280px;
+    padding: 10px 12px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-md);
+    box-shadow:
+      0 1px 2px rgba(0,0,0,0.30),
+      0 8px 24px rgba(0,0,0,0.35);
+    color: var(--ink-soft);
+    font-size: 12px;
+    line-height: 1.55;
+    visibility: hidden;
+    opacity: 0;
+    transform: translateY(-2px);
+    transition: opacity 120ms ease, transform 120ms ease, visibility 120ms;
+    pointer-events: none;
+  }
+  .help-pop[data-place="right"] { left: -8px; }
+  .help-pop[data-place="left"]  { right: -8px; }
+
+  /* Patterns / Quality / Surface は Overview に比べ説明本文が長く、280px だと
+     折り返しが多すぎて読みにくいので scoped で広げる。 */
+  section[data-page="patterns"] .help-pop,
+  section[data-page="quality"]  .help-pop,
+  section[data-page="surface"]  .help-pop {
+    max-width: 380px;
+  }
+
+  .help-host:hover > .help-pop,
+  .help-pop[data-open="true"] {
+    visibility: visible;
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
+  }
+  .help-pop[data-open="true"] { transition-delay: 0ms; }
+
+  .help-pop .pop-ttl {
+    display: block;
+    color: var(--ink);
+    font-weight: 600;
+    font-size: 12px;
+    margin-bottom: 4px;
+  }
+  .help-pop .pop-body { color: var(--ink-soft); }
+  .help-pop .pop-body code {
+    font-family: var(--ff-mono);
+    font-size: 11px;
+    background: rgba(138,166,255,0.10);
+    color: var(--ink);
+    padding: 1px 5px;
+    border-radius: 4px;
+  }
+
+  /* ---------- data tooltip (graph data points) ---------- */
+  /* `?` ヘルプ (.help-pop) は説明テキスト中心、こちらはデータ値中心。
+     位置はマウス追従、フォントは mono で値を強調、左に accent stripe。 */
+  .data-tip {
+    position: fixed;
+    z-index: 60;
+    top: 0; left: 0;
+    pointer-events: none;
+    background: var(--bg-app);
+    border: 1px solid var(--line-strong);
+    border-left: 3px solid var(--peri);
+    border-radius: var(--r-sm);
+    padding: 6px 10px 7px;
+    font-family: var(--ff-mono);
+    font-size: 11.5px;
+    line-height: 1.45;
+    color: var(--ink);
+    box-shadow:
+      0 1px 2px rgba(0,0,0,0.30),
+      0 8px 24px rgba(0,0,0,0.45);
+    white-space: nowrap;
+    visibility: hidden;
+    opacity: 0;
+    transform: translate3d(0,0,0);
+    transition: opacity 90ms ease;
+  }
+  .data-tip[data-show="true"] { visibility: visible; opacity: 1; }
+  .data-tip[data-kind="proj"] { border-left-color: var(--peach); }
+  .data-tip[data-kind="rank-skill"] { border-left-color: var(--mint); }
+  .data-tip[data-kind="rank-subagent"] { border-left-color: var(--coral); }
+  .data-tip .lbl {
+    color: var(--ink-faint);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-right: 6px;
+    font-family: var(--ff-sans);
+    font-weight: 500;
+  }
+  .data-tip .val {
+    color: var(--ink);
+    font-weight: 600;
+  }
+  .data-tip .sep { color: var(--ink-faint); margin: 0 6px; }
+  .data-tip .ttl {
+    display: block;
+    color: var(--ink);
+    font-weight: 600;
+    font-size: 12px;
+    margin-bottom: 2px;
+    font-family: var(--ff-mono);
+  }
+  .stack .seg { cursor: default; }
+  .stack-legend .leg-row { cursor: default; }
+  /* sparkline 用の day-band rect はマウスを受ける（Issue #50: 旧 .dot-hit を置換） */
+  .spark-svg .day-band { cursor: default; }
+  /* ranking 行も hover で data-tip を出す */
+  .rank-row[data-tip] { cursor: default; }
+

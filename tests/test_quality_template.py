@@ -7,13 +7,12 @@ A5 (subagent percentile table) と B3 (subagent failure weekly trend chart) の
 """
 # pylint: disable=line-too-long
 import re
-from pathlib import Path
 
-_TEMPLATE_PATH = Path(__file__).parent.parent / "dashboard" / "template.html"
+from _dashboard_template_loader import load_assembled_template
 
 
 def _load_template() -> str:
-    return _TEMPLATE_PATH.read_text(encoding="utf-8")
+    return load_assembled_template()
 
 
 def _extract_section(template: str, page: str) -> str:
