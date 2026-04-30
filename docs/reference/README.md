@@ -15,23 +15,3 @@
 
 判断ルール: 「これに違反すると **バグ**」なら spec / 「これを知らないと
 **踏み抜く**」なら reference。
-
-## ファイル一覧
-
-| File | 概要 |
-|---|---|
-| `storage.md` | JSONL primary 採用の根拠 / dedup 規律 / archive 不変性ポリシー |
-| `cross-platform.md` | Windows porting checklist + Python launcher trilemma (`python` vs `python3` vs shell-fallback chain) |
-| `dashboard-server.md` | stdlib SSE の 3 要件 / JSON-in-`<script>` escape / component composition pattern |
-| `subagent-invocation-pairing.md` | 二重観測点 (PostToolUse + SubagentStart) の同定アルゴリズム + DRY 圧の教訓 |
-
-## 関連 spec
-
-各 reference に対応する仕様 (contract) は `docs/spec/` を参照:
-
-| reference | 関連 spec |
-|---|---|
-| `storage.md` | `usage-jsonl-events.md` / `archive-runtime.md` |
-| `cross-platform.md` | (CLAUDE.md データフロー / `hooks/hooks.json` / `commands/*.md`) |
-| `dashboard-server.md` | `dashboard-api.md` / `dashboard-runtime.md` |
-| `subagent-invocation-pairing.md` | `usage-jsonl-events.md` (subagent_* event の schema) |

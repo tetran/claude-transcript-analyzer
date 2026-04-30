@@ -133,11 +133,8 @@ claude-transcript-analyzer/
 └── docs/
     ├── transcript-format.md  # 生 transcript フォーマット + Hook 入力 schema + Archive 進化規約
     ├── spec/                 # 現行仕様 (contract) — README.md に振り分け基準
-    │   │   # dashboard-api / dashboard-runtime / usage-jsonl-events /
-    │   │   # archive-runtime / issue-authoring
     │   └── legacy/           # v0.1 時代の直接 parse 手順 (履歴アーカイブ)
     ├── reference/            # 設計判断・gotcha・パターン — README.md に振り分け基準
-    │       # storage / cross-platform / dashboard-server / subagent-invocation-pairing
     ├── plans/
     │   └── archive/          # 完了済 plan (履歴アーカイブ)
     └── review/resolved/      # 解決済レビューメモ
@@ -152,6 +149,22 @@ claude-transcript-analyzer/
 - **外部ライブラリ不使用**（stdlib のみ）
 - テスト隔離: `USAGE_JSONL` で `DATA_FILE`、`HEALTH_ALERTS_JSONL` で `verify_session.py` の `ALERTS_FILE`、`ARCHIVE_DIR` / `ARCHIVE_STATE_FILE` / `USAGE_JSONL_LOCK` で archive 関連、`USAGE_RETENTION_DAYS` で retention をオーバーライド
 - 組み込みコマンドは記録しない: `/exit /clear /help /compact /mcp /config /model /resume /context /skills /hooks /fast`
+
+## ブランチ運用
+
+**release branch model** で運用する。
+
+```
+main
+  └─ vX.Y.Z              ← release branch (リリース単位の集積点)
+       ├─ feature/<issue-number>-<slug>  → PR → vX.Y.Z にマージ
+       └─ ...             (リリース準備完了で vX.Y.Z → main の release PR)
+```
+
+- 新リリースサイクル開始時に `main` から `vX.Y.Z` を切って remote に push
+- 個別 feature は `feature/<issue-number>-<slug>` で `vX.Y.Z` から派生 — feature PR の base は `vX.Y.Z` (main ではない)
+- リリース準備完了で `vX.Y.Z` → `main` の release PR を立てる (詳細は `patch-release` skill)
+- 軽微な単独 fix (issue 1 件で完結 / 他作業と独立) は feature → main 直 PR でも可。ただし release 化するときは必ず `vX.Y.Z` を経由
 
 ## よく使うコマンド
 
