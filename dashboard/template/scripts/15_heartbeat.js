@@ -27,6 +27,10 @@
   let __hbReducedMotion = false;
   let __hbLastTickMs = 0;
   let __hbAccumMs = 0;
+  // 各 sample 進む度にインクリメント。idle 時の subtle baseline breathing wave の
+  // phase 入力 + buffer overflow worry なし (30 sample/s × Number.MAX_SAFE_INTEGER で
+  // 数万年スケール)。
+  let __hbTickCount = 0;
 
   function __hbDetectReducedMotion() {
     if (typeof window === 'undefined') return false;
@@ -55,17 +59,25 @@
   }
 
   function __hbAdvanceOneSample() {
-    // 1 sample 左シフト + 末尾追加 (spike 残量があれば SHAPE * amp、なければ baseline 0)
+    // 1 sample 左シフト + 末尾追加。
+    // spike 残量があれば SHAPE * amp、なければ idle baseline breathing wave。
+    // breathing は振幅 ~0.6px / 周期 ~3.3s の sin。プラン acceptance criteria
+    // 「idle 30s 以上でも line が左→右に流れ続ける (= 凍ってない)」を視覚的に
+    // 担保するため (Issue #83 codex Round 2 P1)。__hbSpikeAmp で state スケール
+    // するので offline/static (amp=0) では完全 flat = 既存テストの「buf 全 0」契約と整合。
     for (let i = 0; i < __hbBuf.length - 1; i++) {
       __hbBuf[i] = __hbBuf[i + 1];
     }
-    let nextSample = 0;
+    let nextSample;
     if (__hbSpikeRemain > 0) {
       const idx = HB_SPIKE_SHAPE.length - __hbSpikeRemain;
       nextSample = HB_SPIKE_SHAPE[idx] * __hbSpikeAmp;
       __hbSpikeRemain -= 1;
+    } else {
+      nextSample = 0.6 * Math.sin(__hbTickCount * 0.06) * __hbSpikeAmp;
     }
     __hbBuf[__hbBuf.length - 1] = nextSample;
+    __hbTickCount += 1;
   }
 
   function __hbTick(timestamp) {
@@ -110,6 +122,11 @@
       cancelAnimationFrame(__hbRafId);
       __hbRafId = null;
     }
+    // pause 後の resume 時に stale dt で catch-up モード暴走を起こさないよう
+    // timing state を毎回クリア (Issue #83 codex Round 2 P2)。次回 tick の
+    // 初回 frame で `__hbLastTickMs > 0` ガードに落ちて dt = 0 から再開する。
+    __hbLastTickMs = 0;
+    __hbAccumMs = 0;
   }
 
   // 全 state で __hbSpikeAmp を明示的に書き込む (state transition 時の amplitude leak 防止)。
@@ -191,6 +208,7 @@
         __hbSpikeRemain = 0;
         __hbLastTickMs = 0;
         __hbAccumMs = 0;
+        __hbTickCount = 0;
       },
     };
   }

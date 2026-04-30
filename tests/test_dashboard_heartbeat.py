@@ -75,9 +75,10 @@ class TestTemplateConcat:
             for name in mod._MAIN_JS_FILES
         )
         # __hbLastTickMs / __hbAccumMs は elapsed-time 駆動 tick の closure state (Issue #83 codex Round 1)。
+        # __hbTickCount は idle baseline breathing wave の phase 入力 (Issue #83 codex Round 2 P1)。
         for var in (
             "__hbState", "__hbBuf", "__hbSpikeRemain", "__hbSpikeAmp", "__hbRafId",
-            "__hbLastTickMs", "__hbAccumMs",
+            "__hbLastTickMs", "__hbAccumMs", "__hbTickCount",
         ):
             count = all_js.count("let " + var)
             assert count == 1, f"`let {var}` 出現は 1 回のみであるべきが {count} 回。再宣言禁止違反"
@@ -287,6 +288,50 @@ console.log(JSON.stringify({maxAbs: Math.max.apply(null, buf.map(Math.abs))}));
 """)
         # online に戻ったら振幅 1.0 → max abs >= 5 (SPIKE_SHAPE max abs 9)
         self.assertGreaterEqual(out["maxAbs"], 5)
+
+    def test_idle_baseline_animates_when_no_spike(self):
+        """idle 中 (spike 残量 0) で line が静止せず breathing wave で微小に動く。
+
+        Issue #83 codex Round 2 P1: baseline を 0 固定にすると polyline が完全静止
+        して acceptance criteria「アイドル 30 秒以上でも line が左→右に流れ続ける
+        (= 凍ってない)」を満たさない。breathing 振幅 ~0.6px の sin wave で生存感を出す。
+        offline / static (amp=0) では既存テストの flat 契約と整合させるため、
+        breathing も __hbSpikeAmp スケール下に置く。
+        """
+        out = _node_eval_heartbeat(_STUB_PRELUDE, _PRE_FLIGHT + r"""
+window.__heartbeat.start();
+flushFrames(50);
+const buf = Array.from(window.__heartbeat._buf());
+console.log(JSON.stringify({
+  maxAbs: Math.max.apply(null, buf.map(Math.abs)),
+  allZero: buf.every(function (v) { return v === 0; }),
+}));
+""")
+        self.assertFalse(out["allZero"], "idle baseline が all-0 で静止している (Round 2 P1 regression)")
+        self.assertGreater(out["maxAbs"], 0.1, "idle breathing wave 振幅が小さすぎる")
+
+    def test_resume_after_stop_does_not_compress_spike(self):
+        """offline → online resume 後の bump() が spike full duration を出す。
+
+        Issue #83 codex Round 2 P2: stopHeartbeat() で __hbLastTickMs / __hbAccumMs を
+        クリアしないと、長い pause 後の resume で huge dt が catch-up cap=5 を踏んで
+        spike 先頭が一気に消費されて compress 表示になる。
+        """
+        out = _node_eval_heartbeat(_STUB_PRELUDE, _PRE_FLIGHT + r"""
+window.__heartbeat.start();
+flushFrames(3);
+window.__heartbeat.setState('offline');
+_simTime += 10000;
+window.__heartbeat.setState('online');
+window.__heartbeat.bump();
+flushFrames(15);
+const buf = Array.from(window.__heartbeat._buf());
+console.log(JSON.stringify({maxAbs: Math.max.apply(null, buf.map(Math.abs))}));
+""")
+        # stale timing state が漏れると先頭 5 sample が catch-up で消費されて
+        # 残り 5 sample (= [2,4,3,1,0] の持続部) しか buf に残らない → max abs ~4。
+        # 修正後は spike 全 10 sample が乗るので max abs = 9。
+        self.assertGreaterEqual(out["maxAbs"], 8)
 
     def test_reduced_motion_bump_writes_sr_with_microtask_drain(self):
         """reduced-motion 環境で bump() 連発時に SR 通知が再発火する。
