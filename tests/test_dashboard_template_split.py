@@ -45,7 +45,8 @@ _DASHBOARD_PATH = Path(__file__).parent.parent / "dashboard" / "server.py"
 #   - 2bab4e88...: Issue #83 codex Round 2 fix-up / idle baseline に breathing wave 追加 (__hbTickCount + sin) + stopHeartbeat() で __hbLastTickMs / __hbAccumMs リセット (resume 時 catch-up 暴走防止)
 #   - 4b429ad2...: Issue #83 user follow-up / heartbeat 線そのものを常時明滅 (CSS @keyframes heartbeat-pulse で stroke-opacity を 1.0 ↔ 0.4 で 1s 周期、state 別 opacity と独立軸)
 #   - 5883a091...: Issue #83 user follow-up tweak / 明滅周期を 1s → 3s に調整 (呼吸テンポ感 / ambient indicator として落ち着いた pulse)
-EXPECTED_TEMPLATE_SHA256 = "5883a09140cb73b4202e18cd3442453c9106be9b98079025b7d761c018e7ac88"
+#   - 28745c0d...: v0.7.2 release / footer の version 表記 v0.7.1 → v0.7.2 に bump
+EXPECTED_TEMPLATE_SHA256 = "28745c0d8e0cc540f9ec2a6d75ff154a21ed1f1bcfd226f94b43a2eabca13567"
 
 
 def _load_dashboard_module(tmp_path: Path):
