@@ -883,11 +883,32 @@ def load_health_alerts() -> list[dict]:
 def build_dashboard_data(events: list[dict]) -> dict:
     usage_events = _filter_usage_events(events)
     permission_breakdowns = aggregate_permission_breakdowns(events)
+
+    # Issue #81 — Overview KPI 上段の "unique kinds" カウンタは TOP_N=10 cap を効かせない全件カウント。
+    # ranking 配列 (`*_ranking` / `project_breakdown`) は引き続き上位 10 件 cap (UI 表示用)。
+    # filter / dedup 慣習は aggregate_skills / aggregate_subagent_metrics / aggregate_projects と一致させる
+    # (drift guard は test_dashboard.py::TestBuildDashboardData の `*_matches_*_when_below_cap`)。
+    skill_kinds_set: set[str] = set()
+    for ev in events:
+        if ev.get("event_type") in ("skill_tool", "user_slash_command"):
+            name = ev.get("skill", "")
+            if name:
+                skill_kinds_set.add(name)
+    subagent_kinds_total = len(aggregate_subagent_metrics(events))
+    project_kinds_set: set[str] = set()
+    for ev in usage_events:
+        project = ev.get("project", "")
+        if project:
+            project_kinds_set.add(project)
+
     return {
         "last_updated": _now_iso(),
         "total_events": len(usage_events),
         "skill_ranking": aggregate_skills(events),
         "subagent_ranking": aggregate_subagents(events),
+        "skill_kinds_total": len(skill_kinds_set),
+        "subagent_kinds_total": subagent_kinds_total,
+        "project_total": len(project_kinds_set),
         "daily_trend": aggregate_daily(usage_events),
         "project_breakdown": aggregate_projects(usage_events),
         "hourly_heatmap": aggregate_hourly_heatmap(usage_events),
@@ -936,6 +957,7 @@ _TEMPLATE_DIR = Path(__file__).resolve().parent / "template"
 _CSS_FILES = (
     "00_base.css",          # root vars / reset / body / .app
     "10_components.css",    # header / live badge / KPI / panel / two-up / ranking / spark / projects / footer
+    "15_heartbeat.css",     # live heartbeat sparkline (Issue #83)
     "20_help_tooltip.css",  # help button + data tooltip (graph data points)
     "30_pages.css",         # multipage shell (Issue #57)
     "40_patterns.css",      # hourly heatmap + skill cooccurrence + project×skill (Issue #58/59)
@@ -944,6 +966,7 @@ _CSS_FILES = (
 )
 _MAIN_JS_FILES = (
     "10_helpers.js",              # esc / fmtN / pad / STATUS_LABEL / setConnStatus
+    "15_heartbeat.js",            # live heartbeat sparkline (Issue #83)
     "20_load_and_render.js",      # async loadAndRender (KPI / ranking / sparkline / projects)
     "25_live_diff.js",            # live mode 差分 highlight + toast (Issue #69)
     "30_renderers_patterns.js",   # heatmap / cooccurrence / project×skill matrix renderers

@@ -39,7 +39,14 @@ _DASHBOARD_PATH = Path(__file__).parent.parent / "dashboard" / "server.py"
 #   - e787b78b...: Issue #69 UX 調整 / CSS animation (@keyframes toast-in/out) に切替 (CSS transition 方式は実機で再生されない問題への対処)
 #   - 4f4b511f...: Issue #69 fix-up / scheduleLoadAndRender で SSE refresh と hashchange の loadAndRender 並行発火を直列化 (stale-snapshot race 対策)
 #   - ef1c669f...: v0.7.1 release / footer の version 表記 v0.7 → v0.7.1 に bump
-EXPECTED_TEMPLATE_SHA256 = "ef1c669fc38a8d4d55c4e0f879fbed12b756e2de0276a5badd415dadbb7df5c8"
+#   - 2c38c50e...: Issue #81 / Overview KPI 上段の `kpi-skills` / `kpi-subs` / `kpi-projs` / `ledeProjects` を `*_kinds_total` / `project_total` (cap 無し) を読むように切替 + help body 文言更新 + 25_live_diff.js も同期 (20_load_and_render.js / 25_live_diff.js)
+#   - af715e7b...: Issue #83 / Live heartbeat sparkline (15_heartbeat.css + 15_heartbeat.js 追加 / shell.html nav.page-nav に <svg id="heartbeat"> + sr-only span / 10_helpers.js setConnStatus 経由で heartbeat sync / 70_init_eventsource.js で start + bump)
+#   - 31fc9f48...: Issue #83 codex Round 1 fix-up / __hbTick を refresh-rate 非依存に切替 (requestAnimationFrame の timestamp で elapsed-ms 駆動。HB_MS_PER_SAMPLE=33 / HB_MAX_CATCHUP_SAMPLES=5 / __hbLastTickMs / __hbAccumMs 追加)
+#   - 2bab4e88...: Issue #83 codex Round 2 fix-up / idle baseline に breathing wave 追加 (__hbTickCount + sin) + stopHeartbeat() で __hbLastTickMs / __hbAccumMs リセット (resume 時 catch-up 暴走防止)
+#   - 4b429ad2...: Issue #83 user follow-up / heartbeat 線そのものを常時明滅 (CSS @keyframes heartbeat-pulse で stroke-opacity を 1.0 ↔ 0.4 で 1s 周期、state 別 opacity と独立軸)
+#   - 5883a091...: Issue #83 user follow-up tweak / 明滅周期を 1s → 3s に調整 (呼吸テンポ感 / ambient indicator として落ち着いた pulse)
+#   - 28745c0d...: v0.7.2 release / footer の version 表記 v0.7.1 → v0.7.2 に bump
+EXPECTED_TEMPLATE_SHA256 = "28745c0d8e0cc540f9ec2a6d75ff154a21ed1f1bcfd226f94b43a2eabca13567"
 
 
 def _load_dashboard_module(tmp_path: Path):
@@ -94,6 +101,8 @@ def test_html_template_contains_critical_dom_anchors(tmp_path):
         "stack", "stackLegend", "projSub",
         "lastRx", "sessVal", "connStatus",
         "dataTooltip",
+        # Issue #83: live heartbeat sparkline
+        "heartbeat", "heartbeatSr",
     ):
         assert f'id="{dom_id}"' in html, f"DOM id '{dom_id}' が消えている"
 

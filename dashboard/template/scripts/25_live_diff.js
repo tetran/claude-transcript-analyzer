@@ -57,11 +57,16 @@
       ? d.hourly_heatmap.buckets : [];
     const localDays = localDailyFromHourly(buckets);
 
+    // Issue #81: KPI tile / lede の "unique kinds" は 20_load_and_render.js と同じ
+    // `*_kinds_total` / `project_total` (cap 無し) を読む。defensive fallback (`!= null`)
+    // で旧 length に逃げる構造保証は loadAndRender 側と完全に揃える。
+    // `Number(...) || 0` を使わない理由: 値が `0` のとき falsy として fallback の
+    // length に化けてしまい、本当に 0 種類のときの diff 比較が壊れる。
     const kpi = {
       'kpi-total':   Number(d.total_events) || 0,
-      'kpi-skills':  skillRanking.length,
-      'kpi-subs':    subRanking.length,
-      'kpi-projs':   projects.length,
+      'kpi-skills':  (d.skill_kinds_total != null ? Number(d.skill_kinds_total) : skillRanking.length),
+      'kpi-subs':    (d.subagent_kinds_total != null ? Number(d.subagent_kinds_total) : subRanking.length),
+      'kpi-projs':   (d.project_total != null ? Number(d.project_total) : projects.length),
       'kpi-sess':    Number(ss.total_sessions) || 0,
       'kpi-resume':  Number(ss.resume_rate) || 0,
       'kpi-compact': Number(ss.compact_count) || 0,
@@ -70,7 +75,7 @@
     const lede = {
       ledeEvents:   Number(d.total_events) || 0,
       ledeDays:     localDays.length,
-      ledeProjects: projects.length,
+      ledeProjects: (d.project_total != null ? Number(d.project_total) : projects.length),
     };
     const rankSkill = new Map();
     for (const it of skillRanking) {

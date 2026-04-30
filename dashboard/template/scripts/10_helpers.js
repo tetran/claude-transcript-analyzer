@@ -60,6 +60,10 @@
     static:    '— 静的レポート',
   };
   function setConnStatus(state) {
+    // Issue #83: heartbeat 状態は connStatus DOM 不在 / 削除時にも sync させる。
+    // (connStatus は footer に居住するので 4 ページ全てに必ずあるが、防衛的に
+    //  ガードより前に書く。)
+    if (window.__heartbeat) window.__heartbeat.setState(state);
     const el = document.getElementById('connStatus');
     if (!el) return;
     el.dataset.state = state;

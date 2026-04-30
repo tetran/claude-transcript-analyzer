@@ -19,6 +19,13 @@ __INCLUDE_STYLES__
       <a href="#/patterns" data-page-link="patterns" tabindex="0">Patterns</a>
       <a href="#/quality" data-page-link="quality" tabindex="0">Quality</a>
       <a href="#/surface" data-page-link="surface" tabindex="0">Surface</a>
+      <!-- Issue #83: live heartbeat sparkline。
+           default `hidden` で static export 経路では非表示、live 経路で
+           startHeartbeat() が hidden を解除する。 -->
+      <svg class="heartbeat" id="heartbeat" data-state="reconnect" hidden viewBox="0 0 140 22" preserveAspectRatio="none" role="img" aria-label="ライブ更新インジケータ">
+        <polyline points=""/>
+      </svg>
+      <span class="sr-only" id="heartbeatSr" aria-live="polite" aria-atomic="true"></span>
     </nav>
 
     <!-- Overview ページ (現状互換) -->
@@ -468,7 +475,7 @@ __INCLUDE_STYLES__
         <span class="meta-item"><span class="k">セッション</span><span class="v" id="sessVal">—</span></span>
       </div>
       <div class="credits">
-        <span class="accent">claude-transcript-analyzer</span> · v0.7.1<span class="sep">·</span>stdlib only · no third-party js
+        <span class="accent">claude-transcript-analyzer</span> · v0.7.2<span class="sep">·</span>stdlib only · no third-party js
       </div>
     </footer>
   </div>
