@@ -12,12 +12,15 @@
 
 ```json
 {
-  "last_updated":      "<ISO 8601 UTC>",
-  "total_events":      <int>,
-  "skill_ranking":     [...],
-  "subagent_ranking":  [...],
-  "daily_trend":       [...],
-  "project_breakdown":       [...],
+  "last_updated":          "<ISO 8601 UTC>",
+  "total_events":          <int>,
+  "skill_ranking":         [...],
+  "subagent_ranking":      [...],
+  "skill_kinds_total":     <int>,
+  "subagent_kinds_total":  <int>,
+  "project_total":         <int>,
+  "daily_trend":           [...],
+  "project_breakdown":     [...],
   "hourly_heatmap":          { ... },
   "skill_cooccurrence":      [...],
   "project_skill_matrix":    { ... },
@@ -31,6 +34,35 @@
 ```
 
 各フィールドは additive で増える前提 (browser 側は欠損キーに defensive)。
+
+### Ranking 配列と "全件 unique 数" カウンタの分離 (Issue #81, v0.7.2〜)
+
+`skill_ranking` / `subagent_ranking` / `project_breakdown` は **最大 `TOP_N` 件 (= 10、`dashboard/server.py:TOP_N` 定数)** で cap する **UI ランキング表示用** 配列。
+全件 unique 数を取りたい consumer は新規の `skill_kinds_total` / `subagent_kinds_total` / `project_total` を参照すること
+(これらは Issue #81 で「Overview KPI tile が 10 で頭打ちになる」問題を解消するために導入した cap 無しカウンタ)。
+
+`docs/spec/dashboard-api.md` 内の "10" リテラルは **ランキング cap (= UI 表示用)** にだけ適用される。KPI counter には適用されない。
+
+#### `skill_kinds_total: int`
+
+- 集計式: `|{ev.skill : ev.event_type ∈ {skill_tool, user_slash_command} ∧ ev.skill ≠ ""}|`
+- `aggregate_skills` の counter キーセットと同一 event_type / 同一 skip 判定 (drift guard は `tests/test_dashboard.py::TestBuildDashboardData::test_skill_kinds_total_matches_aggregate_skills_when_below_cap`)
+- empty events では `0`
+
+#### `subagent_kinds_total: int`
+
+- 集計式: `len(aggregate_subagent_metrics(events))`
+- = invocation 単位 dedup (`subagent_start` + `subagent_lifecycle_start` を `INVOCATION_MERGE_WINDOW_SECONDS = 1.0` 秒以内ペアで 1 invocation 化) 後の unique subagent type 数
+- 同 type の複数 invocation は **1 kind** としてカウント (= type-level dedup)
+- drift guard は `test_subagent_kinds_total_matches_aggregate_subagents_when_below_cap`
+- empty events では `0`
+
+#### `project_total: int`
+
+- 集計式: `|{ev.project : ev ∈ _filter_usage_events(events) ∧ ev.project ≠ ""}|`
+- 入力は `_filter_usage_events()` 後 (= usage 系のみ + subagent invocation dedup 済み)。`session_start` / `notification` / `instructions_loaded` 等のハウスキーピング系は除外
+- drift guard は `test_project_total_matches_project_breakdown_when_below_cap`
+- empty events では `0`
 
 ## `last_updated` / `daily_trend` の local TZ 表示 (Issue #65, v0.7.1〜)
 

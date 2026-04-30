@@ -488,6 +488,84 @@ class TestBuildLiveSnapshotNode(unittest.TestCase):
         self.assertEqual(out["alpha"], 11)
         self.assertEqual(out["beta"], 7)
 
+    # Issue #81 — KPI tile / lede が `*_kinds_total` / `project_total` (cap 無し) を読むこと、
+    # かつ field 不在では旧 length に fallback することを構造保証する。
+    # 20_load_and_render.js と 25_live_diff.js の表示乖離 (loadAndRender 側 = 全件 unique /
+    # buildLiveSnapshot 側 = ranking length) を防ぐ pin。
+    def test_kpi_skills_uses_skill_kinds_total_when_provided(self):
+        data = {
+            "skill_ranking": [{"name": f"s{i}", "count": 1} for i in range(10)],
+            "skill_kinds_total": 25,
+        }
+        out = _node_eval(
+            "const s = buildLiveSnapshot(" + json.dumps(data) + ");\n"
+            "process.stdout.write(JSON.stringify({ kpiSkills: s.kpi['kpi-skills'] }));\n"
+        )
+        self.assertEqual(out["kpiSkills"], 25)
+
+    def test_kpi_skills_falls_back_to_ranking_length_when_total_missing(self):
+        data = {
+            "skill_ranking": [{"name": "a", "count": 3}, {"name": "b", "count": 1}],
+        }
+        out = _node_eval(
+            "const s = buildLiveSnapshot(" + json.dumps(data) + ");\n"
+            "process.stdout.write(JSON.stringify({ kpiSkills: s.kpi['kpi-skills'] }));\n"
+        )
+        self.assertEqual(out["kpiSkills"], 2)
+
+    def test_kpi_subs_uses_subagent_kinds_total_when_provided(self):
+        data = {
+            "subagent_ranking": [{"name": f"sub{i}", "count": 1} for i in range(10)],
+            "subagent_kinds_total": 17,
+        }
+        out = _node_eval(
+            "const s = buildLiveSnapshot(" + json.dumps(data) + ");\n"
+            "process.stdout.write(JSON.stringify({ kpiSubs: s.kpi['kpi-subs'] }));\n"
+        )
+        self.assertEqual(out["kpiSubs"], 17)
+
+    def test_kpi_subs_falls_back_to_ranking_length_when_total_missing(self):
+        data = {
+            "subagent_ranking": [{"name": "Explore", "count": 5}],
+        }
+        out = _node_eval(
+            "const s = buildLiveSnapshot(" + json.dumps(data) + ");\n"
+            "process.stdout.write(JSON.stringify({ kpiSubs: s.kpi['kpi-subs'] }));\n"
+        )
+        self.assertEqual(out["kpiSubs"], 1)
+
+    def test_kpi_projs_uses_project_total_when_provided(self):
+        data = {
+            "project_breakdown": [{"project": f"p{i}", "count": 1} for i in range(10)],
+            "project_total": 42,
+        }
+        out = _node_eval(
+            "const s = buildLiveSnapshot(" + json.dumps(data) + ");\n"
+            "process.stdout.write(JSON.stringify({ kpiProjs: s.kpi['kpi-projs'] }));\n"
+        )
+        self.assertEqual(out["kpiProjs"], 42)
+
+    def test_kpi_projs_falls_back_to_breakdown_length_when_total_missing(self):
+        data = {
+            "project_breakdown": [{"project": "p1", "count": 2}, {"project": "p2", "count": 1}],
+        }
+        out = _node_eval(
+            "const s = buildLiveSnapshot(" + json.dumps(data) + ");\n"
+            "process.stdout.write(JSON.stringify({ kpiProjs: s.kpi['kpi-projs'] }));\n"
+        )
+        self.assertEqual(out["kpiProjs"], 2)
+
+    def test_lede_projects_uses_project_total_when_provided(self):
+        data = {
+            "project_breakdown": [{"project": f"p{i}", "count": 1} for i in range(10)],
+            "project_total": 42,
+        }
+        out = _node_eval(
+            "const s = buildLiveSnapshot(" + json.dumps(data) + ");\n"
+            "process.stdout.write(JSON.stringify({ ledeProjects: s.lede.ledeProjects }));\n"
+        )
+        self.assertEqual(out["ledeProjects"], 42)
+
 
 @unittest.skipUnless(_NODE, "node not installed; skipping behavior round-trip")
 class TestDiffLiveSnapshotNode(unittest.TestCase):
