@@ -8,15 +8,25 @@
   const HB_SAMPLES = 60;
   const HB_VIEW_W = 140;
   const HB_VIEW_H = 22;
-  // PQRS 風の単一スパイク shape (上に -9px → 下に +4px → 0px)。10 frames 固定 duration、
+  // PQRS 風の単一スパイク shape (上に -9px → 下に +4px → 0px)。10 sample 固定 duration、
   // 強弱は __hbSpikeAmp で別軸制御 (online=1.0 / reconnect=0.3 / offline・static=0.0)。
   const HB_SPIKE_SHAPE = [-2, -5, -9, -7, -3, 2, 4, 3, 1, 0];
+  // 1 sample あたりの経過時間 (ms)。30 sample/s = 30 px/s (プラン Decisions: 60fps 環境で
+  // frame あたり 0.5 px に整合)。requestAnimationFrame の timestamp 引数で elapsed time
+  // 駆動するため、120Hz / 60Hz の display refresh rate に挙動が依存しない。
+  const HB_MS_PER_SAMPLE = 33;
+  // tab 復帰や long-paused tab で huge dt が来たときに waveform が急流するのを防ぐ
+  // ための catch-up 上限。HB_SPIKE_SHAPE.length を超えない値にしておけば、
+  // 「1 frame で spike 全消費」のような視覚 glitch も自然に避けられる。
+  const HB_MAX_CATCHUP_SAMPLES = 5;
   let __hbState = 'idle';
   let __hbBuf = new Float32Array(HB_SAMPLES);
   let __hbSpikeRemain = 0;
   let __hbSpikeAmp = 1.0;
   let __hbRafId = null;
   let __hbReducedMotion = false;
+  let __hbLastTickMs = 0;
+  let __hbAccumMs = 0;
 
   function __hbDetectReducedMotion() {
     if (typeof window === 'undefined') return false;
@@ -44,8 +54,8 @@
     poly.setAttribute('points', pts);
   }
 
-  function __hbTick() {
-    // 1 sample 左シフト + 末尾追加
+  function __hbAdvanceOneSample() {
+    // 1 sample 左シフト + 末尾追加 (spike 残量があれば SHAPE * amp、なければ baseline 0)
     for (let i = 0; i < __hbBuf.length - 1; i++) {
       __hbBuf[i] = __hbBuf[i + 1];
     }
@@ -56,7 +66,26 @@
       __hbSpikeRemain -= 1;
     }
     __hbBuf[__hbBuf.length - 1] = nextSample;
-    __hbRenderPoly();
+  }
+
+  function __hbTick(timestamp) {
+    // elapsed-ms 駆動: 経過 ms を HB_MS_PER_SAMPLE で割って消費する sample 数を決める。
+    // 60Hz / 120Hz いずれの display でも 30 sample/s で進む = scroll 速度 / spike duration が
+    // refresh rate に依存しない。timestamp は requestAnimationFrame が渡す DOMHighResTimeStamp。
+    let dt = 0;
+    if (__hbLastTickMs > 0 && typeof timestamp === 'number') {
+      dt = timestamp - __hbLastTickMs;
+      if (dt < 0) dt = 0;
+    }
+    if (typeof timestamp === 'number') __hbLastTickMs = timestamp;
+    __hbAccumMs += dt;
+    let samples = Math.floor(__hbAccumMs / HB_MS_PER_SAMPLE);
+    if (samples > HB_MAX_CATCHUP_SAMPLES) samples = HB_MAX_CATCHUP_SAMPLES;
+    if (samples > 0) {
+      __hbAccumMs -= samples * HB_MS_PER_SAMPLE;
+      for (let s = 0; s < samples; s++) __hbAdvanceOneSample();
+      __hbRenderPoly();
+    }
     __hbRafId = requestAnimationFrame(__hbTick);
   }
 
@@ -160,6 +189,8 @@
         __hbReducedMotion = __hbDetectReducedMotion();
         for (let i = 0; i < __hbBuf.length; i++) __hbBuf[i] = 0;
         __hbSpikeRemain = 0;
+        __hbLastTickMs = 0;
+        __hbAccumMs = 0;
       },
     };
   }

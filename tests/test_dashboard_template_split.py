@@ -41,7 +41,8 @@ _DASHBOARD_PATH = Path(__file__).parent.parent / "dashboard" / "server.py"
 #   - ef1c669f...: v0.7.1 release / footer の version 表記 v0.7 → v0.7.1 に bump
 #   - 2c38c50e...: Issue #81 / Overview KPI 上段の `kpi-skills` / `kpi-subs` / `kpi-projs` / `ledeProjects` を `*_kinds_total` / `project_total` (cap 無し) を読むように切替 + help body 文言更新 + 25_live_diff.js も同期 (20_load_and_render.js / 25_live_diff.js)
 #   - af715e7b...: Issue #83 / Live heartbeat sparkline (15_heartbeat.css + 15_heartbeat.js 追加 / shell.html nav.page-nav に <svg id="heartbeat"> + sr-only span / 10_helpers.js setConnStatus 経由で heartbeat sync / 70_init_eventsource.js で start + bump)
-EXPECTED_TEMPLATE_SHA256 = "af715e7b6bf24cfa0517ffb279f077dc1e453ffa9fba25ce4d4541a57c176201"
+#   - 31fc9f48...: Issue #83 codex Round 1 fix-up / __hbTick を refresh-rate 非依存に切替 (requestAnimationFrame の timestamp で elapsed-ms 駆動。HB_MS_PER_SAMPLE=33 / HB_MAX_CATCHUP_SAMPLES=5 / __hbLastTickMs / __hbAccumMs 追加)
+EXPECTED_TEMPLATE_SHA256 = "31fc9f48285477bc0e65e999c9aaa46905bae6df08dd61cd2a008957492a3eb4"
 
 
 def _load_dashboard_module(tmp_path: Path):

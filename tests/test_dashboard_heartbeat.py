@@ -74,7 +74,11 @@ class TestTemplateConcat:
             (_SCRIPTS_DIR / name).read_text(encoding="utf-8")
             for name in mod._MAIN_JS_FILES
         )
-        for var in ("__hbState", "__hbBuf", "__hbSpikeRemain", "__hbSpikeAmp", "__hbRafId"):
+        # __hbLastTickMs / __hbAccumMs は elapsed-time 駆動 tick の closure state (Issue #83 codex Round 1)。
+        for var in (
+            "__hbState", "__hbBuf", "__hbSpikeRemain", "__hbSpikeAmp", "__hbRafId",
+            "__hbLastTickMs", "__hbAccumMs",
+        ):
             count = all_js.count("let " + var)
             assert count == 1, f"`let {var}` 出現は 1 回のみであるべきが {count} 回。再宣言禁止違反"
 
@@ -201,10 +205,20 @@ let _fakeSvg = { dataset: {}, setAttribute() {}, getAttribute: () => '', querySe
 let _fakeSr = { textContent: '' };
 document.getElementById = (id) => id === 'heartbeat' ? _fakeSvg : id === 'heartbeatSr' ? _fakeSr : null;
 let _rafQueue = []; let _rafId = 0;
+let _simTime = 0;
 window.requestAnimationFrame = (fn) => { _rafQueue.push({id: ++_rafId, fn}); return _rafId; };
 window.cancelAnimationFrame = (id) => { _rafQueue = _rafQueue.filter(x => x.id !== id); };
 window.matchMedia = (q) => ({ matches: false });
-function flushFrames(n) { for (let i = 0; i < n; i++) { const item = _rafQueue.shift(); if (item) item.fn(); } }
+// elapsed-ms 駆動の __hbTick (Issue #83 codex Round 1) に追従するため timestamp を渡す。
+// 33ms / frame で進めると HB_MS_PER_SAMPLE と一致し 1 sample/frame で進む (= 元設計と同じ
+// 観測粒度)。catch-up 上限 5 を踏まないようにするため frame ごとの dt は 33ms に固定。
+function flushFrames(n) {
+  for (let i = 0; i < n; i++) {
+    const item = _rafQueue.shift();
+    if (item) item.fn(_simTime);
+    _simTime += 33;
+  }
+}
 """
 
 _PRE_FLIGHT = r"""
