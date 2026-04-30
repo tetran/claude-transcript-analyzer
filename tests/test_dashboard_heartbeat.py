@@ -162,6 +162,46 @@ class TestReducedMotionCss:
             "reduced-motion ブロック内で animation 停止 marker (animation: none / --heartbeat-paused: 1) が無い"
 
 
+class TestHeartbeatPulseCss:
+    """常時明滅 (Issue #83 user follow-up): line そのものを周期的に明滅させる。"""
+
+    def test_heartbeat_polyline_has_pulse_animation(self):
+        css = _HEARTBEAT_CSS.read_text(encoding="utf-8") if _HEARTBEAT_CSS.exists() else ""
+        # `.heartbeat polyline` ルールの中で animation: が `none` 以外の値で
+        # 当たっていること (= 常時明滅 keyframes が wired up)。@media 内の
+        # `animation: none` (reduced-motion 抑止) は対象外。
+        matches = re.findall(
+            r"\.heartbeat\s+polyline\s*\{[^}]*?animation:\s*([^;}]+)",
+            css,
+        )
+        assert matches, ".heartbeat polyline ルールに animation: プロパティが無い"
+        non_none = [v.strip() for v in matches if v.strip() != "none"]
+        assert non_none, \
+            f"常時明滅 animation が定義されていない (見つかった値は全部 none: {matches!r})"
+
+    def test_pulse_keyframes_define_stroke_opacity_variation(self):
+        css = _HEARTBEAT_CSS.read_text(encoding="utf-8") if _HEARTBEAT_CSS.exists() else ""
+        m = re.search(r"@keyframes\s+([A-Za-z_][\w-]*)\s*\{", css)
+        assert m, "15_heartbeat.css に @keyframes 定義が無い"
+        # keyframes ブロック内に stroke-opacity (state 別 opacity と独立した axis) の
+        # 変動が定義されていること。state 別の `opacity: 0.7` 等と conflict させない。
+        start = m.end() - 1
+        depth = 0
+        end = start
+        for i in range(start, len(css)):
+            ch = css[i]
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    end = i
+                    break
+        block = css[start:end + 1]
+        assert "stroke-opacity" in block, \
+            "@keyframes 内で stroke-opacity を動かしていない (state 別 opacity と独立に明滅させるため stroke-opacity 軸を使う)"
+
+
 # ============================================================
 #  Step 3: Node round-trip behavior (rAF mock)
 # ============================================================
