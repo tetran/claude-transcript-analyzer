@@ -20,18 +20,29 @@
   const localDays = localDailyFromHourly((data.hourly_heatmap || {}).buckets || []);
   document.getElementById('ledeEvents').textContent = fmtN(data.total_events);
   document.getElementById('ledeDays').textContent = localDays.length;
-  document.getElementById('ledeProjects').textContent = (data.project_breakdown||[]).length;
+  // Issue #81: KPI / lede の "unique kinds" は `*_kinds_total` / `project_total` (cap 無し)。
+  // ranking 配列 (`*_ranking` / `project_breakdown`) は引き続き 10 件 cap で UI 表示用。
+  // defensive fallback: 古い静的 HTML / 一時 server-frontend 不整合では新 field 不在 → 旧 length に fallback。
+  // `??` ではなく `!= null` 三項演算子: KPI counter は `0` も valid な値で、`||` は `0` を falsy 扱いしてしまうため。
+  document.getElementById('ledeProjects').textContent =
+    (data.project_total != null ? data.project_total : (data.project_breakdown||[]).length);
 
   // ---- KPI definitions (ヘルプ本文を含む) ----
   const kpis = [
     { id: 'kpi-total', k: 'total events', v: fmtN(data.total_events), s: '<em>' + localDays.length + '</em> 日間の観測', cls: '',
       helpTtl: '総イベント数', helpBody: 'スキル利用と subagent invocation の合計件数。subagent は PostToolUse / SubagentStart の重複発火を <code>1 invocation = 1 件</code> に dedup 済み。session_start や notification は含めない。' },
-    { id: 'kpi-skills', k: 'skills', v: (data.skill_ranking||[]).length, s: 'unique kinds', cls: '',
-      helpTtl: 'スキル種別数', helpBody: '観測されたスキルの種類数（最大 10 件まで表示）。スキル本体（PostToolUse(Skill)）とユーザー入力のスラッシュコマンド（UserPromptExpansion / Submit）を合算してカウント。' },
-    { id: 'kpi-subs', k: 'subagents', v: (data.subagent_ranking||[]).length, s: 'unique kinds', cls: 'c-coral',
-      helpTtl: 'Subagent 種別数', helpBody: '観測された subagent の種類数（最大 10 件まで表示）。invocation 単位で dedup 済みのランキングからカウント。' },
-    { id: 'kpi-projs', k: 'projects', v: (data.project_breakdown||[]).length, s: 'distinct cwds', cls: 'c-peach',
-      helpTtl: 'プロジェクト数', helpBody: '利用が観測されたプロジェクト（cwd 単位、最大 10 件まで表示）。同じディレクトリ配下のセッションは同一プロジェクトとして集計。' },
+    { id: 'kpi-skills', k: 'skills',
+      v: (data.skill_kinds_total != null ? data.skill_kinds_total : (data.skill_ranking||[]).length),
+      s: 'unique kinds', cls: '',
+      helpTtl: 'スキル種別数', helpBody: '観測されたスキルの種類数。スキル本体（PostToolUse(Skill)）とユーザー入力のスラッシュコマンド（UserPromptExpansion / Submit）を合算してカウント。下のランキングは上位 10 件まで表示。' },
+    { id: 'kpi-subs', k: 'subagents',
+      v: (data.subagent_kinds_total != null ? data.subagent_kinds_total : (data.subagent_ranking||[]).length),
+      s: 'unique kinds', cls: 'c-coral',
+      helpTtl: 'Subagent 種別数', helpBody: '観測された subagent の種類数（invocation 単位で dedup 済み）。下のランキングは上位 10 件まで表示。' },
+    { id: 'kpi-projs', k: 'projects',
+      v: (data.project_total != null ? data.project_total : (data.project_breakdown||[]).length),
+      s: 'distinct cwds', cls: 'c-peach',
+      helpTtl: 'プロジェクト数', helpBody: '利用が観測されたプロジェクト（cwd 単位）。同じディレクトリ配下のセッションは同一プロジェクトとして集計。横並びスタック表示は上位 10 件まで。' },
     { id: 'kpi-sess', k: 'sessions', v: ss.total_sessions || 0, cls: 'c-peri',
       helpTtl: 'セッション数', helpBody: 'SessionStart hook で観測された Claude Code セッションの開始回数。同じ session_id の startup と resume は別セッションとして数える。' },
     { id: 'kpi-resume', k: 'resume rate', v: ss.total_sessions ? Math.round((ss.resume_rate||0)*100)+'%' : '--', sm: true, cls: 'c-mute',

@@ -271,6 +271,134 @@ class TestBuildDashboardData:
         assert data["project_breakdown"][0] == {"project": "proj-a", "count": 2}
         assert data["project_breakdown"][1] == {"project": "proj-b", "count": 1}
 
+    # Issue #81 — Overview KPI counter uncap
+    # `skill_kinds_total` / `subagent_kinds_total` / `project_total` は **TOP_N=10 cap が効かない** 全件 unique 数。
+    # 既存 `*_ranking` / `project_breakdown` 配列は引き続き上位 10 件 cap (UI 表示専用)。
+    def test_skill_kinds_total_counts_all_unique_skills_beyond_cap(self, tmp_path):
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        events = [
+            {"event_type": "skill_tool", "skill": f"s{i:02d}", "project": "p", "session_id": "s", "timestamp": f"2026-01-01T00:{i:02d}:00+00:00"}
+            for i in range(1, 13)  # 12 unique skills (cap=10 を超える)
+        ]
+        data = mod.build_dashboard_data(events)
+        assert len(data["skill_ranking"]) == 10  # cap 据え置き
+        assert data["skill_kinds_total"] == 12   # 全件 unique
+
+    def test_skill_kinds_total_includes_user_slash_command(self, tmp_path):
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        events = [
+            {"event_type": "skill_tool", "skill": "a", "project": "p", "session_id": "s", "timestamp": "2026-01-01T00:00:00+00:00"},
+            {"event_type": "user_slash_command", "skill": "/b", "project": "p", "session_id": "s", "timestamp": "2026-01-01T00:01:00+00:00"},
+        ]
+        data = mod.build_dashboard_data(events)
+        assert data["skill_kinds_total"] == 2
+
+    def test_subagent_kinds_total_counts_all_unique_subagents_beyond_cap(self, tmp_path):
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        types = ["Explore", "Plan", "Codex", "Researcher", "Writer", "Reviewer", "Tester", "Builder", "Auditor", "Critic", "Debugger"]
+        assert len(types) == 11
+        events = [
+            {"event_type": "subagent_start", "subagent_type": t, "tool_use_id": f"toolu_{i}", "project": "p", "session_id": "s", "timestamp": f"2026-01-01T00:{i:02d}:00+00:00"}
+            for i, t in enumerate(types, start=1)
+        ]
+        data = mod.build_dashboard_data(events)
+        assert len(data["subagent_ranking"]) == 10
+        assert data["subagent_kinds_total"] == 11
+
+    def test_subagent_kinds_total_counts_type_not_invocation(self, tmp_path):
+        """type-level dedup pin: 同 type を別 session で 3 invocation 走っても unique kind は 1。"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        events = [
+            {"event_type": "subagent_start", "subagent_type": "Explore", "tool_use_id": "toolu_a", "project": "p", "session_id": "s1", "timestamp": "2026-01-01T00:00:00+00:00"},
+            {"event_type": "subagent_start", "subagent_type": "Explore", "tool_use_id": "toolu_b", "project": "p", "session_id": "s2", "timestamp": "2026-01-01T00:01:00+00:00"},
+            {"event_type": "subagent_start", "subagent_type": "Explore", "tool_use_id": "toolu_c", "project": "p", "session_id": "s3", "timestamp": "2026-01-01T00:02:00+00:00"},
+        ]
+        data = mod.build_dashboard_data(events)
+        assert data["subagent_kinds_total"] == 1
+
+    def test_subagent_kinds_total_one_invocation_paired(self, tmp_path):
+        """invocation-merge window pin: subagent_start + subagent_lifecycle_start が
+        INVOCATION_MERGE_WINDOW_SECONDS 内なら 1 invocation 扱い、unique type 数も 1。"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        events = [
+            {"event_type": "subagent_start", "subagent_type": "Explore", "tool_use_id": "toolu_a", "project": "p", "session_id": "s", "timestamp": "2026-01-01T00:00:00+00:00"},
+            {"event_type": "subagent_lifecycle_start", "subagent_type": "Explore", "project": "p", "session_id": "s", "timestamp": "2026-01-01T00:00:00.500000+00:00"},
+        ]
+        data = mod.build_dashboard_data(events)
+        assert data["subagent_kinds_total"] == 1
+
+    def test_project_total_counts_all_unique_projects_beyond_cap(self, tmp_path):
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        events = [
+            {"event_type": "skill_tool", "skill": "a", "project": f"proj-{i:02d}", "session_id": "s", "timestamp": f"2026-01-01T00:{i:02d}:00+00:00"}
+            for i in range(1, 14)  # 13 unique projects
+        ]
+        data = mod.build_dashboard_data(events)
+        assert len(data["project_breakdown"]) == 10
+        assert data["project_total"] == 13
+
+    def test_project_total_excludes_housekeeping_events(self, tmp_path):
+        """`project_total` は `_filter_usage_events` 後の events からのみカウント。
+        session_start / notification 系の project は数えない。"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        events = [
+            {"event_type": "skill_tool", "skill": "a", "project": "p1", "session_id": "s", "timestamp": "2026-01-01T00:00:00+00:00"},
+            {"event_type": "session_start", "source": "startup", "project": "p2", "session_id": "s", "timestamp": "2026-01-01T00:00:01+00:00"},
+            {"event_type": "notification", "notification_type": "idle", "project": "p3", "session_id": "s", "timestamp": "2026-01-01T00:00:02+00:00"},
+        ]
+        data = mod.build_dashboard_data(events)
+        assert data["project_total"] == 1
+
+    def test_kinds_totals_zero_for_empty_events(self, tmp_path):
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        data = mod.build_dashboard_data([])
+        assert data["skill_kinds_total"] == 0
+        assert data["subagent_kinds_total"] == 0
+        assert data["project_total"] == 0
+
+    def test_skill_ranking_still_capped_at_top_n_after_issue_81(self, tmp_path):
+        """Cap regression guard: skill_kinds_total を生やしたあとも skill_ranking は TOP_N cap のまま。"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        events = [
+            {"event_type": "skill_tool", "skill": f"s{i:02d}", "project": "p", "session_id": "s", "timestamp": f"2026-01-01T00:{i:02d}:00+00:00"}
+            for i in range(1, 13)
+        ]
+        data = mod.build_dashboard_data(events)
+        assert len(data["skill_ranking"]) == mod.TOP_N
+
+    def test_skill_kinds_total_matches_aggregate_skills_when_below_cap(self, tmp_path):
+        """Drift guard: cap 未満では `skill_kinds_total` と `skill_ranking` の長さが一致。
+        将来 aggregate_skills の filter と新 set の filter が drift しないことを pin。"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        events = [
+            {"event_type": "skill_tool", "skill": f"s{i:02d}", "project": "p", "session_id": "s", "timestamp": f"2026-01-01T00:{i:02d}:00+00:00"}
+            for i in range(1, 6)  # 5 unique (cap 未満)
+        ]
+        data = mod.build_dashboard_data(events)
+        assert data["skill_kinds_total"] == len(data["skill_ranking"]) == 5
+
+    def test_subagent_kinds_total_matches_aggregate_subagents_when_below_cap(self, tmp_path):
+        """Drift guard: cap 未満では `subagent_kinds_total` と `subagent_ranking` の長さが一致。"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        types = ["Explore", "Plan", "Codex", "Researcher", "Writer"]  # 5 (cap 未満)
+        events = [
+            {"event_type": "subagent_start", "subagent_type": t, "tool_use_id": f"toolu_{i}", "project": "p", "session_id": "s", "timestamp": f"2026-01-01T00:{i:02d}:00+00:00"}
+            for i, t in enumerate(types, start=1)
+        ]
+        data = mod.build_dashboard_data(events)
+        assert data["subagent_kinds_total"] == len(data["subagent_ranking"]) == 5
+
+    def test_project_total_matches_project_breakdown_when_below_cap(self, tmp_path):
+        """Drift guard: cap 未満では `project_total` と `project_breakdown` の長さが一致。
+        `_filter_usage_events` の filter 慣習が両者で揃っていることを pin。"""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        events = [
+            {"event_type": "skill_tool", "skill": "a", "project": f"proj-{i:02d}", "session_id": "s", "timestamp": f"2026-01-01T00:{i:02d}:00+00:00"}
+            for i in range(1, 6)  # 5 unique (cap 未満)
+        ]
+        data = mod.build_dashboard_data(events)
+        assert data["project_total"] == len(data["project_breakdown"]) == 5
+
 
 class TestSkillFailureStats:
     """Issue #8: skill_ranking に failure_count / failure_rate を含める"""
