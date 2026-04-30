@@ -138,7 +138,7 @@ document.getElementById('ledeProjects').textContent =
   v: (data.skill_kinds_total != null ? data.skill_kinds_total : (data.skill_ranking||[]).length),
   s: 'unique kinds', cls: '',
   helpTtl: 'スキル種別数',
-  helpBody: '観測されたスキルの種類数。スキル本体（PostToolUse(Skill)）とユーザー入力のスラッシュコマンド（UserPromptExpansion / Submit）を合算してカウント。下のランキングは上位 10 件まで表示。' },
+  helpBody: '観測されたスキルの種類数。スキル本体（PostToolUse(Skill)）とユーザー入力のスラッシュコマンド（UserPromptExpansion / Submit）を合算してカウント。' },
 ```
 
 **L31 (kpi-subs)**:
@@ -148,7 +148,7 @@ document.getElementById('ledeProjects').textContent =
   v: (data.subagent_kinds_total != null ? data.subagent_kinds_total : (data.subagent_ranking||[]).length),
   s: 'unique kinds', cls: 'c-coral',
   helpTtl: 'Subagent 種別数',
-  helpBody: '観測された subagent の種類数（invocation 単位で dedup 済み）。下のランキングは上位 10 件まで表示。' },
+  helpBody: '観測された subagent の種類数（invocation 単位で dedup 済み）。' },
 ```
 
 **L33 (kpi-projs)**:

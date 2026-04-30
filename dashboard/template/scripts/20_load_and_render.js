@@ -34,11 +34,11 @@
     { id: 'kpi-skills', k: 'skills',
       v: (data.skill_kinds_total != null ? data.skill_kinds_total : (data.skill_ranking||[]).length),
       s: 'unique kinds', cls: '',
-      helpTtl: 'スキル種別数', helpBody: '観測されたスキルの種類数。スキル本体（PostToolUse(Skill)）とユーザー入力のスラッシュコマンド（UserPromptExpansion / Submit）を合算してカウント。下のランキングは上位 10 件まで表示。' },
+      helpTtl: 'スキル種別数', helpBody: '観測されたスキルの種類数。スキル本体（PostToolUse(Skill)）とユーザー入力のスラッシュコマンド（UserPromptExpansion / Submit）を合算してカウント。' },
     { id: 'kpi-subs', k: 'subagents',
       v: (data.subagent_kinds_total != null ? data.subagent_kinds_total : (data.subagent_ranking||[]).length),
       s: 'unique kinds', cls: 'c-coral',
-      helpTtl: 'Subagent 種別数', helpBody: '観測された subagent の種類数（invocation 単位で dedup 済み）。下のランキングは上位 10 件まで表示。' },
+      helpTtl: 'Subagent 種別数', helpBody: '観測された subagent の種類数（invocation 単位で dedup 済み）。' },
     { id: 'kpi-projs', k: 'projects',
       v: (data.project_total != null ? data.project_total : (data.project_breakdown||[]).length),
       s: 'distinct cwds', cls: 'c-peach',
@@ -289,4 +289,3 @@
     commitLiveSnapshot(__liveNext);
   }
   } // end loadAndRender
-
