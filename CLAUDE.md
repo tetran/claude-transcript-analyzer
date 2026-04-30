@@ -164,7 +164,6 @@ main
 - 新リリースサイクル開始時に `main` から `vX.Y.Z` を切って remote に push
 - 個別 feature は `feature/<issue-number>-<slug>` で `vX.Y.Z` から派生 — feature PR の base は `vX.Y.Z` (main ではない)
 - リリース準備完了で `vX.Y.Z` → `main` の release PR を立てる (詳細は `patch-release` skill)
-- 軽微な単独 fix (issue 1 件で完結 / 他作業と独立) は feature → main 直 PR でも可。ただし release 化するときは必ず `vX.Y.Z` を経由
 
 ## よく使うコマンド
 
