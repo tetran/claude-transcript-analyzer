@@ -19,7 +19,7 @@
    * stroke-opacity 軸を使う = state 別の `opacity:` と独立して動かせる
    * (= reconnect / offline で全体 opacity を薄くしつつ pulse は維持できる)。
    * @media (prefers-reduced-motion: reduce) でこの animation を停止する。 */
-  animation: heartbeat-pulse 1s ease-in-out infinite;
+  animation: heartbeat-pulse 3s ease-in-out infinite;
 }
 @keyframes heartbeat-pulse {
   0%, 100% { stroke-opacity: 1.0; }

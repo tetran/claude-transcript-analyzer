@@ -44,7 +44,8 @@ _DASHBOARD_PATH = Path(__file__).parent.parent / "dashboard" / "server.py"
 #   - 31fc9f48...: Issue #83 codex Round 1 fix-up / __hbTick を refresh-rate 非依存に切替 (requestAnimationFrame の timestamp で elapsed-ms 駆動。HB_MS_PER_SAMPLE=33 / HB_MAX_CATCHUP_SAMPLES=5 / __hbLastTickMs / __hbAccumMs 追加)
 #   - 2bab4e88...: Issue #83 codex Round 2 fix-up / idle baseline に breathing wave 追加 (__hbTickCount + sin) + stopHeartbeat() で __hbLastTickMs / __hbAccumMs リセット (resume 時 catch-up 暴走防止)
 #   - 4b429ad2...: Issue #83 user follow-up / heartbeat 線そのものを常時明滅 (CSS @keyframes heartbeat-pulse で stroke-opacity を 1.0 ↔ 0.4 で 1s 周期、state 別 opacity と独立軸)
-EXPECTED_TEMPLATE_SHA256 = "4b429ad2fe7990b063f964e4df17e3e3d4ddf3f5fbfff08623e7a21fe7f2996b"
+#   - 5883a091...: Issue #83 user follow-up tweak / 明滅周期を 1s → 3s に調整 (呼吸テンポ感 / ambient indicator として落ち着いた pulse)
+EXPECTED_TEMPLATE_SHA256 = "5883a09140cb73b4202e18cd3442453c9106be9b98079025b7d761c018e7ac88"
 
 
 def _load_dashboard_module(tmp_path: Path):
