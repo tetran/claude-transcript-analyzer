@@ -957,6 +957,7 @@ _TEMPLATE_DIR = Path(__file__).resolve().parent / "template"
 _CSS_FILES = (
     "00_base.css",          # root vars / reset / body / .app
     "10_components.css",    # header / live badge / KPI / panel / two-up / ranking / spark / projects / footer
+    "15_heartbeat.css",     # live heartbeat sparkline (Issue #83)
     "20_help_tooltip.css",  # help button + data tooltip (graph data points)
     "30_pages.css",         # multipage shell (Issue #57)
     "40_patterns.css",      # hourly heatmap + skill cooccurrence + project×skill (Issue #58/59)
@@ -965,6 +966,7 @@ _CSS_FILES = (
 )
 _MAIN_JS_FILES = (
     "10_helpers.js",              # esc / fmtN / pad / STATUS_LABEL / setConnStatus
+    "15_heartbeat.js",            # live heartbeat sparkline (Issue #83)
     "20_load_and_render.js",      # async loadAndRender (KPI / ranking / sparkline / projects)
     "25_live_diff.js",            # live mode 差分 highlight + toast (Issue #69)
     "30_renderers_patterns.js",   # heatmap / cooccurrence / project×skill matrix renderers

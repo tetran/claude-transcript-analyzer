@@ -1,0 +1,313 @@
+"""tests/test_dashboard_heartbeat.py — Issue #83: Live heartbeat sparkline tests.
+
+template smoke / concat 順 / sentinel pin / static export hidden / reduced-motion CSS pin /
+Node round-trip behavior (rAF mock 経由) を 1 ファイルで pin する。
+"""
+# pylint: disable=protected-access,line-too-long
+import importlib.util
+import json
+import os
+import re
+import shutil
+import subprocess
+import unittest
+from pathlib import Path
+
+
+_REPO = Path(__file__).resolve().parent.parent
+_DASHBOARD_PATH = _REPO / "dashboard" / "server.py"
+_SCRIPTS_DIR = _REPO / "dashboard" / "template" / "scripts"
+_STYLES_DIR = _REPO / "dashboard" / "template" / "styles"
+_HEARTBEAT_JS = _SCRIPTS_DIR / "15_heartbeat.js"
+_HEARTBEAT_CSS = _STYLES_DIR / "15_heartbeat.css"
+
+
+def _load_dashboard_module(tmp_path: Path):
+    usage_jsonl = tmp_path / "usage.jsonl"
+    usage_jsonl.write_text("", encoding="utf-8")
+    os.environ["USAGE_JSONL"] = str(usage_jsonl)
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "dashboard_server_heartbeat", _DASHBOARD_PATH
+        )
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+    finally:
+        del os.environ["USAGE_JSONL"]
+    return mod
+
+
+# ============================================================
+#  Step 1: template concat / sentinel 整合 / literal pin
+# ============================================================
+class TestTemplateConcat:
+    def test_html_template_contains_heartbeat_svg(self, tmp_path):
+        mod = _load_dashboard_module(tmp_path)
+        assert 'id="heartbeat"' in mod._HTML_TEMPLATE
+
+    def test_html_template_contains_heartbeat_sr_span(self, tmp_path):
+        mod = _load_dashboard_module(tmp_path)
+        assert 'id="heartbeatSr"' in mod._HTML_TEMPLATE
+
+    def test_css_files_position(self, tmp_path):
+        mod = _load_dashboard_module(tmp_path)
+        files = list(mod._CSS_FILES)
+        assert "15_heartbeat.css" in files, f"15_heartbeat.css が _CSS_FILES に居ない: {files}"
+        assert files.index("10_components.css") < files.index("15_heartbeat.css") < files.index("20_help_tooltip.css"), \
+            f"15_heartbeat.css は 10_components.css の後 / 20_help_tooltip.css の前であるべき: {files}"
+
+    def test_main_js_files_position(self, tmp_path):
+        mod = _load_dashboard_module(tmp_path)
+        files = list(mod._MAIN_JS_FILES)
+        assert "15_heartbeat.js" in files, f"15_heartbeat.js が _MAIN_JS_FILES に居ない: {files}"
+        assert files.index("10_helpers.js") < files.index("15_heartbeat.js") < files.index("20_load_and_render.js"), \
+            f"15_heartbeat.js は 10_helpers.js の後 / 20_load_and_render.js の前であるべき: {files}"
+
+    def test_hb_state_declared_only_in_15_heartbeat_js(self, tmp_path):
+        """closure-private state が 15_heartbeat.js でのみ 1 回宣言されている。
+
+        全 main_js を concat した string で `let __hbX` の出現が 1 回ずつ。
+        既存の単一 shared IIFE 内で名前競合しないことを grep ベースで pin。
+        """
+        mod = _load_dashboard_module(tmp_path)
+        all_js = "".join(
+            (_SCRIPTS_DIR / name).read_text(encoding="utf-8")
+            for name in mod._MAIN_JS_FILES
+        )
+        for var in ("__hbState", "__hbBuf", "__hbSpikeRemain", "__hbSpikeAmp", "__hbRafId"):
+            count = all_js.count("let " + var)
+            assert count == 1, f"`let {var}` 出現は 1 回のみであるべきが {count} 回。再宣言禁止違反"
+
+    def test_setHeartbeatState_accepts_status_label_keys(self):
+        """STATUS_LABEL keys と setHeartbeatState の switch case が 1:1 対応。
+
+        一方を増やしてもう一方を増やし忘れると test red になる drift guard。
+        """
+        helpers_src = (_SCRIPTS_DIR / "10_helpers.js").read_text(encoding="utf-8")
+        heartbeat_src = _HEARTBEAT_JS.read_text(encoding="utf-8") if _HEARTBEAT_JS.exists() else ""
+        m = re.search(r"const STATUS_LABEL\s*=\s*\{([^}]+)\}", helpers_src)
+        assert m, "STATUS_LABEL definition が 10_helpers.js に見つからない"
+        keys = set(re.findall(r"(\w+)\s*:", m.group(1)))
+        # setHeartbeatState 関数本体を brace-match で抽出 (switch 内 if ブロックの
+        # `}` で early-exit しないように non-greedy regex ではなく深さカウンタで取る)。
+        m2 = re.search(r"function\s+setHeartbeatState\s*\([^)]*\)\s*\{", heartbeat_src)
+        assert m2, "setHeartbeatState 関数が 15_heartbeat.js に見つからない"
+        depth = 0
+        body_end = -1
+        for i in range(m2.end() - 1, len(heartbeat_src)):
+            ch = heartbeat_src[i]
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    body_end = i
+                    break
+        assert body_end > 0, "setHeartbeatState の閉じ波括弧が見つからない"
+        body = heartbeat_src[m2.end():body_end]
+        cases = set(re.findall(r"case\s+['\"](\w+)['\"]", body))
+        assert keys == cases, \
+            f"STATUS_LABEL keys={sorted(keys)} と setHeartbeatState case labels={sorted(cases)} が一致しない"
+
+
+# ============================================================
+#  Step 2: static export hidden + reduced-motion CSS pin
+# ============================================================
+class TestStaticExportHidden:
+    def test_render_static_html_marks_heartbeat_hidden(self, tmp_path):
+        """render_static_html の出力で <svg id="heartbeat"> tag に hidden 属性が立つ。
+
+        live 経路では JS が hidden を解除するが、static export では JS が start しない
+        ので shell.html 側の default `hidden` がそのまま残る設計。
+        """
+        mod = _load_dashboard_module(tmp_path)
+        html = mod.render_static_html({"total_events": 0, "skill_ranking": []})
+        m = re.search(r"<svg[^>]*id=\"heartbeat\"[^>]*>", html)
+        assert m, "<svg id=\"heartbeat\"> tag が render_static_html 出力に見つからない"
+        tag = m.group(0)
+        # boolean attribute なので `hidden` 単体 / `hidden=""` のどちらでも OK
+        assert re.search(r"\bhidden(?:=|\b)", tag), \
+            f"static export で svg#heartbeat に hidden 属性が付いていない: {tag}"
+
+
+class TestReducedMotionCss:
+    def test_reduced_motion_block_disables_heartbeat_animation(self):
+        css = _HEARTBEAT_CSS.read_text(encoding="utf-8") if _HEARTBEAT_CSS.exists() else ""
+        m = re.search(r"@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{", css)
+        assert m, "15_heartbeat.css に @media (prefers-reduced-motion: reduce) ブロックが無い"
+        # ブロック内側を取り出す (brace match)
+        start = m.end() - 1
+        depth = 0
+        end = start
+        for i in range(start, len(css)):
+            ch = css[i]
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    end = i
+                    break
+        block = css[start:end + 1]
+        assert ".heartbeat" in block, \
+            "reduced-motion ブロック内に .heartbeat 制御が無い"
+        has_animation_none = ("animation: none" in block) or ("animation:none" in block)
+        has_paused_marker = "--heartbeat-paused: 1" in block
+        assert has_animation_none or has_paused_marker, \
+            "reduced-motion ブロック内で animation 停止 marker (animation: none / --heartbeat-paused: 1) が無い"
+
+
+# ============================================================
+#  Step 3: Node round-trip behavior (rAF mock)
+# ============================================================
+_NODE = shutil.which("node")
+
+
+def _node_eval_heartbeat(prelude: str, script: str) -> object:
+    """`15_heartbeat.js` を **単体ファイル** で eval し JSON 結果を返す。
+
+    プラン step 3 規律: heartbeat.js は単体で `window.__heartbeat` を完結させる
+    設計のため concat 後ではなく単体ロードで test する (closure-private state
+    の挙動が他 file と混ざらない)。
+
+    `prelude` は heartbeat.js 評価 **前** に入れる stub (window / document /
+    requestAnimationFrame 等)。`script` は heartbeat.js の **後** に入れる
+    assertion / console.log。
+    """
+    src = _HEARTBEAT_JS.read_text(encoding="utf-8")
+    full = prelude + "\n" + src + "\n" + script
+    env = os.environ.copy()
+    proc = subprocess.run(
+        [_NODE, "-e", full],
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=10,
+    )
+    if proc.returncode != 0:
+        raise AssertionError(
+            f"node failed (returncode={proc.returncode}): stderr={proc.stderr}"
+        )
+    return json.loads(proc.stdout.strip().splitlines()[-1])
+
+
+_STUB_PRELUDE = r"""
+globalThis.window = globalThis;
+globalThis.document = globalThis.document || {};
+let _fakePoly = { setAttribute() {}, getAttribute: () => '' };
+let _fakeSvg = { dataset: {}, setAttribute() {}, getAttribute: () => '', querySelector: () => _fakePoly, hidden: false };
+let _fakeSr = { textContent: '' };
+document.getElementById = (id) => id === 'heartbeat' ? _fakeSvg : id === 'heartbeatSr' ? _fakeSr : null;
+let _rafQueue = []; let _rafId = 0;
+window.requestAnimationFrame = (fn) => { _rafQueue.push({id: ++_rafId, fn}); return _rafId; };
+window.cancelAnimationFrame = (id) => { _rafQueue = _rafQueue.filter(x => x.id !== id); };
+window.matchMedia = (q) => ({ matches: false });
+function flushFrames(n) { for (let i = 0; i < n; i++) { const item = _rafQueue.shift(); if (item) item.fn(); } }
+"""
+
+_PRE_FLIGHT = r"""
+if (typeof window.__heartbeat !== 'object') throw new Error('pre-flight: window.__heartbeat 不在');
+if (typeof window.__heartbeat.bump !== 'function') throw new Error('pre-flight: __heartbeat.bump 不在');
+if (typeof window.__heartbeat.setState !== 'function') throw new Error('pre-flight: __heartbeat.setState 不在');
+if (typeof window.__heartbeat.start !== 'function') throw new Error('pre-flight: __heartbeat.start 不在');
+if (typeof window.__heartbeat.stop !== 'function') throw new Error('pre-flight: __heartbeat.stop 不在');
+if (typeof window.__heartbeat._buf !== 'function') throw new Error('pre-flight: __heartbeat._buf 不在');
+if (typeof window.__heartbeat._reset !== 'function') throw new Error('pre-flight: __heartbeat._reset 不在');
+"""
+
+
+@unittest.skipUnless(_NODE, "node not installed; skipping behavior round-trip")
+class TestHeartbeatTickNode(unittest.TestCase):
+    def test_pre_flight_window_heartbeat_exposed(self):
+        out = _node_eval_heartbeat(_STUB_PRELUDE, _PRE_FLIGHT + r"""
+console.log(JSON.stringify({ok: true}));
+""")
+        self.assertEqual(out, {"ok": True})
+
+    def test_online_bump_creates_spike(self):
+        out = _node_eval_heartbeat(_STUB_PRELUDE, _PRE_FLIGHT + r"""
+window.__heartbeat.start();
+window.__heartbeat.bump();
+flushFrames(15);
+const buf = Array.from(window.__heartbeat._buf());
+console.log(JSON.stringify({minV: Math.min.apply(null, buf), maxAbs: Math.max.apply(null, buf.map(Math.abs))}));
+""")
+        # online 時 __hbSpikeAmp = 1.0 で SPIKE_SHAPE 中の -9 が乗るので min < -5
+        self.assertLess(out["minV"], -5)
+
+    def test_reconnect_bump_amplitude_is_attenuated(self):
+        out = _node_eval_heartbeat(_STUB_PRELUDE, _PRE_FLIGHT + r"""
+window.__heartbeat.start();
+window.__heartbeat.setState('reconnect');
+window.__heartbeat.bump();
+flushFrames(15);
+const buf = Array.from(window.__heartbeat._buf());
+console.log(JSON.stringify({maxAbs: Math.max.apply(null, buf.map(Math.abs))}));
+""")
+        # 0.3 倍 → SPIKE_SHAPE max abs 9 * 0.3 = 2.7 < 5
+        self.assertLess(out["maxAbs"], 5)
+
+    def test_offline_bump_is_suppressed(self):
+        out = _node_eval_heartbeat(_STUB_PRELUDE, _PRE_FLIGHT + r"""
+window.__heartbeat.start();
+window.__heartbeat.setState('offline');
+window.__heartbeat.bump();
+flushFrames(15);
+const buf = Array.from(window.__heartbeat._buf());
+console.log(JSON.stringify({maxAbs: Math.max.apply(null, buf.map(Math.abs))}));
+""")
+        # offline では spike 抑制 + buf clear → 全要素 0
+        self.assertLess(out["maxAbs"], 1)
+
+    def test_state_transition_amplitude_no_leak(self):
+        out = _node_eval_heartbeat(_STUB_PRELUDE, _PRE_FLIGHT + r"""
+window.__heartbeat.start();
+window.__heartbeat.setState('reconnect');
+window.__heartbeat.setState('online');
+window.__heartbeat.bump();
+flushFrames(15);
+const buf = Array.from(window.__heartbeat._buf());
+console.log(JSON.stringify({maxAbs: Math.max.apply(null, buf.map(Math.abs))}));
+""")
+        # online に戻ったら振幅 1.0 → max abs >= 5 (SPIKE_SHAPE max abs 9)
+        self.assertGreaterEqual(out["maxAbs"], 5)
+
+    def test_reduced_motion_bump_writes_sr_with_microtask_drain(self):
+        """reduced-motion 環境で bump() 連発時に SR 通知が再発火する。
+
+        textContent への代入を spy で履歴に積み、['', '更新を受信しました', '', '更新を受信しました']
+        の並びを pin (= 一旦 '' を経由してから本文を書く設計を保証)。
+        """
+        prelude_with_sr_spy = r"""
+globalThis.window = globalThis;
+globalThis.document = globalThis.document || {};
+let _fakePoly = { setAttribute() {}, getAttribute: () => '' };
+let _fakeSvg = { dataset: {}, setAttribute() {}, getAttribute: () => '', querySelector: () => _fakePoly, hidden: false };
+let _srHistory = [];
+let _fakeSr = {
+  set textContent(v) { _srHistory.push(v); },
+  get textContent() { return _srHistory[_srHistory.length - 1] || ''; },
+};
+document.getElementById = (id) => id === 'heartbeat' ? _fakeSvg : id === 'heartbeatSr' ? _fakeSr : null;
+let _rafQueue = []; let _rafId = 0;
+window.requestAnimationFrame = (fn) => { _rafQueue.push({id: ++_rafId, fn}); return _rafId; };
+window.cancelAnimationFrame = (id) => { _rafQueue = _rafQueue.filter(x => x.id !== id); };
+window.matchMedia = (q) => ({ matches: true });  // reduced-motion ON
+function flushFrames(n) { for (let i = 0; i < n; i++) { const item = _rafQueue.shift(); if (item) item.fn(); } }
+"""
+        out = _node_eval_heartbeat(prelude_with_sr_spy, _PRE_FLIGHT + r"""
+(async () => {
+  window.__heartbeat._reset();
+  window.__heartbeat.bump();
+  await Promise.resolve().then(() => Promise.resolve());
+  window.__heartbeat.bump();
+  await Promise.resolve().then(() => Promise.resolve());
+  console.log(JSON.stringify({history: _srHistory}));
+})();
+""")
+        self.assertEqual(
+            out["history"],
+            ['', '更新を受信しました', '', '更新を受信しました'],
+        )

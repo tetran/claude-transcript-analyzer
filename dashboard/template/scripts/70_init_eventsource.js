@@ -3,9 +3,12 @@
   // serialization wrapper が coalesce してくれる (25_live_diff.js を参照)。
   await scheduleLoadAndRender();
   if (typeof window.__DATA__ !== 'undefined') {
-    // 静的 export 経路では EventSource を起動せず、バッジを「静的レポート」表示に固定
+    // 静的 export 経路では EventSource を起動せず、バッジを「静的レポート」表示に固定。
+    // heartbeat も start() 不要 (setConnStatus('static') 経由で hidden 確定)。
     setConnStatus('static');
   } else if (typeof EventSource !== 'undefined') {
+    // Issue #83: live 経路で初めて heartbeat を起動 (= shell.html の default `hidden` を解除)。
+    if (window.__heartbeat) window.__heartbeat.start();
     setConnStatus('reconnect');
     let offlineTimer = null;
     let firstError = null;
@@ -34,6 +37,8 @@
       // scheduleLoadAndRender 経由で並行 refresh を直列化する
       // (stale-snapshot race 対策 / 25_live_diff.js を参照)。
       if (typeof ev.data === 'string' && ev.data.indexOf('refresh') !== -1) {
+        // Issue #83: refresh 受信を契機に heartbeat に山を 1 発立てる。
+        if (window.__heartbeat) window.__heartbeat.bump();
         scheduleLoadAndRender().catch(err => console.error('refresh 失敗', err));
       }
     });

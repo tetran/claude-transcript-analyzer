@@ -40,7 +40,8 @@ _DASHBOARD_PATH = Path(__file__).parent.parent / "dashboard" / "server.py"
 #   - 4f4b511f...: Issue #69 fix-up / scheduleLoadAndRender で SSE refresh と hashchange の loadAndRender 並行発火を直列化 (stale-snapshot race 対策)
 #   - ef1c669f...: v0.7.1 release / footer の version 表記 v0.7 → v0.7.1 に bump
 #   - 2c38c50e...: Issue #81 / Overview KPI 上段の `kpi-skills` / `kpi-subs` / `kpi-projs` / `ledeProjects` を `*_kinds_total` / `project_total` (cap 無し) を読むように切替 + help body 文言更新 + 25_live_diff.js も同期 (20_load_and_render.js / 25_live_diff.js)
-EXPECTED_TEMPLATE_SHA256 = "2c38c50ea63b2d2edad8051c9dcbd9966357aa5ac0612697f48738490b782d8d"
+#   - af715e7b...: Issue #83 / Live heartbeat sparkline (15_heartbeat.css + 15_heartbeat.js 追加 / shell.html nav.page-nav に <svg id="heartbeat"> + sr-only span / 10_helpers.js setConnStatus 経由で heartbeat sync / 70_init_eventsource.js で start + bump)
+EXPECTED_TEMPLATE_SHA256 = "af715e7b6bf24cfa0517ffb279f077dc1e453ffa9fba25ce4d4541a57c176201"
 
 
 def _load_dashboard_module(tmp_path: Path):
@@ -95,6 +96,8 @@ def test_html_template_contains_critical_dom_anchors(tmp_path):
         "stack", "stackLegend", "projSub",
         "lastRx", "sessVal", "connStatus",
         "dataTooltip",
+        # Issue #83: live heartbeat sparkline
+        "heartbeat", "heartbeatSr",
     ):
         assert f'id="{dom_id}"' in html, f"DOM id '{dom_id}' が消えている"
 
