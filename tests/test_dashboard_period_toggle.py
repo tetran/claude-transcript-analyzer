@@ -484,6 +484,283 @@ class TestApiDataPeriodQuery:
             self._stop(server)
 
 
+class TestPeriodToggleTemplate:
+    """Step 4b: assembled template の DOM / CSS / concat 順 / static-export 早期 return."""
+
+    def _mod(self, tmp_path):
+        return load_dashboard_module(tmp_path / "nonexistent.jsonl")
+
+    def test_period_toggle_dom_present_in_template(self, tmp_path):
+        mod = self._mod(tmp_path)
+        template = mod._build_html_template()
+        assert 'id="periodToggle"' in template, "shell に #periodToggle が無い"
+
+    def test_period_toggle_has_four_buttons(self, tmp_path):
+        mod = self._mod(tmp_path)
+        template = mod._build_html_template()
+        for value in ("7d", "30d", "90d", "all"):
+            assert f'data-period="{value}"' in template, f"button data-period={value!r} が無い"
+
+    def test_period_toggle_initial_active_is_all(self, tmp_path):
+        """初期状態の aria-pressed=true が data-period='all' に付く."""
+        import re
+        mod = self._mod(tmp_path)
+        template = mod._build_html_template()
+        # `data-period="all"` を含む button タグ周辺に aria-pressed="true" があること
+        m = re.search(
+            r'<button[^>]*data-period="all"[^>]*aria-pressed="true"[^>]*>'
+            r'|<button[^>]*aria-pressed="true"[^>]*data-period="all"[^>]*>',
+            template,
+        )
+        assert m is not None, "data-period='all' のボタンに aria-pressed='true' が無い"
+
+    def test_period_toggle_role_group(self, tmp_path):
+        """`role="group"` + aria-label が付いている (a11y)."""
+        mod = self._mod(tmp_path)
+        template = mod._build_html_template()
+        assert 'role="group"' in template
+        assert 'aria-label="集計期間"' in template
+
+    def test_period_toggle_inside_page_nav(self, tmp_path):
+        """toggle が `<nav class="page-nav">` 内に配置 (router 契約に乗っかる)."""
+        mod = self._mod(tmp_path)
+        template = mod._build_html_template()
+        # nav 開始から toggle までが nav 終了より前
+        nav_start = template.find('<nav class="page-nav"')
+        toggle_pos = template.find('id="periodToggle"')
+        nav_end = template.find('</nav>', nav_start)
+        assert nav_start != -1 and toggle_pos != -1 and nav_end != -1
+        assert nav_start < toggle_pos < nav_end, "#periodToggle が page-nav の外にある"
+
+    def test_period_toggle_hidden_on_quality_and_surface_pages_via_css(self, tmp_path):
+        """page-scoped CSS 非表示 rule が assembled template に含まれる."""
+        mod = self._mod(tmp_path)
+        template = mod._build_html_template()
+        # 'body[data-active-page="quality"] #periodToggle' / 'surface' 両方
+        assert 'body[data-active-page="quality"] #periodToggle' in template
+        assert 'body[data-active-page="surface"] #periodToggle' in template
+        assert 'display: none' in template or 'display:none' in template
+
+    def test_period_05_js_concatted_before_10_helpers(self, tmp_path):
+        """`05_period.js` が `10_helpers.js` より前に concat されること."""
+        mod = self._mod(tmp_path)
+        files = mod._MAIN_JS_FILES
+        idx_period = files.index("05_period.js")
+        idx_helpers = files.index("10_helpers.js")
+        assert idx_period < idx_helpers
+
+    def test_window_period_namespace_exposed(self, tmp_path):
+        """`window.__period = { ... }` で getCurrentPeriod / setCurrentPeriod / wirePeriodToggle を expose."""
+        mod = self._mod(tmp_path)
+        bundle = mod._concat_main_js()
+        assert "window.__period" in bundle, "window.__period namespace が定義されていない"
+        assert "getCurrentPeriod" in bundle
+        assert "setCurrentPeriod" in bundle
+        assert "wirePeriodToggle" in bundle
+
+    def test_period_calls_live_diff_via_call_time_lookup(self, tmp_path):
+        """plan §3 Step 4 lazy-lookup behavioral pin (iter3 #2 / iter4 #2 / iter5 #2):
+
+        05_period.js (concat order 05) は 25_live_diff.js (concat order 25) より早く評価される →
+        IIFE 評価時に `window.__liveDiff` は **未定義**。
+        click handler 内では call-time lookup する形であることを behavior 面で pin する。
+
+        手段: Node + 手書き window/document stub で
+          (1) 評価直後 (= window.__liveDiff 未定義) で handler を呼ぶ → 何も走らない
+          (2) `window.__liveDiff` を後から定義 → handler 再 invoke → mock が呼ばれる
+        """
+        import subprocess
+        import shutil
+        node = shutil.which("node")
+        if node is None:
+            import pytest as _pytest
+            _pytest.skip("node not available; skipping behavioral lazy-lookup test")
+        mod = self._mod(tmp_path)
+        bundle = mod._concat_main_js()
+        # Node script: 手書き stub + 05_period.js の wirePeriodToggle() のみを評価したい。
+        # 一番安全なのは bundle 全体を実行できる stub を整えて wirePeriodToggle を呼ぶこと。
+        # ただし bundle 内には fetch / EventSource 等の I/O も含まれるので、minimal stub を入れる。
+        script = r"""
+const calls = [];
+let savedHandler = null;
+
+// minimal global stubs
+globalThis.window = { addEventListener: () => {}, removeEventListener: () => {}, location: { hash: "" } };
+globalThis.document = {
+  body: { dataset: {}, classList: { add: () => {}, remove: () => {}, contains: () => false } },
+  getElementById: () => null,
+  querySelectorAll: (sel) => {
+    if (typeof sel === "string" && sel.indexOf("data-period") !== -1) {
+      return [{
+        addEventListener: (_evt, fn) => { savedHandler = fn; },
+        getAttribute: (k) => k === "data-period" ? "7d" : null,
+        dataset: { period: "7d" },
+        setAttribute: () => {},
+      }];
+    }
+    return [];
+  },
+  querySelector: () => null,
+  addEventListener: () => {},
+};
+globalThis.fetch = async () => ({ ok: true, json: async () => ({}) });
+globalThis.EventSource = undefined;
+
+// bundle を IIFE で評価。05_period.js は IIFE 直後に動いて window.__period を expose
+const bundle = process.env.BUNDLE;
+try {
+  // bundle 全体は async IIFE 前提なので await できないが、05_period.js / 10_helpers.js は同期評価される。
+  // 評価エラーを silent にしないため try/catch 表示。
+  // bundle は wrapping IIFE 無しなので、ここで wrapper を巻く。
+  // production shell.html では `(async function(){...})();` で wrap されているので
+  // top-level await を含む bundle はそのままだと SyntaxError。同じ async IIFE で巻く。
+  // ただし非同期に走る loadAndRender() は stub 環境では deref で reject する
+  // (本 test の関心は 05_period.js の sync 部分 = wirePeriodToggle のみ) ため、
+  // unhandledRejection を抑制する。
+  process.on("unhandledRejection", () => {});
+  const wrapped = "(async function(){" + bundle + "})();";
+  // 注: loadAndRender を含むが top-level await 部分は 70_init_eventsource.js の await。
+  // wirePeriodToggle 呼び出しが top-level であれば savedHandler が捕まる。
+  eval(wrapped);
+} catch (e) {
+  // 70_init_eventsource.js の await scheduleLoadAndRender() は async 関数内なので
+  // top-level eval では SyntaxError になる可能性 → fallback: wirePeriodToggle 単独 call
+  // この path に落ちた場合も savedHandler が無いと test fail するので分岐 print のみ
+  console.error("EVAL_ERROR:", e.message);
+}
+
+// step (1): window.__liveDiff 未定義 でも handler を呼んで no-throw + calls 0
+if (typeof savedHandler !== "function") {
+  console.log(JSON.stringify({error: "no_handler"}));
+  process.exit(0);
+}
+try { savedHandler({ currentTarget: { dataset: { period: "7d" } } }); }
+catch (e) { console.log(JSON.stringify({error: "step1_threw", msg: e.message})); process.exit(0); }
+const callsAfterStep1 = calls.length;
+
+// step (2): window.__liveDiff を後から定義 → 再 invoke
+globalThis.window.__liveDiff = { scheduleLoadAndRender: () => { calls.push(1); } };
+try { savedHandler({ currentTarget: { dataset: { period: "7d" } } }); }
+catch (e) { console.log(JSON.stringify({error: "step2_threw", msg: e.message})); process.exit(0); }
+const callsAfterStep2 = calls.length;
+
+console.log(JSON.stringify({ callsAfterStep1, callsAfterStep2 }));
+"""
+        result = subprocess.run(
+            [node, "-e", script],
+            env={**os.environ, "BUNDLE": bundle},
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert result.returncode == 0, f"node failed: stderr={result.stderr}"
+        # 最後の JSON 行をパース
+        import json as _json
+        lines = [ln for ln in result.stdout.strip().splitlines() if ln.strip()]
+        assert lines, f"no JSON output: stdout={result.stdout!r} stderr={result.stderr!r}"
+        out = _json.loads(lines[-1])
+        assert "error" not in out, f"node script error: {out}"
+        # call-time lookup なら step1 (liveDiff 未定義) で 0 件、step2 (liveDiff 後付け) で 1 件
+        assert out["callsAfterStep1"] == 0, "callsAfterStep1 must be 0 (liveDiff 未定義時に呼ばれてしまっている)"
+        assert out["callsAfterStep2"] == 1, "callsAfterStep2 must be 1 (call-time lookup なら liveDiff 後付け後 invoke で 1)"
+
+    def test_static_export_hides_toggle(self, tmp_path):
+        """plan §3 Step 4 (reviewer iter1 #2): static export では toggle を hidden にする.
+
+        wirePeriodToggle() の冒頭で `window.__DATA__` の存在を check し、setAttribute('hidden', '') を呼んで return する。
+        substring grep でも pin できるが、ここでは Node round-trip で hidden 属性が立つことを assert.
+        """
+        import subprocess
+        import shutil
+        node = shutil.which("node")
+        if node is None:
+            import pytest as _pytest
+            _pytest.skip("node not available; skipping static-export test")
+        mod = self._mod(tmp_path)
+        bundle = mod._concat_main_js()
+        script = r"""
+let toggleEl = { _attrs: {}, setAttribute: function(k, v) { this._attrs[k] = v; } };
+let savedHandler = null;
+globalThis.window = { __DATA__: { foo: 1 }, addEventListener: () => {}, location: { hash: "" } };
+globalThis.document = {
+  body: { dataset: {}, classList: { add: () => {}, remove: () => {}, contains: () => false } },
+  getElementById: (id) => id === "periodToggle" ? toggleEl : null,
+  querySelectorAll: (sel) => {
+    if (typeof sel === "string" && sel.indexOf("data-period") !== -1) {
+      return [{ addEventListener: (_evt, fn) => { savedHandler = fn; }, dataset: { period: "7d" }, setAttribute: () => {}, getAttribute: () => null }];
+    }
+    return [];
+  },
+  querySelector: () => null,
+  addEventListener: () => {},
+};
+globalThis.fetch = async () => ({ ok: true, json: async () => ({}) });
+globalThis.EventSource = undefined;
+process.on("unhandledRejection", () => {});
+try {
+  const wrapped = "(async function(){" + process.env.BUNDLE + "})();";
+  eval(wrapped);
+} catch (e) {
+  // some downstream js may throw; only check toggleEl state here
+}
+console.log(JSON.stringify({ hidden: toggleEl._attrs.hidden, savedHandlerWired: typeof savedHandler === "function" }));
+"""
+        result = subprocess.run(
+            [node, "-e", script],
+            env={**os.environ, "BUNDLE": bundle},
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert result.returncode == 0, f"node failed: stderr={result.stderr}"
+        import json as _json
+        lines = [ln for ln in result.stdout.strip().splitlines() if ln.strip()]
+        assert lines
+        out = _json.loads(lines[-1])
+        # static export 経路で hidden 属性が立つこと
+        assert out["hidden"] == "", f"static export で toggle に hidden 属性が立っていない: {out}"
+
+    def test_get_current_period_initial_value_is_all(self, tmp_path):
+        """plan §3 Step 4 (iter1 question #1): window.__period.getCurrentPeriod() で初期値 'all' が読める."""
+        import subprocess
+        import shutil
+        node = shutil.which("node")
+        if node is None:
+            import pytest as _pytest
+            _pytest.skip("node not available")
+        mod = self._mod(tmp_path)
+        bundle = mod._concat_main_js()
+        script = r"""
+globalThis.window = { addEventListener: () => {}, location: { hash: "" } };
+globalThis.document = {
+  body: { dataset: {}, classList: { add: () => {}, remove: () => {}, contains: () => false } },
+  getElementById: () => null,
+  querySelectorAll: () => [],
+  querySelector: () => null,
+  addEventListener: () => {},
+};
+globalThis.fetch = async () => ({ ok: true, json: async () => ({}) });
+globalThis.EventSource = undefined;
+process.on("unhandledRejection", () => {});
+try { eval("(async function(){" + process.env.BUNDLE + "})();"); } catch (e) {}
+const initial = (typeof window.__period === "object" && typeof window.__period.getCurrentPeriod === "function")
+  ? window.__period.getCurrentPeriod()
+  : null;
+console.log(JSON.stringify({ initial }));
+"""
+        result = subprocess.run(
+            [node, "-e", script],
+            env={**os.environ, "BUNDLE": bundle},
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert result.returncode == 0, f"node failed: stderr={result.stderr}"
+        import json as _json
+        out = _json.loads(result.stdout.strip().splitlines()[-1])
+        assert out["initial"] == "all", f"getCurrentPeriod() の初期値が 'all' でない: {out}"
+
+
 class TestConcatMainJsByteInvariant:
     """Step 4a: `_concat_main_js()` helper 切り出し refactor の byte-identical 不変条件."""
 

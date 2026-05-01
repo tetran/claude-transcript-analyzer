@@ -19,6 +19,15 @@ __INCLUDE_STYLES__
       <a href="#/patterns" data-page-link="patterns" tabindex="0">Patterns</a>
       <a href="#/quality" data-page-link="quality" tabindex="0">Quality</a>
       <a href="#/surface" data-page-link="surface" tabindex="0">Surface</a>
+      <!-- Issue #85: 期間トグル (Overview / Patterns でのみ表示).
+           Quality / Surface 表示時は CSS で display:none に倒す (30_pages.css)。
+           static export 経路では 05_period.js 内で hidden 属性を立てる。 -->
+      <div class="period-toggle" id="periodToggle" role="group" aria-label="集計期間">
+        <button type="button" data-period="7d" aria-pressed="false">7d</button>
+        <button type="button" data-period="30d" aria-pressed="false">30d</button>
+        <button type="button" data-period="90d" aria-pressed="false">90d</button>
+        <button type="button" data-period="all" aria-pressed="true">全期間</button>
+      </div>
       <!-- Issue #83: live heartbeat sparkline。
            default `hidden` で static export 経路では非表示、live 経路で
            startHeartbeat() が hidden を解除する。 -->

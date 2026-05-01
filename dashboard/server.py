@@ -1140,6 +1140,7 @@ _CSS_FILES = (
     "60_surface.css",       # Surface 3 panel + tooltip border colors (Issue #74)
 )
 _MAIN_JS_FILES = (
+    "05_period.js",               # period toggle closure + getCurrentPeriod / wirePeriodToggle (Issue #85)
     "10_helpers.js",              # esc / fmtN / pad / STATUS_LABEL / setConnStatus
     "15_heartbeat.js",            # live heartbeat sparkline (Issue #83)
     "20_load_and_render.js",      # async loadAndRender (KPI / ranking / sparkline / projects)
