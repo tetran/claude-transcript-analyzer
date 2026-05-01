@@ -17,6 +17,7 @@ from typing import Callable, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from subagent_metrics import (
+    INVOCATION_MERGE_WINDOW_SECONDS,
     aggregate_subagent_failure_trend,
     aggregate_subagent_metrics,
     usage_invocation_events,
@@ -97,6 +98,155 @@ _SKILL_USAGE_EVENT_TYPES = frozenset({
     "skill_tool",
     "user_slash_command",
 })
+
+
+_PERIOD_DELTAS = {"7d": 7, "30d": 30, "90d": 90}
+
+
+def _filter_events_by_period(
+    events: list[dict],
+    period: str,
+    *,
+    now: Optional[datetime] = None,
+) -> list[dict]:
+    """Overview / Patterns aggregator にのみ渡す view を返す。Quality / Surface aggregator は unfiltered events を受ける (Issue #85 plan §3 Step 1).
+
+    使い分け契約 (Quality / Surface 系の filtering を防ぐため、build_dashboard_data の call site で
+    本 helper を呼ばないことで対応する。本 helper は誤用防止のため call site でのみ使う):
+      - period 適用 11 field (KPI 4 + Overview 4 + Patterns 3) には本 view を渡す
+      - 全期間 8 field (Quality 4 + Surface 3 + session_stats) には未 filter events を渡す
+
+    `period` が allow-list (`7d` / `30d` / `90d` / `all`) 以外、または `all` のときは
+    events を index 同値で返す (parse 不能 timestamp も保持)。
+
+    period ∈ {7d, 30d, 90d} のときは三段 filter:
+
+      第一段 (rolling window): `cutoff <= ts <= now` の event を保持。
+         timestamp 不在 / 不正 → drop。`cutoff = now - timedelta(days=N)`。
+
+      第二段 (start ↔ lifecycle pair): 第一段で残った
+         `subagent_start` / `subagent_lifecycle_start` を起点に、
+         同じ `(session_id, subagent_type)` バケット内で
+         `INVOCATION_MERGE_WINDOW_SECONDS` 以内に発火した sibling 候補
+         (= 第一段で落とされた異なる source) を再 include。
+
+      第三段 (start ↔ stop pair): 第一段で残った `subagent_start` を起点に、
+         同バケット内で `start.ts <= stop.ts` を満たし、間に他の start が挟まらない
+         直近の `subagent_stop` (第一段で cutoff より過去に落ちたもの) を再 include。
+         逆経路: 第一段で残った `subagent_stop` を起点に、`stop.ts >= start.ts` かつ
+         間に他の start が挟まらない直近の `subagent_start` を再 include。
+         これは `subagent_metrics._pair_invocations_with_stops` の
+         `start_ts <= stop_ts < next_start_ts` semantics を尊重する補完で、
+         `failure_rate` / `avg_duration_ms` / pXX duration が period boundary 跨ぎで
+         silent drift しないことを保証する。
+
+    Mirrors subagent_metrics._pair_invocations_with_stops pairing semantics. Keep in sync.
+    """
+    if now is None:
+        now = datetime.now(timezone.utc)
+    days = _PERIOD_DELTAS.get(period)
+    if days is None:
+        return list(events)
+    cutoff = now - timedelta(days=days)
+
+    parsed_idx: dict[int, datetime] = {}
+    for i, ev in enumerate(events):
+        ts = _parse_iso_utc(ev.get("timestamp", ""))
+        if ts is not None:
+            parsed_idx[i] = ts
+
+    kept: set[int] = set()
+    for i, ts in parsed_idx.items():
+        if cutoff <= ts <= now:
+            kept.add(i)
+
+    # 第二段 + 第三段は (session_id, subagent_type) バケット単位で動かす
+    bucket_indices: dict[tuple[str, str], list[int]] = {}
+    for i, ev in enumerate(events):
+        if ev.get("event_type") not in (
+            "subagent_start",
+            "subagent_lifecycle_start",
+            "subagent_stop",
+        ):
+            continue
+        if i not in parsed_idx:
+            continue
+        key = (ev.get("session_id", ""), ev.get("subagent_type", ""))
+        bucket_indices.setdefault(key, []).append(i)
+
+    # bucket は timestamp 順に並べておく
+    for indices in bucket_indices.values():
+        indices.sort(key=lambda idx: parsed_idx[idx])
+
+    # 第二段: kept start/lifecycle ↔ dropped sibling (異なる source)
+    for indices in bucket_indices.values():
+        for pos, i in enumerate(indices):
+            if i not in kept:
+                continue
+            ev = events[i]
+            et = ev.get("event_type")
+            if et not in ("subagent_start", "subagent_lifecycle_start"):
+                continue
+            sibling_et = (
+                "subagent_lifecycle_start" if et == "subagent_start" else "subagent_start"
+            )
+            ts_i = parsed_idx[i]
+            for j in indices:
+                if j in kept:
+                    continue
+                if events[j].get("event_type") != sibling_et:
+                    continue
+                ts_j = parsed_idx[j]
+                if abs((ts_j - ts_i).total_seconds()) <= INVOCATION_MERGE_WINDOW_SECONDS:
+                    kept.add(j)
+
+    # 第三段: kept start ↔ dropped stop (直後 / 直前 paired)
+    for indices in bucket_indices.values():
+        # 順経路: kept_start → 直後 stop (start.ts <= stop.ts, 間に他 start が挟まらない)
+        for pos, i in enumerate(indices):
+            if i not in kept:
+                continue
+            if events[i].get("event_type") != "subagent_start":
+                continue
+            ts_start = parsed_idx[i]
+            # 直後の stop を探す: pos より後ろを順に見て、次の start が来る前に登場した stop
+            for k in range(pos + 1, len(indices)):
+                cand = indices[k]
+                cand_et = events[cand].get("event_type")
+                if cand_et == "subagent_start":
+                    break  # next start; stop search 終了
+                if cand_et != "subagent_stop":
+                    continue
+                if parsed_idx[cand] < ts_start:
+                    continue  # 念のため (sort 済みだが defensive)
+                kept.add(cand)
+                break  # 直後の paired stop は 1 件のみ
+
+        # 逆経路: kept_stop → 直前 start (stop.ts >= start.ts, 間に他 start が挟まらない)
+        for pos in range(len(indices) - 1, -1, -1):
+            i = indices[pos]
+            if i not in kept:
+                continue
+            if events[i].get("event_type") != "subagent_stop":
+                continue
+            ts_stop = parsed_idx[i]
+            # 直前の start を探す: pos の前を逆順に見る
+            for k in range(pos - 1, -1, -1):
+                cand = indices[k]
+                cand_et = events[cand].get("event_type")
+                if cand_et == "subagent_stop":
+                    # 別 invocation の stop が間に挟まる → search 継続不能ではないが、
+                    # `_pair_invocations_with_stops` の semantics 上、間に stop が居ても OK。
+                    # (start↔stop の pair は次の start が境界。stop は単独で挟まれる)
+                    continue
+                if cand_et != "subagent_start":
+                    continue
+                if parsed_idx[cand] > ts_stop:
+                    continue  # defensive
+                kept.add(cand)
+                break
+
+    return [ev for i, ev in enumerate(events) if i in kept]
 
 
 def _filter_usage_events(events: list[dict]) -> list[dict]:
