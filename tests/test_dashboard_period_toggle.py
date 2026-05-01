@@ -847,6 +847,10 @@ console.log(JSON.stringify({ callsAfterStep1, callsAfterStep2 }));
             env={**os.environ, "BUNDLE": bundle},
             capture_output=True,
             text=True,
+            # Windows: default cp1252 decode は Node UTF-8 出力 (絵文字 / 日本語) を
+            # charmap で扱えず stdout=None になるため、UTF-8 を明示する。
+            encoding="utf-8",
+            errors="replace",
             timeout=10,
         )
         assert result.returncode == 0, f"node failed: stderr={result.stderr}"
@@ -951,6 +955,10 @@ console.log(JSON.stringify({ hidden: toggleEl._attrs.hidden, savedHandlerWired: 
             env={**os.environ, "BUNDLE": bundle},
             capture_output=True,
             text=True,
+            # Windows: default cp1252 decode は Node UTF-8 出力 (絵文字 / 日本語) を
+            # charmap で扱えず stdout=None になるため、UTF-8 を明示する。
+            encoding="utf-8",
+            errors="replace",
             timeout=10,
         )
         assert result.returncode == 0, f"node failed: stderr={result.stderr}"
@@ -994,6 +1002,10 @@ console.log(JSON.stringify({ initial }));
             env={**os.environ, "BUNDLE": bundle},
             capture_output=True,
             text=True,
+            # Windows: default cp1252 decode は Node UTF-8 出力 (絵文字 / 日本語) を
+            # charmap で扱えず stdout=None になるため、UTF-8 を明示する。
+            encoding="utf-8",
+            errors="replace",
             timeout=10,
         )
         assert result.returncode == 0, f"node failed: stderr={result.stderr}"
@@ -1126,6 +1138,10 @@ setImmediate(() => {
             env={**os.environ, "BUNDLE": bundle, "DATA": _json.dumps(data)},
             capture_output=True,
             text=True,
+            # Windows: default cp1252 decode は Node UTF-8 出力 (絵文字 / 日本語) を
+            # charmap で扱えず stdout=None になるため、UTF-8 を明示する。
+            encoding="utf-8",
+            errors="replace",
             timeout=10,
         )
         assert result.returncode == 0, f"node failed: stderr={result.stderr}"
