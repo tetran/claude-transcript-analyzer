@@ -1370,18 +1370,30 @@ class DashboardHandler(BaseHTTPRequestHandler):
         touch = getattr(self.server, "touch", None)
         if callable(touch):
             touch()
-        if self.path == "/api/data":
+        from urllib.parse import urlparse
+        path_only = urlparse(self.path).path
+        if path_only == "/api/data":
             self._serve_api()
-        elif self.path == "/healthz":
+        elif path_only == "/healthz":
             self._serve_healthz()
-        elif self.path == "/events":
+        elif path_only == "/events":
             self._serve_events()
         else:
             self._serve_html()
 
     def _serve_api(self):
+        # query param `period` を取得 → allow-list 外 / 欠落 / 空値は "all" に倒す。
+        # `parse_qs(keep_blank_values=False)` (default) は `?period=` を dict から drop するので
+        # `q.get("period", ["all"])[0]` が "all" を返す。allow-list check は dict lookup の **後** に
+        # 必ず効かせる順序で書く (将来 keep_blank_values=True に切替えても "empty で fallback しない"
+        # 誤動作を起こさないため。閉じた loop での UX 優先で 400 は返さない: lenient 慣習)。
+        from urllib.parse import parse_qs, urlparse
+        q = parse_qs(urlparse(self.path).query)
+        period = q.get("period", ["all"])[0]
+        if period not in _PERIOD_DELTAS and period != "all":
+            period = "all"
         events = load_events()
-        data = build_dashboard_data(events)
+        data = build_dashboard_data(events, period=period)
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")

@@ -392,6 +392,98 @@ class TestBuildDashboardDataWithPeriod:
         assert data["last_updated"] == _FIXED_NOW.isoformat()
 
 
+class TestApiDataPeriodQuery:
+    """Step 3: `/api/data?period=<v>` query param routing + fallback."""
+
+    def _start_server(self, tmp_path, events: list[dict]):
+        """ThreadingHTTPServer をエフェメラルポートで上げて (server, base_url) を返す."""
+        import json as _json
+        import socket
+        import threading
+        usage = tmp_path / "usage.jsonl"
+        usage.parent.mkdir(parents=True, exist_ok=True)
+        with usage.open("w", encoding="utf-8") as f:
+            for ev in events:
+                f.write(_json.dumps(ev) + "\n")
+        mod = load_dashboard_module(usage)
+
+        # find free port (avoid race with bind to 0)
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+        s.close()
+
+        from http.server import ThreadingHTTPServer
+        server = ThreadingHTTPServer(("127.0.0.1", port), mod.DashboardHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        return mod, server, f"http://127.0.0.1:{port}"
+
+    def _stop(self, server):
+        server.shutdown()
+        server.server_close()
+
+    def test_api_data_with_period_7d(self, tmp_path):
+        import json as _json
+        import urllib.request
+        events = [
+            {"event_type": "skill_tool", "skill": "fresh", "session_id": "s",
+             "timestamp": (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()},
+        ]
+        mod, server, base = self._start_server(tmp_path, events)
+        try:
+            with urllib.request.urlopen(f"{base}/api/data?period=7d", timeout=2) as resp:
+                data = _json.loads(resp.read())
+            assert data["period_applied"] == "7d"
+        finally:
+            self._stop(server)
+
+    def test_api_data_invalid_period_falls_back_to_all(self, tmp_path):
+        import json as _json
+        import urllib.request
+        mod, server, base = self._start_server(tmp_path, [])
+        try:
+            with urllib.request.urlopen(f"{base}/api/data?period=garbage", timeout=2) as resp:
+                data = _json.loads(resp.read())
+            assert data["period_applied"] == "all"
+        finally:
+            self._stop(server)
+
+    def test_api_data_empty_period_value_falls_back_to_all(self, tmp_path):
+        import json as _json
+        import urllib.request
+        mod, server, base = self._start_server(tmp_path, [])
+        try:
+            with urllib.request.urlopen(f"{base}/api/data?period=", timeout=2) as resp:
+                data = _json.loads(resp.read())
+            assert data["period_applied"] == "all"
+        finally:
+            self._stop(server)
+
+    def test_api_data_no_period_query_defaults_to_all(self, tmp_path):
+        """plan §3 Step 3 backward-compat: 既存 frontend (period unaware) との互換."""
+        import json as _json
+        import urllib.request
+        mod, server, base = self._start_server(tmp_path, [])
+        try:
+            with urllib.request.urlopen(f"{base}/api/data", timeout=2) as resp:
+                data = _json.loads(resp.read())
+            assert data["period_applied"] == "all"
+        finally:
+            self._stop(server)
+
+    def test_api_data_period_all_explicit(self, tmp_path):
+        import json as _json
+        import urllib.request
+        mod, server, base = self._start_server(tmp_path, [])
+        try:
+            with urllib.request.urlopen(f"{base}/api/data?period=all", timeout=2) as resp:
+                data = _json.loads(resp.read())
+            assert data["period_applied"] == "all"
+        finally:
+            self._stop(server)
+
+
 class TestPeriodSentinelDocstring:
     """Issue #85 sentinel pin (plan §3 Step 2 iter5 advisory #3).
 
