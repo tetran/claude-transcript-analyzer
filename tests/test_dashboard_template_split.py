@@ -46,7 +46,8 @@ _DASHBOARD_PATH = Path(__file__).parent.parent / "dashboard" / "server.py"
 #   - 4b429ad2...: Issue #83 user follow-up / heartbeat 線そのものを常時明滅 (CSS @keyframes heartbeat-pulse で stroke-opacity を 1.0 ↔ 0.4 で 1s 周期、state 別 opacity と独立軸)
 #   - 5883a091...: Issue #83 user follow-up tweak / 明滅周期を 1s → 3s に調整 (呼吸テンポ感 / ambient indicator として落ち着いた pulse)
 #   - 28745c0d...: v0.7.2 release / footer の version 表記 v0.7.1 → v0.7.2 に bump
-EXPECTED_TEMPLATE_SHA256 = "28745c0d8e0cc540f9ec2a6d75ff154a21ed1f1bcfd226f94b43a2eabca13567"
+#   - 7b1575a2...: Issue #85 / Dashboard period toggle (05_period.js + period-toggle DOM/CSS / shell.html nav に periodToggle / 30_pages.css に .period-toggle + page-scoped hide / 20_load_and_render.js fetch URL に period query + sub badge prefix / 30_renderers_patterns.js renderer 第 2 引数で badge 受領)
+EXPECTED_TEMPLATE_SHA256 = "7b1575a2a19c87cb0afbdbb9fa28d4635db83b519e633c7dab09183a08f34718"
 
 
 def _load_dashboard_module(tmp_path: Path):
