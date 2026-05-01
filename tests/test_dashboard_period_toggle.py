@@ -484,6 +484,39 @@ class TestApiDataPeriodQuery:
             self._stop(server)
 
 
+class TestConcatMainJsByteInvariant:
+    """Step 4a: `_concat_main_js()` helper 切り出し refactor の byte-identical 不変条件."""
+
+    def test_concat_main_js_returns_str(self, tmp_path):
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        out = mod._concat_main_js()
+        assert isinstance(out, str)
+        assert len(out) > 0
+
+    def test_concat_main_js_used_in_build_html_template(self, tmp_path):
+        """`_build_html_template()` の出力に `_concat_main_js()` の結果が含まれる (DRY)."""
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        main_js = mod._concat_main_js()
+        template = mod._build_html_template()
+        assert main_js in template, "_build_html_template() の出力に _concat_main_js() の連結結果が含まれていない"
+
+    def test_concat_main_js_no_separator_between_files(self, tmp_path):
+        """plan §3 Step 4a iter6 #2: 改行などの separator を入れず byte-identical を維持する.
+
+        現行 inline 形は `"".join(...)` で書かれている (dashboard/server.py:990 履歴) ので、
+        helper 切り出し後も "".join (= no separator) であることを assert。
+        """
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        from pathlib import Path as _P
+        template_dir = _P(mod.__file__).parent / "template"
+        expected = "".join(
+            (template_dir / "scripts" / name).read_text(encoding="utf-8")
+            for name in mod._MAIN_JS_FILES
+        )
+        actual = mod._concat_main_js()
+        assert actual == expected, "concat に separator が混入している (byte-identical 違反)"
+
+
 class TestPeriodSentinelDocstring:
     """Issue #85 sentinel pin (plan §3 Step 2 iter5 advisory #3).
 

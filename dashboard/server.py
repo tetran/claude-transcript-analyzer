@@ -1154,6 +1154,22 @@ _MAIN_JS_FILES = (
 )
 
 
+def _concat_main_js() -> str:
+    """`_MAIN_JS_FILES` を順に読んで 1 つの JS bundle 文字列に連結する.
+
+    `_concat_main_js()` is a test seam exposed for `tests/test_dashboard_period_toggle.py`;
+    not a public API.
+
+    `"".join(...)` (= no separator) で連結する: byte-identical to pre-refactor `_HTML_TEMPLATE`;
+    do not introduce separators (改行など) — assembled `_HTML_TEMPLATE` の bytes が変わって
+    `EXPECTED_TEMPLATE_SHA256` の drift detection が壊れる。
+    """
+    return "".join(
+        (_TEMPLATE_DIR / "scripts" / name).read_text(encoding="utf-8")
+        for name in _MAIN_JS_FILES
+    )
+
+
 def _build_html_template() -> str:
     """`template/` 配下を起動時に 1 度だけ concat して `_HTML_TEMPLATE` を作る。
 
@@ -1162,7 +1178,7 @@ def _build_html_template() -> str:
     """
     styles = "".join((_TEMPLATE_DIR / "styles" / name).read_text(encoding="utf-8") for name in _CSS_FILES)
     router_js = (_TEMPLATE_DIR / "scripts" / "00_router.js").read_text(encoding="utf-8")
-    main_js = "".join((_TEMPLATE_DIR / "scripts" / name).read_text(encoding="utf-8") for name in _MAIN_JS_FILES)
+    main_js = _concat_main_js()
     shell = (_TEMPLATE_DIR / "shell.html").read_text(encoding="utf-8")
     return (shell
             .replace("__INCLUDE_STYLES__\n", styles)
