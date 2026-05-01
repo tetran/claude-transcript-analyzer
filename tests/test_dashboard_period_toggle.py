@@ -220,6 +220,168 @@ class TestFilterEventsByPeriod:
         kept_stop_ts = datetime.fromisoformat(kept_stops[0]["timestamp"])
         assert kept_stop_ts > cutoff
 
+    def test_filter_period_lifecycle_only_invocation_pulls_outside_paired_start(self, tmp_path):
+        """第三段 (codex round 1 / Issue #85): lifecycle-only invocation の cutoff 跨ぎ。
+
+        PostToolUse(Task|Agent) が flaky な環境では `subagent_lifecycle_start` のみが
+        発火し `subagent_start` が記録されない (lifecycle-only invocation)。
+        この場合 `_pair_invocations_with_stops` は lifecycle.timestamp を anchor に
+        stop を pair するため、第三段も lifecycle を anchor として stop ↔ lifecycle の
+        cutoff 跨ぎを再 include する必要がある。
+
+        構成:
+            lifecycle_A @ cutoff-5s   (cutoff 外, 第一段 drop)
+            stop_A      @ cutoff+5s   (cutoff 内, 保持)
+
+        期待: 逆経路で stop_A → lifecycle_A を再 include (subagent_start なしで動作する)。
+        これにより `aggregate_subagent_metrics` の `failure_count` / `avg_duration_ms` /
+        pXX が period filter 後も full-data と一致する。
+        """
+        mod = self._mod(tmp_path)
+        cutoff = _FIXED_NOW - timedelta(days=7)
+        events = [
+            {"event_type": "subagent_lifecycle_start", "subagent_type": "Explore", "session_id": "s",
+             "timestamp": (cutoff - timedelta(seconds=5)).isoformat()},
+            {"event_type": "subagent_stop", "subagent_type": "Explore", "session_id": "s",
+             "timestamp": (cutoff + timedelta(seconds=5)).isoformat(),
+             "duration_ms": 10000, "success": False},
+        ]
+        out = mod._filter_events_by_period(events, "7d", now=_FIXED_NOW)
+        types = sorted(e["event_type"] for e in out)
+        assert types == ["subagent_lifecycle_start", "subagent_stop"]
+
+        # 集計値も full と一致する (failure_count / avg_duration_ms drift しない)
+        full = mod.aggregate_subagent_metrics(events)
+        filtered = mod.aggregate_subagent_metrics(out)
+        assert filtered == full
+
+    def test_filter_period_lifecycle_only_does_not_pull_unrelated_stop(self, tmp_path):
+        """第三段 reverse 経路: 連続 2 lifecycle-only invocation で stop_A を不当に再 include しない。
+
+        構成 (同 (session_id, subagent_type) バケット):
+            lifecycle_A @ cutoff-2.0s  (cutoff 外, drop)
+            stop_A      @ cutoff-1.5s  (cutoff 外, drop)
+            lifecycle_B @ cutoff+0.3s  (cutoff 内, kept)
+            stop_B      @ cutoff+0.8s  (cutoff 内, kept)
+
+        期待: stop_A も lifecycle_A も再 include されない (lifecycle_B の paired stop は stop_B で確定)。
+        """
+        mod = self._mod(tmp_path)
+        cutoff = _FIXED_NOW - timedelta(days=7)
+        events = [
+            {"event_type": "subagent_lifecycle_start", "subagent_type": "Explore", "session_id": "s",
+             "timestamp": (cutoff - timedelta(seconds=2.0)).isoformat()},
+            {"event_type": "subagent_stop", "subagent_type": "Explore", "session_id": "s",
+             "timestamp": (cutoff - timedelta(seconds=1.5)).isoformat()},
+            {"event_type": "subagent_lifecycle_start", "subagent_type": "Explore", "session_id": "s",
+             "timestamp": (cutoff + timedelta(seconds=0.3)).isoformat()},
+            {"event_type": "subagent_stop", "subagent_type": "Explore", "session_id": "s",
+             "timestamp": (cutoff + timedelta(seconds=0.8)).isoformat()},
+        ]
+        out = mod._filter_events_by_period(events, "7d", now=_FIXED_NOW)
+        kept_lifecycle = [e for e in out if e["event_type"] == "subagent_lifecycle_start"]
+        kept_stops = [e for e in out if e["event_type"] == "subagent_stop"]
+        assert len(kept_lifecycle) == 1
+        assert len(kept_stops) == 1
+        # 残存 lifecycle / stop は B 側 (cutoff 以降)
+        assert datetime.fromisoformat(kept_lifecycle[0]["timestamp"]) > cutoff
+        assert datetime.fromisoformat(kept_stops[0]["timestamp"]) > cutoff
+
+    def test_filter_period_does_not_cross_invocation_sibling_pull(self, tmp_path):
+        """第二段 (codex round 2 / Issue #85): 隣接 invocation の sibling を不当に再 include しない。
+
+        構成 (同 (session_id, subagent_type) バケット, INVOCATION_MERGE_WINDOW_SECONDS=1.0s):
+            start_A     @ cutoff-0.6s  (drop)
+            lifecycle_A @ cutoff-0.4s  (drop)
+            start_B     @ cutoff+0.4s  (kept)
+            lifecycle_B @ cutoff+0.6s  (kept)
+
+        canonical pairing (`_build_invocations` 同等): inv_A=(A,A), inv_B=(B,B).
+        kept_B が dropped lifecycle_A (start_B から 0.8s, 1s 以内) を pull する旧バグの guard。
+        """
+        mod = self._mod(tmp_path)
+        cutoff = _FIXED_NOW - timedelta(days=7)
+        events = [
+            {"event_type": "subagent_start", "subagent_type": "Explore", "session_id": "s",
+             "tool_use_id": "tuA", "timestamp": (cutoff - timedelta(seconds=0.6)).isoformat()},
+            {"event_type": "subagent_lifecycle_start", "subagent_type": "Explore", "session_id": "s",
+             "timestamp": (cutoff - timedelta(seconds=0.4)).isoformat()},
+            {"event_type": "subagent_start", "subagent_type": "Explore", "session_id": "s",
+             "tool_use_id": "tuB", "timestamp": (cutoff + timedelta(seconds=0.4)).isoformat()},
+            {"event_type": "subagent_lifecycle_start", "subagent_type": "Explore", "session_id": "s",
+             "timestamp": (cutoff + timedelta(seconds=0.6)).isoformat()},
+        ]
+        out = mod._filter_events_by_period(events, "7d", now=_FIXED_NOW)
+        # 期待: inv_B のみ (= 2 event)。inv_A の sibling は引かれない。
+        assert len(out) == 2
+        for e in out:
+            ts = datetime.fromisoformat(e["timestamp"])
+            assert ts > cutoff, f"unexpected pre-cutoff event re-included: {e}"
+
+    def test_filter_period_does_not_pull_back_future_dated_stop(self, tmp_path):
+        """第三段 (codex round 2 / Issue #85): clock skew で `ts > now` の stop を pull-back しない。
+
+        第一段は `cutoff <= ts <= now` の event のみ keep する (`ts > now` も drop)。
+        この排除を尊重し、kept_start の forward path で future-dated stop を再 include しないこと。
+
+        構成:
+            start_A @ now-0.1s     (kept)
+            stop_A  @ now+1day     (drop: ts > now, clock skew)
+        """
+        mod = self._mod(tmp_path)
+        events = [
+            {"event_type": "subagent_start", "subagent_type": "Explore", "session_id": "s",
+             "tool_use_id": "tu1",
+             "timestamp": (_FIXED_NOW - timedelta(seconds=0.1)).isoformat()},
+            {"event_type": "subagent_stop", "subagent_type": "Explore", "session_id": "s",
+             "timestamp": (_FIXED_NOW + timedelta(days=1)).isoformat(),
+             "duration_ms": 9999, "success": False},
+        ]
+        out = mod._filter_events_by_period(events, "7d", now=_FIXED_NOW)
+        ets = [e["event_type"] for e in out]
+        assert "subagent_stop" not in ets, f"future-dated stop pulled back: {out}"
+        assert ets == ["subagent_start"]
+
+    def test_filter_period_delayed_stop_equal_count_pairs_sequentially(self, tmp_path):
+        """第二段 (codex round 3 / Issue #85): 件数一致 bucket は sequential 1:1 pairing.
+
+        `_pair_invocations_with_stops` は `len(invocations) == len(stops)` のとき
+        sequential 1:1 zip で pair する (delayed/overlapping stops の慣習許容)。
+        period filter もこの semantics を mirror して、delayed stop_A が start_B より
+        後に届くケースで start_A を canonical pair で再 include しなければならない。
+
+        構成:
+            start_A @ cutoff-2s   (drop, 第一段)
+            start_B @ cutoff+2s   (kept)
+            stop_A  @ cutoff+5s   (kept, delayed: start_B より後に発火)
+            stop_B  @ cutoff+10s  (kept)
+
+        canonical (full) pair: A→stop_A (success), B→stop_B (failure) → count=2/failure=1
+        期待: 第二段で start_A を再 include し、period 集計が full と一致。
+        """
+        mod = self._mod(tmp_path)
+        cutoff = _FIXED_NOW - timedelta(days=7)
+        events = [
+            {"event_type": "subagent_start", "subagent_type": "Explore", "session_id": "s",
+             "tool_use_id": "tuA", "timestamp": (cutoff - timedelta(seconds=2)).isoformat()},
+            {"event_type": "subagent_start", "subagent_type": "Explore", "session_id": "s",
+             "tool_use_id": "tuB", "timestamp": (cutoff + timedelta(seconds=2)).isoformat()},
+            {"event_type": "subagent_stop", "subagent_type": "Explore", "session_id": "s",
+             "timestamp": (cutoff + timedelta(seconds=5)).isoformat(),
+             "duration_ms": 7000, "success": True},
+            {"event_type": "subagent_stop", "subagent_type": "Explore", "session_id": "s",
+             "timestamp": (cutoff + timedelta(seconds=10)).isoformat(),
+             "duration_ms": 8000, "success": False},
+        ]
+        out = mod._filter_events_by_period(events, "7d", now=_FIXED_NOW)
+        # start_A は再 include される (sequential pair で stop_A と pair)
+        kept_starts = [e for e in out if e["event_type"] == "subagent_start"]
+        assert {e["tool_use_id"] for e in kept_starts} == {"tuA", "tuB"}
+        # 集計値が full と一致
+        full = mod.aggregate_subagent_metrics(events)
+        filt = mod.aggregate_subagent_metrics(out)
+        assert filt == full, f"metrics drift: full={full} filt={filt}"
+
     def test_three_stage_filter_survives_filter_usage_events(self, tmp_path):
         """plan §3 Step 2 invariant (iter5 advisory #4):
         三段で再 include された stop event が `_filter_usage_events` 通過後も残る (= dedup window と同一なので脱落しない)."""
@@ -239,6 +401,40 @@ class TestFilterEventsByPeriod:
         et_set = {e["event_type"] for e in period_events_usage}
         # `_filter_usage_events` は skill_tool / user_slash_command + invocation 代表 (subagent_start) を返す
         assert "subagent_start" in et_set
+
+    def test_build_dashboard_data_lifecycle_only_pre_cutoff_rep_does_not_leak_date(self, tmp_path):
+        """build_dashboard_data (codex round 4 / Issue #85): boundary-straddling
+        lifecycle-only invocation で rep ts が pre-cutoff の場合、headline metrics
+        (daily_trend / hourly_heatmap) に pre-cutoff 日付が leak しないこと。
+
+        構成 (period=7d):
+            lifecycle @ now-8d (drop, 第一段; 第二段の canonical pair で kept に格上げ)
+            stop      @ now-7d+10s (kept, paired stop)
+
+        canonical: lifecycle-only invocation の rep は usage_invocation_events で
+        lifecycle event が選ばれるが、ts が pre-cutoff のままだと daily_trend に
+        8 日前の bucket が leak する。修正後: rep ts を paired stop ts で synthesize し、
+        daily_trend に pre-cutoff 日付が出ないこと。
+        """
+        mod = self._mod(tmp_path)
+        cutoff = _FIXED_NOW - timedelta(days=7)
+        events = [
+            {"event_type": "subagent_lifecycle_start", "subagent_type": "Explore", "session_id": "s",
+             "project": "p1",
+             "timestamp": (cutoff - timedelta(days=1)).isoformat()},
+            {"event_type": "subagent_stop", "subagent_type": "Explore", "session_id": "s",
+             "timestamp": (cutoff + timedelta(seconds=10)).isoformat(),
+             "duration_ms": 86410000, "success": False},
+        ]
+        data = mod.build_dashboard_data(events, period="7d", now=_FIXED_NOW)
+        # 8 日前の date が daily_trend に出ない
+        eight_days_ago = (_FIXED_NOW - timedelta(days=8)).isoformat()[:10]
+        dates = {r["date"] for r in data["daily_trend"]}
+        assert eight_days_ago not in dates, f"pre-cutoff date leaked into daily_trend: {dates}"
+        # subagent_ranking は full と同じ (canonical pairing で count=1, failure=1)
+        sub = {r["name"]: r for r in data["subagent_ranking"]}
+        assert sub["Explore"]["count"] == 1
+        assert sub["Explore"]["failure_count"] == 1
 
     def test_filter_period_invalid_value_falls_back_to_all(self, tmp_path):
         """`period` allow-list 外 → 'all' 相当 (= 全イベント保持) として扱う。
@@ -663,6 +859,51 @@ console.log(JSON.stringify({ callsAfterStep1, callsAfterStep2 }));
         # call-time lookup なら step1 (liveDiff 未定義) で 0 件、step2 (liveDiff 後付け) で 1 件
         assert out["callsAfterStep1"] == 0, "callsAfterStep1 must be 0 (liveDiff 未定義時に呼ばれてしまっている)"
         assert out["callsAfterStep2"] == 1, "callsAfterStep2 must be 1 (call-time lookup なら liveDiff 後付け後 invoke で 1)"
+
+    def test_period_resets_live_snapshot_before_load_and_render(self, tmp_path):
+        """codex round 4 / Issue #85: period 切替時に __livePrev を reset。
+
+        構造的 pin: 25_live_diff.js が `resetLiveSnapshot` を `window.__liveDiff` に
+        export し、05_period.js click handler が scheduleLoadAndRender の前に
+        resetLiveSnapshot を呼ぶこと。
+
+        この順序が満たされない (= reset 無しで scheduleLoadAndRender) と、
+        前 period の snapshot と新 period の snapshot で diff が走り、toast / highlight
+        に skill / project / event 数の正の delta が誤って報告される。
+        """
+        live_diff_js = (Path(__file__).parent.parent /
+                        "dashboard" / "template" / "scripts" / "25_live_diff.js").read_text(encoding="utf-8")
+        period_js = (Path(__file__).parent.parent /
+                     "dashboard" / "template" / "scripts" / "05_period.js").read_text(encoding="utf-8")
+
+        # 1) 25_live_diff.js が resetLiveSnapshot を定義し、window.__liveDiff に export している
+        assert "function resetLiveSnapshot" in live_diff_js, \
+            "25_live_diff.js に resetLiveSnapshot 関数が無い"
+        # window.__liveDiff = {...} に resetLiveSnapshot プロパティが含まれる
+        assert "resetLiveSnapshot" in live_diff_js.split("window.__liveDiff")[1].split("};")[0], \
+            "window.__liveDiff に resetLiveSnapshot を export していない"
+        # __livePrev = null にする実装である
+        import re as _re
+        m = _re.search(r"function\s+resetLiveSnapshot\s*\(\s*\)\s*\{[^}]*\}", live_diff_js)
+        assert m is not None, "resetLiveSnapshot の関数 body が読めない"
+        assert "__livePrev" in m.group(0) and "null" in m.group(0), \
+            "resetLiveSnapshot は __livePrev = null を実行すべき"
+
+        # 2) 05_period.js click handler 内で resetLiveSnapshot が scheduleLoadAndRender より先に呼ばれる。
+        # 注: ファイル先頭の comment block にも scheduleLoadAndRender 言及があるため、
+        # comment block を行ベースに stripping した body 上で順序を検査する。
+        assert "resetLiveSnapshot" in period_js, \
+            "05_period.js に resetLiveSnapshot 呼出が無い (period 切替時の false-burst diff 抑止)"
+        # 行頭が `//` の単行 comment を除外 (block comment は本ファイル内に無い)
+        code_lines = [ln for ln in period_js.splitlines() if not ln.strip().startswith("//")]
+        code_only = "\n".join(code_lines)
+        # 検査対象は実際に呼出が現れる箇所のみ。最初の resetLiveSnapshot() / scheduleLoadAndRender() を見る。
+        reset_idx = code_only.find("resetLiveSnapshot()")
+        sched_idx = code_only.find("scheduleLoadAndRender()")
+        assert reset_idx != -1, "code-only 領域に resetLiveSnapshot() 呼出が無い"
+        assert sched_idx != -1, "code-only 領域に scheduleLoadAndRender() 呼出が無い"
+        assert reset_idx < sched_idx, \
+            "resetLiveSnapshot() は scheduleLoadAndRender() より前に呼ぶ必要がある (順序が逆だと reset が間に合わない)"
 
     def test_static_export_hides_toggle(self, tmp_path):
         """plan §3 Step 4 (reviewer iter1 #2): static export では toggle を hidden にする.

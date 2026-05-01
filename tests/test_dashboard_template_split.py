@@ -47,7 +47,8 @@ _DASHBOARD_PATH = Path(__file__).parent.parent / "dashboard" / "server.py"
 #   - 5883a091...: Issue #83 user follow-up tweak / 明滅周期を 1s → 3s に調整 (呼吸テンポ感 / ambient indicator として落ち着いた pulse)
 #   - 28745c0d...: v0.7.2 release / footer の version 表記 v0.7.1 → v0.7.2 に bump
 #   - 7b1575a2...: Issue #85 / Dashboard period toggle (05_period.js + period-toggle DOM/CSS / shell.html nav に periodToggle / 30_pages.css に .period-toggle + page-scoped hide / 20_load_and_render.js fetch URL に period query + sub badge prefix / 30_renderers_patterns.js renderer 第 2 引数で badge 受領)
-EXPECTED_TEMPLATE_SHA256 = "7b1575a2a19c87cb0afbdbb9fa28d4635db83b519e633c7dab09183a08f34718"
+#   - 043e5666...: Issue #85 codex Round 4 fix-up / 25_live_diff.js に resetLiveSnapshot を追加 + 05_period.js click handler で period 切替時に resetLiveSnapshot 呼出 (前 period snapshot と新 period snapshot の false-burst diff 抑止)
+EXPECTED_TEMPLATE_SHA256 = "043e56662b7f756fa3497607e0b009eab3c27a31cd021ab78f49aa7dccc13710"
 
 
 def _load_dashboard_module(tmp_path: Path):

@@ -119,28 +119,27 @@ def _filter_events_by_period(
     `period` が allow-list (`7d` / `30d` / `90d` / `all`) 以外、または `all` のときは
     events を index 同値で返す (parse 不能 timestamp も保持)。
 
-    period ∈ {7d, 30d, 90d} のときは三段 filter:
+    period ∈ {7d, 30d, 90d} のときは二段 filter:
 
       第一段 (rolling window): `cutoff <= ts <= now` の event を保持。
-         timestamp 不在 / 不正 → drop。`cutoff = now - timedelta(days=N)`。
+         timestamp 不在 / 不正 / `ts > now` (clock skew) → drop。
+         `cutoff = now - timedelta(days=N)`。
 
-      第二段 (start ↔ lifecycle pair): 第一段で残った
-         `subagent_start` / `subagent_lifecycle_start` を起点に、
-         同じ `(session_id, subagent_type)` バケット内で
-         `INVOCATION_MERGE_WINDOW_SECONDS` 以内に発火した sibling 候補
-         (= 第一段で落とされた異なる source) を再 include。
+      第二段 (canonical invocation/pair propagation): 各 (session_id, subagent_type)
+         バケットを `subagent_metrics._build_invocations` と同等のロジックで
+         canonical invocation 列に再構成し (`subagent_start` / `subagent_lifecycle_start`
+         を `INVOCATION_MERGE_WINDOW_SECONDS` 以内 + 異なる source なら 1 invocation
+         に merge)、各 invocation の paired stop は `_pair_invocations_with_stops`
+         同等の窓 (`[anchor_ts, next_anchor_ts)`) で配り当てる。
+         pair (= invocation の全 event + paired stop) のうち 1 event でも第一段で
+         kept なら、pair 内全 event を再 include する。
+         これにより `failure_rate` / `avg_duration_ms` / pXX duration が period
+         boundary 跨ぎで silent drift しないことを構造的に保証する。
+         clock skew で `ts > now` と落ちた stop は第一段の排除を尊重し、
+         pair 一括 include の対象から除外する (codex round 2 / Issue #85)。
 
-      第三段 (start ↔ stop pair): 第一段で残った `subagent_start` を起点に、
-         同バケット内で `start.ts <= stop.ts` を満たし、間に他の start が挟まらない
-         直近の `subagent_stop` (第一段で cutoff より過去に落ちたもの) を再 include。
-         逆経路: 第一段で残った `subagent_stop` を起点に、`stop.ts >= start.ts` かつ
-         間に他の start が挟まらない直近の `subagent_start` を再 include。
-         これは `subagent_metrics._pair_invocations_with_stops` の
-         `start_ts <= stop_ts < next_start_ts` semantics を尊重する補完で、
-         `failure_rate` / `avg_duration_ms` / pXX duration が period boundary 跨ぎで
-         silent drift しないことを保証する。
-
-    Mirrors subagent_metrics._pair_invocations_with_stops pairing semantics. Keep in sync.
+    Mirrors subagent_metrics._build_invocations + _pair_invocations_with_stops
+    semantics. Keep in sync.
     """
     if now is None:
         now = datetime.now(timezone.utc)
@@ -178,78 +177,113 @@ def _filter_events_by_period(
     for indices in bucket_indices.values():
         indices.sort(key=lambda idx: parsed_idx[idx])
 
-    # 第二段: kept start/lifecycle ↔ dropped sibling (異なる source)
+    # 第二段 + 第三段: 各 bucket を `_build_invocations` の canonical pairing で再構成し、
+    # kept event を含む invocation/pair に属する全 event を再 include。
+    #
+    # Round 2 fix (codex): 旧実装は kept anchor ごとに「sibling/stop を距離 1s 以内で 1 件
+    # 引っ張る」素朴版だったが、隣接 invocation の sibling を不当に pull してしまう
+    # ケース (start_A/lifecycle_A @ cutoff-0.4s + start_B/lifecycle_B @ cutoff+0.4s)
+    # と、未来日付 stop (clock skew で第一段で `ts > now` と drop されたもの) を
+    # 第三段が pull-back するケース両方を検出。canonical pairing に揃えて
+    # 構造的に塞ぐ。
+    _START_ETS = ("subagent_start", "subagent_lifecycle_start")
     for indices in bucket_indices.values():
-        for pos, i in enumerate(indices):
-            if i not in kept:
-                continue
-            ev = events[i]
-            et = ev.get("event_type")
-            if et not in ("subagent_start", "subagent_lifecycle_start"):
-                continue
-            sibling_et = (
-                "subagent_lifecycle_start" if et == "subagent_start" else "subagent_start"
-            )
+        # `_build_invocations` を mirror: source 重複を merge せず、近接 sibling を 1 invocation 化
+        invocations: list[list[int]] = []  # 各 invocation は event index list
+        last_ts: Optional[datetime] = None
+        last_sources: set[str] = set()
+        for i in indices:
+            et = events[i].get("event_type")
+            if et == "subagent_stop":
+                continue  # 第二段は start/lifecycle のみで pairing
+            source = "start" if et == "subagent_start" else "lifecycle"
             ts_i = parsed_idx[i]
-            for j in indices:
-                if j in kept:
+            merged = False
+            if (
+                invocations
+                and last_ts is not None
+                and source not in last_sources
+                and abs((ts_i - last_ts).total_seconds()) <= INVOCATION_MERGE_WINDOW_SECONDS
+            ):
+                invocations[-1].append(i)
+                last_sources.add(source)
+                merged = True
+            if not merged:
+                invocations.append([i])
+                last_sources = {source}
+            last_ts = ts_i
+
+        # invocation 境界 (anchor.ts) を求めて stops を canonical pairing で配り当て。
+        # `subagent_metrics._pair_invocations_with_stops` の semantics を mirror:
+        #   - 件数一致 (`len(invocations) == len(stops)`) → sequential 1:1 zip
+        #     (重複発火扱い、timestamp 検査なし。delayed/overlapping stops を許容)
+        #   - 件数不一致:
+        #     - `start.success=False` (start 由来 invocation) → stop プール非消費 / paired=None
+        #     - その他 → timestamp-window: `[anchor_ts, next_anchor_ts)` で最初の未消費 stop
+        inv_anchor_ts: list[datetime] = []
+        for inv_idx_list in invocations:
+            # anchor = subagent_start 優先, 無ければ lifecycle (canonical rep 選択)
+            anchor_idx = next(
+                (j for j in inv_idx_list if events[j].get("event_type") == "subagent_start"),
+                inv_idx_list[0],
+            )
+            inv_anchor_ts.append(parsed_idx[anchor_idx])
+
+        stops_in_bucket = sorted(
+            (j for j in indices if events[j].get("event_type") == "subagent_stop"),
+            key=lambda j: parsed_idx[j],
+        )
+        inv_paired_stop: list[Optional[int]] = [None] * len(invocations)
+        if len(invocations) == len(stops_in_bucket):
+            # 件数一致 → sequential 1:1 (canonical の "重複発火扱い" 分岐)
+            for i in range(len(invocations)):
+                inv_paired_stop[i] = stops_in_bucket[i]
+        else:
+            # 件数不一致 → timestamp-window pairing
+            # start.success=False の invocation は stop プールを消費しない。
+            stop_consumed = [False] * len(stops_in_bucket)
+            for i, anchor_ts in enumerate(inv_anchor_ts):
+                # canonical も start.success=False は stop パスを消費しない
+                start_idx = next(
+                    (j for j in invocations[i] if events[j].get("event_type") == "subagent_start"),
+                    None,
+                )
+                if start_idx is not None and events[start_idx].get("success") is False:
                     continue
-                if events[j].get("event_type") != sibling_et:
-                    continue
-                ts_j = parsed_idx[j]
-                if abs((ts_j - ts_i).total_seconds()) <= INVOCATION_MERGE_WINDOW_SECONDS:
+                next_anchor_ts = inv_anchor_ts[i + 1] if i + 1 < len(inv_anchor_ts) else None
+                for j_pos, stop_idx in enumerate(stops_in_bucket):
+                    if stop_consumed[j_pos]:
+                        continue
+                    stop_ts = parsed_idx[stop_idx]
+                    if stop_ts < anchor_ts:
+                        continue
+                    if next_anchor_ts is not None and stop_ts >= next_anchor_ts:
+                        continue
+                    stop_consumed[j_pos] = True
+                    inv_paired_stop[i] = stop_idx
+                    break
+
+        # canonical invocation/pair 単位で kept 伝播:
+        #   pair 内のいずれかの event が kept なら全員 kept
+        # ただし stop 第一段 drop 理由が `ts > now` (= future-dated, clock skew)
+        # の場合は pull-back せず — 第一段の `ts > now` 排除を尊重する。
+        for i, inv_idx_list in enumerate(invocations):
+            paired_stop_idx = inv_paired_stop[i]
+            members = list(inv_idx_list)
+            if paired_stop_idx is not None and parsed_idx[paired_stop_idx] <= now:
+                members.append(paired_stop_idx)
+            if any(j in kept for j in members):
+                for j in members:
                     kept.add(j)
-
-    # 第三段: kept start ↔ dropped stop (直後 / 直前 paired)
-    for indices in bucket_indices.values():
-        # 順経路: kept_start → 直後 stop (start.ts <= stop.ts, 間に他 start が挟まらない)
-        for pos, i in enumerate(indices):
-            if i not in kept:
-                continue
-            if events[i].get("event_type") != "subagent_start":
-                continue
-            ts_start = parsed_idx[i]
-            # 直後の stop を探す: pos より後ろを順に見て、次の start が来る前に登場した stop
-            for k in range(pos + 1, len(indices)):
-                cand = indices[k]
-                cand_et = events[cand].get("event_type")
-                if cand_et == "subagent_start":
-                    break  # next start; stop search 終了
-                if cand_et != "subagent_stop":
-                    continue
-                if parsed_idx[cand] < ts_start:
-                    continue  # 念のため (sort 済みだが defensive)
-                kept.add(cand)
-                break  # 直後の paired stop は 1 件のみ
-
-        # 逆経路: kept_stop → 直前 start (stop.ts >= start.ts, 間に他 start が挟まらない)
-        for pos in range(len(indices) - 1, -1, -1):
-            i = indices[pos]
-            if i not in kept:
-                continue
-            if events[i].get("event_type") != "subagent_stop":
-                continue
-            ts_stop = parsed_idx[i]
-            # 直前の start を探す: pos の前を逆順に見る
-            for k in range(pos - 1, -1, -1):
-                cand = indices[k]
-                cand_et = events[cand].get("event_type")
-                if cand_et == "subagent_stop":
-                    # 別 invocation の stop が間に挟まる → search 継続不能ではないが、
-                    # `_pair_invocations_with_stops` の semantics 上、間に stop が居ても OK。
-                    # (start↔stop の pair は次の start が境界。stop は単独で挟まれる)
-                    continue
-                if cand_et != "subagent_start":
-                    continue
-                if parsed_idx[cand] > ts_stop:
-                    continue  # defensive
-                kept.add(cand)
-                break
 
     return [ev for i, ev in enumerate(events) if i in kept]
 
 
-def _filter_usage_events(events: list[dict]) -> list[dict]:
+def _filter_usage_events(
+    events: list[dict],
+    *,
+    period_cutoff: Optional[datetime] = None,
+) -> list[dict]:
     """headline 集計用に usage 系イベントを返す。subagent は invocation 単位 dedup。
 
     `subagent_start` (PostToolUse 由来) と `subagent_lifecycle_start` (SubagentStart 由来) は
@@ -257,9 +291,52 @@ def _filter_usage_events(events: list[dict]) -> list[dict]:
     `usage_invocation_events()` で `aggregate_subagent_metrics()` と同じ invocation 同定を行い、
     各 invocation の代表イベント 1 件だけを採用することで、subagent_ranking と
     total_events / daily_trend / project_breakdown を必ず一致させる。
+
+    period_cutoff: 指定時、rep event の timestamp が cutoff より過去 (= 第二段で
+    pull-back された boundary-straddling lifecycle-only invocation の rep) の場合、
+    headline metrics (`daily_trend` / `hourly_heatmap` / `project_breakdown`) に
+    pre-cutoff 日付が leak しないよう同 invocation の paired stop の timestamp で
+    上書きした synthetic rep を返す (codex round 4 / Issue #85)。
+    `aggregate_subagent_metrics` 側は別経路で raw events を受けるため影響なし。
     """
     skill_events = [ev for ev in events if ev.get("event_type") in _SKILL_USAGE_EVENT_TYPES]
-    return skill_events + usage_invocation_events(events)
+    rep_events = usage_invocation_events(events)
+    if period_cutoff is None:
+        return skill_events + rep_events
+
+    # rep の timestamp が cutoff より過去なら同 (session_id, subagent_type) バケットの
+    # 直後 stop の timestamp で synthesize し直す
+    stops_by_key: dict[tuple[str, str], list[dict]] = {}
+    for ev in events:
+        if ev.get("event_type") != "subagent_stop":
+            continue
+        key = (ev.get("session_id", ""), ev.get("subagent_type", ""))
+        stops_by_key.setdefault(key, []).append(ev)
+    for stops in stops_by_key.values():
+        stops.sort(key=lambda e: e.get("timestamp", ""))
+
+    adjusted: list[dict] = []
+    for rep in rep_events:
+        rep_ts = _parse_iso_utc(rep.get("timestamp", ""))
+        if rep_ts is None or rep_ts >= period_cutoff:
+            adjusted.append(rep)
+            continue
+        # cutoff より過去 → 同バケットで rep.ts 以降の最初の stop を探す
+        key = (rep.get("session_id", ""), rep.get("subagent_type", ""))
+        stop_match: Optional[dict] = None
+        for stop in stops_by_key.get(key, []):
+            stop_ts = _parse_iso_utc(stop.get("timestamp", ""))
+            if stop_ts is not None and stop_ts >= rep_ts and stop_ts >= period_cutoff:
+                stop_match = stop
+                break
+        if stop_match is not None:
+            # rep の timestamp のみ stop の timestamp で上書き (project / subagent_type 等は維持)
+            adjusted.append({**rep, "timestamp": stop_match["timestamp"]})
+        else:
+            # paired stop が見つからない → そのまま (defensive: stage 2 で pull-back されたなら
+            # 必ず paired stop が同バケットに居るはずだが、想定外データ形にも壊れない)
+            adjusted.append(rep)
+    return skill_events + adjusted
 
 
 def _now_iso() -> str:
@@ -1050,7 +1127,17 @@ def build_dashboard_data(
     # (INVOCATION_MERGE_WINDOW_SECONDS = 1.0s) と同じ window で動くので再脱落しない
     # (TestFilterEventsByPeriod::test_three_stage_filter_survives_filter_usage_events).
     period_events_raw = _filter_events_by_period(events, period, now=now)
-    period_events_usage = _filter_usage_events(period_events_raw)
+    # codex round 4 / Issue #85: boundary-straddling lifecycle-only invocation で
+    # rep event (= subagent_lifecycle_start) が pre-cutoff な場合、headline metrics
+    # (`daily_trend` / `hourly_heatmap` / `project_breakdown`) に pre-cutoff 日付が
+    # leak しないよう、_filter_usage_events に period cutoff を渡して rep ts を
+    # paired stop で上書きする。`period == "all"` / 不正値 → cutoff=None で無効。
+    _period_days = _PERIOD_DELTAS.get(period)
+    _now_ref = now if now is not None else datetime.now(timezone.utc)
+    _period_cutoff = (
+        _now_ref - timedelta(days=_period_days) if _period_days is not None else None
+    )
+    period_events_usage = _filter_usage_events(period_events_raw, period_cutoff=_period_cutoff)
 
     # Quality / Surface 系は常に全期間。permission_breakdowns は raw events に適用。
     permission_breakdowns = aggregate_permission_breakdowns(events)

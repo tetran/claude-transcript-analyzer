@@ -47,8 +47,17 @@
         });
         // call-time lookup: 05_period.js 評価時に __liveDiff 未定義のため。
         // optional chaining で no-op safe (IIFE 評価中の captured 参照を取らない)。
-        if (typeof window !== "undefined" && window.__liveDiff && typeof window.__liveDiff.scheduleLoadAndRender === "function") {
-          window.__liveDiff.scheduleLoadAndRender();
+        if (typeof window !== "undefined" && window.__liveDiff) {
+          // codex round 4 / Issue #85: period 切替時は __livePrev を reset。
+          // 前 period の snapshot が新 period の snapshot と diff されると false
+          // burst (skill / project / event 数の正の delta) が立って toast / highlight
+          // が誤発火するため、scheduleLoadAndRender の前に必ず clear する。
+          if (typeof window.__liveDiff.resetLiveSnapshot === "function") {
+            window.__liveDiff.resetLiveSnapshot();
+          }
+          if (typeof window.__liveDiff.scheduleLoadAndRender === "function") {
+            window.__liveDiff.scheduleLoadAndRender();
+          }
         }
       });
     });
