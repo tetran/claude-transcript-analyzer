@@ -717,16 +717,42 @@ class TestPeriodToggleTemplate:
         assert 'role="group"' in template
         assert 'aria-label="集計期間"' in template
 
-    def test_period_toggle_inside_page_nav(self, tmp_path):
-        """toggle が `<nav class="page-nav">` 内に配置 (router 契約に乗っかる)."""
+    def test_period_toggle_initial_in_overview_header(self, tmp_path):
+        """toggle DOM の初期配置は Overview の `<header class="header">` 内 (右端 slot)。
+
+        Issue #85 follow-up: トグルは各 page header と同じ行の右端に表示する仕様.
+        DOM は 1 つで、JS が hashchange で active page slot へ move する。
+        """
         mod = self._mod(tmp_path)
         template = mod._build_html_template()
-        # nav 開始から toggle までが nav 終了より前
-        nav_start = template.find('<nav class="page-nav"')
+        # Overview slot anchor が存在し、その近傍に toggle が居ること
+        overview_slot_pos = template.find('data-period-slot="overview"')
         toggle_pos = template.find('id="periodToggle"')
-        nav_end = template.find('</nav>', nav_start)
-        assert nav_start != -1 and toggle_pos != -1 and nav_end != -1
-        assert nav_start < toggle_pos < nav_end, "#periodToggle が page-nav の外にある"
+        assert overview_slot_pos != -1, "Overview header の data-period-slot=overview slot が無い"
+        assert toggle_pos != -1, "#periodToggle DOM が無い"
+        # toggle は Overview slot の中 (近傍) に居る
+        assert overview_slot_pos < toggle_pos, \
+            "toggle が Overview slot より前にある (slot 内に入っていない可能性)"
+        # かつ Overview の `<section data-page="overview">` 終端より前
+        overview_section_end = template.find('</section><!-- /data-page="overview"')
+        assert overview_section_end != -1, "Overview section 終端コメントが無い"
+        assert toggle_pos < overview_section_end, \
+            "#periodToggle が Overview section の外 (header 配置に失敗している)"
+
+    def test_patterns_header_has_empty_period_slot(self, tmp_path):
+        """Patterns header に `data-period-slot="patterns"` の空 slot が居る (move 先)."""
+        mod = self._mod(tmp_path)
+        template = mod._build_html_template()
+        assert 'data-period-slot="patterns"' in template, \
+            "Patterns header に data-period-slot=patterns slot が無い"
+
+    def test_period_toggle_moved_via_hashchange_listener(self, tmp_path):
+        """05_period.js が hashchange listener で active page slot に DOM を move する."""
+        mod = self._mod(tmp_path)
+        bundle = mod._concat_main_js()
+        # listener 登録があること + slot selector を使っていること
+        assert "hashchange" in bundle, "05_period.js に hashchange listener が無い"
+        assert "data-period-slot" in bundle, "data-period-slot selector が JS に無い"
 
     def test_period_toggle_hidden_on_quality_and_surface_pages_via_css(self, tmp_path):
         """page-scoped CSS 非表示 rule が assembled template に含まれる."""

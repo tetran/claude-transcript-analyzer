@@ -63,16 +63,44 @@
     });
   }
 
+  // Issue #85 follow-up: トグル DOM (1 つだけ) を active page の header slot に
+  // move する。router (00_router.js) の hashchange listener が body.dataset.activePage
+  // を先に更新してから、本 listener が走る (登録順 = 評価順)。Quality / Surface には
+  // slot が無いので move せず、page-scoped CSS rule で display:none に倒す。
+  function movePeriodToggleToActivePage() {
+    if (typeof document === "undefined") return;
+    const toggle = document.getElementById("periodToggle");
+    if (!toggle) return;
+    const activePage = (document.body && document.body.dataset)
+      ? (document.body.dataset.activePage || "overview")
+      : "overview";
+    if (activePage !== "overview" && activePage !== "patterns") return;
+    const slot = document.querySelector('[data-period-slot="' + activePage + '"]');
+    if (slot && toggle.parentNode !== slot) {
+      slot.appendChild(toggle);
+    }
+  }
+
   if (typeof window !== "undefined") {
     window.__period = {
       getCurrentPeriod: getCurrentPeriod,
       setCurrentPeriod: setCurrentPeriod,
       wirePeriodToggle: wirePeriodToggle,
+      movePeriodToggleToActivePage: movePeriodToggleToActivePage,
     };
+    // hashchange は router IIFE (00_router.js) の listener と同 phase だが
+    // addEventListener 順 = 発火順なので、router が body.dataset.activePage を
+    // 先に更新する → 本 listener が新 active page を読んで slot に move する。
+    if (typeof window.addEventListener === "function") {
+      window.addEventListener("hashchange", movePeriodToggleToActivePage);
+    }
   }
 
   // shell.html の DOM が読み込まれた後に wire する。70_init_eventsource.js の
   // 初回 scheduleLoadAndRender() より早く動かす必要があるが、wrapping IIFE 内
   // は同期評価で進むので 70 番までに wirePeriodToggle が呼ばれていれば OK。
   wirePeriodToggle();
+  // 初回も active page に応じた slot に置く (Overview slot が初期配置だが、
+  // hash が #/patterns で起動した場合は Patterns slot に move する)。
+  movePeriodToggleToActivePage();
 
