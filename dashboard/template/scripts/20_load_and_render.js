@@ -1,9 +1,14 @@
   async function loadAndRender() {
   let data;
   try {
+    // Issue #85: period toggle 値を毎 fetch 時に評価して URL に載せる。
+    // 関数参照を IIFE 評価時に capture せず call-time lookup する形なので、
+    // toggle 切替直後の SSE refresh も新 period で fetch される (race-free)。
+    const __periodVal = (typeof getCurrentPeriod === 'function') ? getCurrentPeriod() : 'all';
+    const __apiUrl = '/api/data?period=' + encodeURIComponent(__periodVal);
     data = (typeof window.__DATA__ !== 'undefined')
       ? window.__DATA__
-      : await (await fetch('/api/data', { cache: 'no-store' })).json();
+      : await (await fetch(__apiUrl, { cache: 'no-store' })).json();
   } catch (e) {
     console.error('データの読み込みに失敗しました:', e);
     return;

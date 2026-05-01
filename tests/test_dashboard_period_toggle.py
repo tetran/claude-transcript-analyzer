@@ -761,6 +761,23 @@ console.log(JSON.stringify({ initial }));
         assert out["initial"] == "all", f"getCurrentPeriod() の初期値が 'all' でない: {out}"
 
 
+class TestPeriodAwareFetch:
+    """Step 5: fetch 経路で period query を載せる."""
+
+    def _mod(self, tmp_path):
+        return load_dashboard_module(tmp_path / "nonexistent.jsonl")
+
+    def test_load_and_render_uses_period_query(self, tmp_path):
+        """20_load_and_render.js の concat 結果に '/api/data?period=' + getCurrentPeriod() (or 等価) が含まれる."""
+        mod = self._mod(tmp_path)
+        bundle = mod._concat_main_js()
+        # 現状の 'fetch(\'/api/data\'' / "fetch('/api/data'" は無く、period query を含む形であること
+        assert "fetch('/api/data'," not in bundle and 'fetch("/api/data",' not in bundle, \
+            "period 不在の fetch('/api/data', ...) が残っている"
+        assert "/api/data?period=" in bundle, "fetch URL に '?period=' が無い"
+        assert "getCurrentPeriod" in bundle
+
+
 class TestConcatMainJsByteInvariant:
     """Step 4a: `_concat_main_js()` helper 切り出し refactor の byte-identical 不変条件."""
 
