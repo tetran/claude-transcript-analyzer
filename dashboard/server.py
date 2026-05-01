@@ -1030,8 +1030,29 @@ def load_health_alerts() -> list[dict]:
     return alerts[-_MAX_ALERTS:]
 
 
-def build_dashboard_data(events: list[dict]) -> dict:
-    usage_events = _filter_usage_events(events)
+def build_dashboard_data(
+    events: list[dict],
+    period: str = "all",
+    *,
+    now: Optional[datetime] = None,
+) -> dict:
+    """ダッシュボード API レスポンスを生成する (Issue #85: period toggle 対応).
+
+    period: "7d" / "30d" / "90d" / "all" (それ以外は "all" 相当)。
+      Overview / Patterns / KPI counter の 11 field は period 適用後の events で集計する。
+      Quality / Surface / session_stats の 8 field は **常に全期間** で集計する (period 不変)。
+    now: test 注入用。指定時は last_updated もこの値で override する (drift guard test 用途)。
+    """
+    # period 適用 view と未 filter view の二経路で aggregator に渡す。
+    # period_events_raw: timestamp + 三段 pair-straddling filter 適用後の raw events.
+    # period_events_usage: period_events_raw に _filter_usage_events (subagent invocation dedup) を適用後.
+    # 三段で再 include した stop event は _filter_usage_events の dedup window
+    # (INVOCATION_MERGE_WINDOW_SECONDS = 1.0s) と同じ window で動くので再脱落しない
+    # (TestFilterEventsByPeriod::test_three_stage_filter_survives_filter_usage_events).
+    period_events_raw = _filter_events_by_period(events, period, now=now)
+    period_events_usage = _filter_usage_events(period_events_raw)
+
+    # Quality / Surface 系は常に全期間。permission_breakdowns は raw events に適用。
     permission_breakdowns = aggregate_permission_breakdowns(events)
 
     # Issue #81 — Overview KPI 上段の "unique kinds" カウンタは TOP_N=10 cap を効かせない全件カウント。
@@ -1039,31 +1060,34 @@ def build_dashboard_data(events: list[dict]) -> dict:
     # filter / dedup 慣習は aggregate_skills / aggregate_subagent_metrics / aggregate_projects と一致させる
     # (drift guard は test_dashboard.py::TestBuildDashboardData の `*_matches_*_when_below_cap`)。
     skill_kinds_set: set[str] = set()
-    for ev in events:
+    for ev in period_events_raw:
         if ev.get("event_type") in ("skill_tool", "user_slash_command"):
             name = ev.get("skill", "")
             if name:
                 skill_kinds_set.add(name)
-    subagent_kinds_total = len(aggregate_subagent_metrics(events))
+    subagent_kinds_total = len(aggregate_subagent_metrics(period_events_raw))
     project_kinds_set: set[str] = set()
-    for ev in usage_events:
+    for ev in period_events_usage:
         project = ev.get("project", "")
         if project:
             project_kinds_set.add(project)
 
+    last_updated = now.isoformat() if now is not None else _now_iso()
+
     return {
-        "last_updated": _now_iso(),
-        "total_events": len(usage_events),
-        "skill_ranking": aggregate_skills(events),
-        "subagent_ranking": aggregate_subagents(events),
+        "last_updated": last_updated,
+        "total_events": len(period_events_usage),
+        "skill_ranking": aggregate_skills(period_events_raw),
+        "subagent_ranking": aggregate_subagents(period_events_raw),
         "skill_kinds_total": len(skill_kinds_set),
         "subagent_kinds_total": subagent_kinds_total,
         "project_total": len(project_kinds_set),
-        "daily_trend": aggregate_daily(usage_events),
-        "project_breakdown": aggregate_projects(usage_events),
-        "hourly_heatmap": aggregate_hourly_heatmap(usage_events),
-        "skill_cooccurrence": aggregate_skill_cooccurrence(events),
-        "project_skill_matrix": aggregate_project_skill_matrix(events),
+        # Issue #85: daily_trend stays in period-applied set despite frontend-deprecation (Issue #65)
+        "daily_trend": aggregate_daily(period_events_usage),
+        "project_breakdown": aggregate_projects(period_events_usage),
+        "hourly_heatmap": aggregate_hourly_heatmap(period_events_usage),
+        "skill_cooccurrence": aggregate_skill_cooccurrence(period_events_raw),
+        "project_skill_matrix": aggregate_project_skill_matrix(period_events_raw),
         "subagent_failure_trend": aggregate_subagent_failure_trend(events),
         "permission_prompt_skill_breakdown": permission_breakdowns["skill"],
         "permission_prompt_subagent_breakdown": permission_breakdowns["subagent"],
@@ -1071,8 +1095,9 @@ def build_dashboard_data(events: list[dict]) -> dict:
         "session_stats": aggregate_session_stats(events),
         "health_alerts": load_health_alerts(),
         "skill_invocation_breakdown": aggregate_skill_invocation_breakdown(events),
-        "skill_lifecycle": aggregate_skill_lifecycle(events),
-        "skill_hibernating": aggregate_skill_hibernating(events),
+        "skill_lifecycle": aggregate_skill_lifecycle(events, now=now),
+        "skill_hibernating": aggregate_skill_hibernating(events, now=now),
+        "period_applied": period if period in _PERIOD_DELTAS or period == "all" else "all",
     }
 
 

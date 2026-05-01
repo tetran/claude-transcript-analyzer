@@ -253,3 +253,153 @@ class TestFilterEventsByPeriod:
         ]
         out = mod._filter_events_by_period(events, "wat", now=_FIXED_NOW)
         assert out == events
+
+
+def _make_event_set_for_period_test(now: datetime) -> list[dict]:
+    """Step 2 / 7 で再利用する mixed events.
+
+    - 8 日前 skill_tool (period=7d で消える)
+    - 1 日前 skill_tool (period=7d でも残る)
+    - 8 日前 subagent_start + paired stop (period=7d で消える)
+    - 1 日前 subagent_start + paired stop (period=7d でも残る)
+    - 60 日前 skill_tool (compact_density / lifecycle 入力用 = 全期間 field 側)
+    - 90 日前 compact_start (compact_density / session_stats 用 = 全期間)
+    """
+    return [
+        {"event_type": "skill_tool", "skill": "old", "project": "p1", "session_id": "s_old",
+         "timestamp": _ts(now, days=8)},
+        {"event_type": "skill_tool", "skill": "fresh", "project": "p1", "session_id": "s_fresh",
+         "timestamp": _ts(now, days=1)},
+        {"event_type": "subagent_start", "subagent_type": "Old", "project": "p1", "session_id": "s_old",
+         "tool_use_id": "t_old", "timestamp": _ts(now, days=8, seconds=-1), "duration_ms": 1000,
+         "success": True},
+        {"event_type": "subagent_stop", "subagent_type": "Old", "project": "p1", "session_id": "s_old",
+         "timestamp": _ts(now, days=8)},
+        {"event_type": "subagent_start", "subagent_type": "Fresh", "project": "p1", "session_id": "s_fresh",
+         "tool_use_id": "t_fresh", "timestamp": _ts(now, days=1, seconds=-1), "duration_ms": 1000,
+         "success": True},
+        {"event_type": "subagent_stop", "subagent_type": "Fresh", "project": "p1", "session_id": "s_fresh",
+         "timestamp": _ts(now, days=1)},
+        {"event_type": "skill_tool", "skill": "skill60d", "project": "p2", "session_id": "s60",
+         "timestamp": _ts(now, days=60)},
+        {"event_type": "compact_start", "trigger": "auto", "project": "p1", "session_id": "s_c",
+         "timestamp": _ts(now, days=90)},
+        {"event_type": "session_start", "source": "startup", "project": "p1", "session_id": "s_old",
+         "timestamp": _ts(now, days=8, seconds=-2)},
+    ]
+
+
+class TestBuildDashboardDataWithPeriod:
+    """Step 2: build_dashboard_data(period=...) — 11 field period 適用 / 8 field 不変 / period_applied echo."""
+
+    def _mod(self, tmp_path):
+        return load_dashboard_module(tmp_path / "nonexistent.jsonl")
+
+    def test_period_applied_echo_in_response(self, tmp_path):
+        mod = self._mod(tmp_path)
+        data = mod.build_dashboard_data([], period="7d", now=_FIXED_NOW)
+        assert data["period_applied"] == "7d"
+
+    def test_period_all_legacy_signature_equivalence(self, tmp_path):
+        """period 引数省略 (= legacy) と period='all' が完全一致すること (last_updated 込み)."""
+        mod = self._mod(tmp_path)
+        events = _make_event_set_for_period_test(_FIXED_NOW)
+        legacy = mod.build_dashboard_data(events, now=_FIXED_NOW)
+        explicit_all = mod.build_dashboard_data(events, period="all", now=_FIXED_NOW)
+        # period_applied は legacy にも出る (= "all" がデフォルト)
+        assert legacy == explicit_all
+
+    def test_period_7d_shrinks_period_applied_fields(self, tmp_path):
+        """period=7d で period 適用 11 field 全てから 8 日前 event が消える."""
+        mod = self._mod(tmp_path)
+        events = _make_event_set_for_period_test(_FIXED_NOW)
+        data_all = mod.build_dashboard_data(events, period="all", now=_FIXED_NOW)
+        data_7d = mod.build_dashboard_data(events, period="7d", now=_FIXED_NOW)
+
+        # 1) total_events: all=2 skill + 2 subagent invocation = 4 (60d / 90d 系は除外); 7d=1 skill + 1 subagent = 2
+        assert data_all["total_events"] > data_7d["total_events"]
+        assert data_7d["total_events"] == 2
+
+        # 2) skill_ranking: 7d 側に "old" / "skill60d" が含まれない
+        skill_names_7d = {r["name"] for r in data_7d["skill_ranking"]}
+        assert "old" not in skill_names_7d
+        assert "skill60d" not in skill_names_7d
+        assert "fresh" in skill_names_7d
+
+        # 3) subagent_ranking: 7d 側に "Old" が含まれない
+        sub_names_7d = {r["name"] for r in data_7d["subagent_ranking"]}
+        assert "Old" not in sub_names_7d
+        assert "Fresh" in sub_names_7d
+
+        # 4) skill_kinds_total
+        assert data_all["skill_kinds_total"] > data_7d["skill_kinds_total"]
+        assert data_7d["skill_kinds_total"] == 1
+
+        # 5) subagent_kinds_total
+        assert data_all["subagent_kinds_total"] > data_7d["subagent_kinds_total"]
+        assert data_7d["subagent_kinds_total"] == 1
+
+        # 6) project_total: 7d で p2 (60d skill) が消える
+        assert data_7d["project_total"] == 1
+
+        # 7) daily_trend: 7d で 8d 前の bucket が消える
+        dates_7d = {r["date"] for r in data_7d["daily_trend"]}
+        eight_days_ago = (_FIXED_NOW - timedelta(days=8)).isoformat()[:10]
+        assert eight_days_ago not in dates_7d
+
+        # 8) project_breakdown
+        projs_7d = {r["project"] for r in data_7d["project_breakdown"]}
+        assert "p2" not in projs_7d
+
+        # 9) hourly_heatmap: 7d 適用後の bucket 件数が all より少ない
+        # (heatmap は events を rebucket するので長さでなく合計 count で比較)
+        assert sum(b["count"] for b in data_7d["hourly_heatmap"]["buckets"]) < \
+            sum(b["count"] for b in data_all["hourly_heatmap"]["buckets"])
+
+        # 10) skill_cooccurrence: 7d / all で差が出ない場合 (events 構成上 pair が無い) は両方 [] でも OK
+        assert isinstance(data_7d["skill_cooccurrence"], list)
+
+        # 11) project_skill_matrix: 7d で p2 が消える
+        if isinstance(data_7d["project_skill_matrix"], dict) and "rows" in data_7d["project_skill_matrix"]:
+            projects_in_matrix = {r["project"] for r in data_7d["project_skill_matrix"]["rows"]}
+            assert "p2" not in projects_in_matrix
+
+    def test_full_period_fields_unchanged_across_periods(self, tmp_path):
+        """全期間 8 field は period に関わらず同一 (drift guard)."""
+        mod = self._mod(tmp_path)
+        events = _make_event_set_for_period_test(_FIXED_NOW)
+        data_all = mod.build_dashboard_data(events, period="all", now=_FIXED_NOW)
+        data_7d = mod.build_dashboard_data(events, period="7d", now=_FIXED_NOW)
+
+        full_period_fields = [
+            "subagent_failure_trend",
+            "permission_prompt_skill_breakdown",
+            "permission_prompt_subagent_breakdown",
+            "compact_density",
+            "session_stats",
+            "skill_invocation_breakdown",
+            "skill_lifecycle",
+            "skill_hibernating",
+        ]
+        for field in full_period_fields:
+            assert data_all[field] == data_7d[field], \
+                f"全期間 field {field} が period 切替で drift している"
+
+    def test_now_kwarg_overrides_last_updated(self, tmp_path):
+        """now= 引数を渡したとき last_updated もそれで override される (Step 7 drift guard 用)."""
+        mod = self._mod(tmp_path)
+        data = mod.build_dashboard_data([], period="all", now=_FIXED_NOW)
+        assert data["last_updated"] == _FIXED_NOW.isoformat()
+
+
+class TestPeriodSentinelDocstring:
+    """Issue #85 sentinel pin (plan §3 Step 2 iter5 advisory #3).
+
+    `aggregate_daily(period_events_usage)` 呼び出し直前のコメントが残ることを保証する。
+    rebase / refactor で削除されると detection 不可になるリスクを test で塞ぐ。
+    """
+
+    def test_issue_85_daily_trend_sentinel(self):
+        source = (Path(__file__).parent.parent / "dashboard" / "server.py").read_text(encoding="utf-8")
+        assert "Issue #85: daily_trend stays in period-applied set" in source, \
+            "Issue #85 sentinel comment が dashboard/server.py から消えている"

@@ -210,6 +210,9 @@ def _pair_invocations_with_stops(
         sequential 1:1 だと「2 succeeded starts (W1, W2) + 1 failed stop (W2)」のような
         入力で stop[0] が start[0] にマッチし failure が earlier 週へ shift する
         cross-week 誤 attribute が起きるため、timestamp で window を切って防ぐ
+
+    Note: dashboard/server.py:_filter_events_by_period 第三段 mirrors this pairing rule.
+          Keep in sync.
     """
     paired_stops = len(invocations) == len(stops_sorted)
     if paired_stops:
