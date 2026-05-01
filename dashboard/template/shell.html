@@ -39,6 +39,19 @@ __INCLUDE_STYLES__
           <span class="num" id="ledeProjects">—</span> projects
         </div>
       </div>
+      <!-- Issue #85: 期間トグル slot (Overview / Patterns 各 header に配置)。
+           toggle DOM は 1 つで、router の active page 切替に応じて
+           05_period.js が該当 slot に move する。Quality / Surface 表示時は
+           移動先が無く、page-scoped CSS rule で display:none に倒す。
+           static export 経路では 05_period.js 内で hidden 属性を立てる。 -->
+      <div class="period-toggle-slot" data-period-slot="overview">
+        <div class="period-toggle" id="periodToggle" role="group" aria-label="集計期間">
+          <button type="button" data-period="7d" aria-pressed="false">7d</button>
+          <button type="button" data-period="30d" aria-pressed="false">30d</button>
+          <button type="button" data-period="90d" aria-pressed="false">90d</button>
+          <button type="button" data-period="all" aria-pressed="true">全期間</button>
+        </div>
+      </div>
     </header>
 
     <div class="kpi-row" id="kpiRow"></div>
@@ -129,6 +142,9 @@ __INCLUDE_STYLES__
           <h1 id="page-patterns-title"><span class="accent">Patterns</span></h1>
           <p class="lede">利用パターンを可視化します。</p>
         </div>
+        <!-- Issue #85: 期間トグル slot (空)。05_period.js が hashchange で
+             Overview slot から #periodToggle を move してくる。 -->
+        <div class="period-toggle-slot" data-period-slot="patterns"></div>
       </header>
 
       <div class="panel" id="patterns-heatmap-panel">

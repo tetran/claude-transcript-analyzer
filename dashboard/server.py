@@ -17,6 +17,7 @@ from typing import Callable, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from subagent_metrics import (
+    INVOCATION_MERGE_WINDOW_SECONDS,
     aggregate_subagent_failure_trend,
     aggregate_subagent_metrics,
     usage_invocation_events,
@@ -99,7 +100,190 @@ _SKILL_USAGE_EVENT_TYPES = frozenset({
 })
 
 
-def _filter_usage_events(events: list[dict]) -> list[dict]:
+_PERIOD_DELTAS = {"7d": 7, "30d": 30, "90d": 90}
+
+
+def _filter_events_by_period(
+    events: list[dict],
+    period: str,
+    *,
+    now: Optional[datetime] = None,
+) -> list[dict]:
+    """Overview / Patterns aggregator にのみ渡す view を返す。Quality / Surface aggregator は unfiltered events を受ける (Issue #85 plan §3 Step 1).
+
+    使い分け契約 (Quality / Surface 系の filtering を防ぐため、build_dashboard_data の call site で
+    本 helper を呼ばないことで対応する。本 helper は誤用防止のため call site でのみ使う):
+      - period 適用 11 field (KPI 4 + Overview 4 + Patterns 3) には本 view を渡す
+      - 全期間 8 field (Quality 4 + Surface 3 + session_stats) には未 filter events を渡す
+
+    `period` が allow-list (`7d` / `30d` / `90d` / `all`) 以外、または `all` のときは
+    events を index 同値で返す (parse 不能 timestamp も保持)。
+
+    period ∈ {7d, 30d, 90d} のときは二段 filter:
+
+      第一段 (rolling window): `cutoff <= ts <= now` の event を保持。
+         timestamp 不在 / 不正 / `ts > now` (clock skew) → drop。
+         `cutoff = now - timedelta(days=N)`。
+
+      第二段 (canonical invocation/pair propagation): 各 (session_id, subagent_type)
+         バケットを `subagent_metrics._build_invocations` と同等のロジックで
+         canonical invocation 列に再構成し (`subagent_start` / `subagent_lifecycle_start`
+         を `INVOCATION_MERGE_WINDOW_SECONDS` 以内 + 異なる source なら 1 invocation
+         に merge)、各 invocation の paired stop は `_pair_invocations_with_stops`
+         同等の窓 (`[anchor_ts, next_anchor_ts)`) で配り当てる。
+         pair (= invocation の全 event + paired stop) のうち 1 event でも第一段で
+         kept なら、pair 内全 event を再 include する。
+         これにより `failure_rate` / `avg_duration_ms` / pXX duration が period
+         boundary 跨ぎで silent drift しないことを構造的に保証する。
+         clock skew で `ts > now` と落ちた stop は第一段の排除を尊重し、
+         pair 一括 include の対象から除外する (codex round 2 / Issue #85)。
+
+    Mirrors subagent_metrics._build_invocations + _pair_invocations_with_stops
+    semantics. Keep in sync.
+    """
+    if now is None:
+        now = datetime.now(timezone.utc)
+    days = _PERIOD_DELTAS.get(period)
+    if days is None:
+        return list(events)
+    cutoff = now - timedelta(days=days)
+
+    parsed_idx: dict[int, datetime] = {}
+    for i, ev in enumerate(events):
+        ts = _parse_iso_utc(ev.get("timestamp", ""))
+        if ts is not None:
+            parsed_idx[i] = ts
+
+    kept: set[int] = set()
+    for i, ts in parsed_idx.items():
+        if cutoff <= ts <= now:
+            kept.add(i)
+
+    # 第二段 + 第三段は (session_id, subagent_type) バケット単位で動かす
+    bucket_indices: dict[tuple[str, str], list[int]] = {}
+    for i, ev in enumerate(events):
+        if ev.get("event_type") not in (
+            "subagent_start",
+            "subagent_lifecycle_start",
+            "subagent_stop",
+        ):
+            continue
+        if i not in parsed_idx:
+            continue
+        key = (ev.get("session_id", ""), ev.get("subagent_type", ""))
+        bucket_indices.setdefault(key, []).append(i)
+
+    # bucket は timestamp 順に並べておく
+    for indices in bucket_indices.values():
+        indices.sort(key=lambda idx: parsed_idx[idx])
+
+    # 第二段 + 第三段: 各 bucket を `_build_invocations` の canonical pairing で再構成し、
+    # kept event を含む invocation/pair に属する全 event を再 include。
+    #
+    # Round 2 fix (codex): 旧実装は kept anchor ごとに「sibling/stop を距離 1s 以内で 1 件
+    # 引っ張る」素朴版だったが、隣接 invocation の sibling を不当に pull してしまう
+    # ケース (start_A/lifecycle_A @ cutoff-0.4s + start_B/lifecycle_B @ cutoff+0.4s)
+    # と、未来日付 stop (clock skew で第一段で `ts > now` と drop されたもの) を
+    # 第三段が pull-back するケース両方を検出。canonical pairing に揃えて
+    # 構造的に塞ぐ。
+    _START_ETS = ("subagent_start", "subagent_lifecycle_start")
+    for indices in bucket_indices.values():
+        # `_build_invocations` を mirror: source 重複を merge せず、近接 sibling を 1 invocation 化
+        invocations: list[list[int]] = []  # 各 invocation は event index list
+        last_ts: Optional[datetime] = None
+        last_sources: set[str] = set()
+        for i in indices:
+            et = events[i].get("event_type")
+            if et == "subagent_stop":
+                continue  # 第二段は start/lifecycle のみで pairing
+            source = "start" if et == "subagent_start" else "lifecycle"
+            ts_i = parsed_idx[i]
+            merged = False
+            if (
+                invocations
+                and last_ts is not None
+                and source not in last_sources
+                and abs((ts_i - last_ts).total_seconds()) <= INVOCATION_MERGE_WINDOW_SECONDS
+            ):
+                invocations[-1].append(i)
+                last_sources.add(source)
+                merged = True
+            if not merged:
+                invocations.append([i])
+                last_sources = {source}
+            last_ts = ts_i
+
+        # invocation 境界 (anchor.ts) を求めて stops を canonical pairing で配り当て。
+        # `subagent_metrics._pair_invocations_with_stops` の semantics を mirror:
+        #   - 件数一致 (`len(invocations) == len(stops)`) → sequential 1:1 zip
+        #     (重複発火扱い、timestamp 検査なし。delayed/overlapping stops を許容)
+        #   - 件数不一致:
+        #     - `start.success=False` (start 由来 invocation) → stop プール非消費 / paired=None
+        #     - その他 → timestamp-window: `[anchor_ts, next_anchor_ts)` で最初の未消費 stop
+        inv_anchor_ts: list[datetime] = []
+        for inv_idx_list in invocations:
+            # anchor = subagent_start 優先, 無ければ lifecycle (canonical rep 選択)
+            anchor_idx = next(
+                (j for j in inv_idx_list if events[j].get("event_type") == "subagent_start"),
+                inv_idx_list[0],
+            )
+            inv_anchor_ts.append(parsed_idx[anchor_idx])
+
+        stops_in_bucket = sorted(
+            (j for j in indices if events[j].get("event_type") == "subagent_stop"),
+            key=lambda j: parsed_idx[j],
+        )
+        inv_paired_stop: list[Optional[int]] = [None] * len(invocations)
+        if len(invocations) == len(stops_in_bucket):
+            # 件数一致 → sequential 1:1 (canonical の "重複発火扱い" 分岐)
+            for i in range(len(invocations)):
+                inv_paired_stop[i] = stops_in_bucket[i]
+        else:
+            # 件数不一致 → timestamp-window pairing
+            # start.success=False の invocation は stop プールを消費しない。
+            stop_consumed = [False] * len(stops_in_bucket)
+            for i, anchor_ts in enumerate(inv_anchor_ts):
+                # canonical も start.success=False は stop パスを消費しない
+                start_idx = next(
+                    (j for j in invocations[i] if events[j].get("event_type") == "subagent_start"),
+                    None,
+                )
+                if start_idx is not None and events[start_idx].get("success") is False:
+                    continue
+                next_anchor_ts = inv_anchor_ts[i + 1] if i + 1 < len(inv_anchor_ts) else None
+                for j_pos, stop_idx in enumerate(stops_in_bucket):
+                    if stop_consumed[j_pos]:
+                        continue
+                    stop_ts = parsed_idx[stop_idx]
+                    if stop_ts < anchor_ts:
+                        continue
+                    if next_anchor_ts is not None and stop_ts >= next_anchor_ts:
+                        continue
+                    stop_consumed[j_pos] = True
+                    inv_paired_stop[i] = stop_idx
+                    break
+
+        # canonical invocation/pair 単位で kept 伝播:
+        #   pair 内のいずれかの event が kept なら全員 kept
+        # ただし stop 第一段 drop 理由が `ts > now` (= future-dated, clock skew)
+        # の場合は pull-back せず — 第一段の `ts > now` 排除を尊重する。
+        for i, inv_idx_list in enumerate(invocations):
+            paired_stop_idx = inv_paired_stop[i]
+            members = list(inv_idx_list)
+            if paired_stop_idx is not None and parsed_idx[paired_stop_idx] <= now:
+                members.append(paired_stop_idx)
+            if any(j in kept for j in members):
+                for j in members:
+                    kept.add(j)
+
+    return [ev for i, ev in enumerate(events) if i in kept]
+
+
+def _filter_usage_events(
+    events: list[dict],
+    *,
+    period_cutoff: Optional[datetime] = None,
+) -> list[dict]:
     """headline 集計用に usage 系イベントを返す。subagent は invocation 単位 dedup。
 
     `subagent_start` (PostToolUse 由来) と `subagent_lifecycle_start` (SubagentStart 由来) は
@@ -107,9 +291,52 @@ def _filter_usage_events(events: list[dict]) -> list[dict]:
     `usage_invocation_events()` で `aggregate_subagent_metrics()` と同じ invocation 同定を行い、
     各 invocation の代表イベント 1 件だけを採用することで、subagent_ranking と
     total_events / daily_trend / project_breakdown を必ず一致させる。
+
+    period_cutoff: 指定時、rep event の timestamp が cutoff より過去 (= 第二段で
+    pull-back された boundary-straddling lifecycle-only invocation の rep) の場合、
+    headline metrics (`daily_trend` / `hourly_heatmap` / `project_breakdown`) に
+    pre-cutoff 日付が leak しないよう同 invocation の paired stop の timestamp で
+    上書きした synthetic rep を返す (codex round 4 / Issue #85)。
+    `aggregate_subagent_metrics` 側は別経路で raw events を受けるため影響なし。
     """
     skill_events = [ev for ev in events if ev.get("event_type") in _SKILL_USAGE_EVENT_TYPES]
-    return skill_events + usage_invocation_events(events)
+    rep_events = usage_invocation_events(events)
+    if period_cutoff is None:
+        return skill_events + rep_events
+
+    # rep の timestamp が cutoff より過去なら同 (session_id, subagent_type) バケットの
+    # 直後 stop の timestamp で synthesize し直す
+    stops_by_key: dict[tuple[str, str], list[dict]] = {}
+    for ev in events:
+        if ev.get("event_type") != "subagent_stop":
+            continue
+        key = (ev.get("session_id", ""), ev.get("subagent_type", ""))
+        stops_by_key.setdefault(key, []).append(ev)
+    for stops in stops_by_key.values():
+        stops.sort(key=lambda e: e.get("timestamp", ""))
+
+    adjusted: list[dict] = []
+    for rep in rep_events:
+        rep_ts = _parse_iso_utc(rep.get("timestamp", ""))
+        if rep_ts is None or rep_ts >= period_cutoff:
+            adjusted.append(rep)
+            continue
+        # cutoff より過去 → 同バケットで rep.ts 以降の最初の stop を探す
+        key = (rep.get("session_id", ""), rep.get("subagent_type", ""))
+        stop_match: Optional[dict] = None
+        for stop in stops_by_key.get(key, []):
+            stop_ts = _parse_iso_utc(stop.get("timestamp", ""))
+            if stop_ts is not None and stop_ts >= rep_ts and stop_ts >= period_cutoff:
+                stop_match = stop
+                break
+        if stop_match is not None:
+            # rep の timestamp のみ stop の timestamp で上書き (project / subagent_type 等は維持)
+            adjusted.append({**rep, "timestamp": stop_match["timestamp"]})
+        else:
+            # paired stop が見つからない → そのまま (defensive: stage 2 で pull-back されたなら
+            # 必ず paired stop が同バケットに居るはずだが、想定外データ形にも壊れない)
+            adjusted.append(rep)
+    return skill_events + adjusted
 
 
 def _now_iso() -> str:
@@ -880,8 +1107,39 @@ def load_health_alerts() -> list[dict]:
     return alerts[-_MAX_ALERTS:]
 
 
-def build_dashboard_data(events: list[dict]) -> dict:
-    usage_events = _filter_usage_events(events)
+def build_dashboard_data(
+    events: list[dict],
+    period: str = "all",
+    *,
+    now: Optional[datetime] = None,
+) -> dict:
+    """ダッシュボード API レスポンスを生成する (Issue #85: period toggle 対応).
+
+    period: "7d" / "30d" / "90d" / "all" (それ以外は "all" 相当)。
+      Overview / Patterns / KPI counter の 11 field は period 適用後の events で集計する。
+      Quality / Surface / session_stats の 8 field は **常に全期間** で集計する (period 不変)。
+    now: test 注入用。指定時は last_updated もこの値で override する (drift guard test 用途)。
+    """
+    # period 適用 view と未 filter view の二経路で aggregator に渡す。
+    # period_events_raw: timestamp + 三段 pair-straddling filter 適用後の raw events.
+    # period_events_usage: period_events_raw に _filter_usage_events (subagent invocation dedup) を適用後.
+    # 三段で再 include した stop event は _filter_usage_events の dedup window
+    # (INVOCATION_MERGE_WINDOW_SECONDS = 1.0s) と同じ window で動くので再脱落しない
+    # (TestFilterEventsByPeriod::test_three_stage_filter_survives_filter_usage_events).
+    period_events_raw = _filter_events_by_period(events, period, now=now)
+    # codex round 4 / Issue #85: boundary-straddling lifecycle-only invocation で
+    # rep event (= subagent_lifecycle_start) が pre-cutoff な場合、headline metrics
+    # (`daily_trend` / `hourly_heatmap` / `project_breakdown`) に pre-cutoff 日付が
+    # leak しないよう、_filter_usage_events に period cutoff を渡して rep ts を
+    # paired stop で上書きする。`period == "all"` / 不正値 → cutoff=None で無効。
+    _period_days = _PERIOD_DELTAS.get(period)
+    _now_ref = now if now is not None else datetime.now(timezone.utc)
+    _period_cutoff = (
+        _now_ref - timedelta(days=_period_days) if _period_days is not None else None
+    )
+    period_events_usage = _filter_usage_events(period_events_raw, period_cutoff=_period_cutoff)
+
+    # Quality / Surface 系は常に全期間。permission_breakdowns は raw events に適用。
     permission_breakdowns = aggregate_permission_breakdowns(events)
 
     # Issue #81 — Overview KPI 上段の "unique kinds" カウンタは TOP_N=10 cap を効かせない全件カウント。
@@ -889,31 +1147,34 @@ def build_dashboard_data(events: list[dict]) -> dict:
     # filter / dedup 慣習は aggregate_skills / aggregate_subagent_metrics / aggregate_projects と一致させる
     # (drift guard は test_dashboard.py::TestBuildDashboardData の `*_matches_*_when_below_cap`)。
     skill_kinds_set: set[str] = set()
-    for ev in events:
+    for ev in period_events_raw:
         if ev.get("event_type") in ("skill_tool", "user_slash_command"):
             name = ev.get("skill", "")
             if name:
                 skill_kinds_set.add(name)
-    subagent_kinds_total = len(aggregate_subagent_metrics(events))
+    subagent_kinds_total = len(aggregate_subagent_metrics(period_events_raw))
     project_kinds_set: set[str] = set()
-    for ev in usage_events:
+    for ev in period_events_usage:
         project = ev.get("project", "")
         if project:
             project_kinds_set.add(project)
 
+    last_updated = now.isoformat() if now is not None else _now_iso()
+
     return {
-        "last_updated": _now_iso(),
-        "total_events": len(usage_events),
-        "skill_ranking": aggregate_skills(events),
-        "subagent_ranking": aggregate_subagents(events),
+        "last_updated": last_updated,
+        "total_events": len(period_events_usage),
+        "skill_ranking": aggregate_skills(period_events_raw),
+        "subagent_ranking": aggregate_subagents(period_events_raw),
         "skill_kinds_total": len(skill_kinds_set),
         "subagent_kinds_total": subagent_kinds_total,
         "project_total": len(project_kinds_set),
-        "daily_trend": aggregate_daily(usage_events),
-        "project_breakdown": aggregate_projects(usage_events),
-        "hourly_heatmap": aggregate_hourly_heatmap(usage_events),
-        "skill_cooccurrence": aggregate_skill_cooccurrence(events),
-        "project_skill_matrix": aggregate_project_skill_matrix(events),
+        # Issue #85: daily_trend stays in period-applied set despite frontend-deprecation (Issue #65)
+        "daily_trend": aggregate_daily(period_events_usage),
+        "project_breakdown": aggregate_projects(period_events_usage),
+        "hourly_heatmap": aggregate_hourly_heatmap(period_events_usage),
+        "skill_cooccurrence": aggregate_skill_cooccurrence(period_events_raw),
+        "project_skill_matrix": aggregate_project_skill_matrix(period_events_raw),
         "subagent_failure_trend": aggregate_subagent_failure_trend(events),
         "permission_prompt_skill_breakdown": permission_breakdowns["skill"],
         "permission_prompt_subagent_breakdown": permission_breakdowns["subagent"],
@@ -921,8 +1182,9 @@ def build_dashboard_data(events: list[dict]) -> dict:
         "session_stats": aggregate_session_stats(events),
         "health_alerts": load_health_alerts(),
         "skill_invocation_breakdown": aggregate_skill_invocation_breakdown(events),
-        "skill_lifecycle": aggregate_skill_lifecycle(events),
-        "skill_hibernating": aggregate_skill_hibernating(events),
+        "skill_lifecycle": aggregate_skill_lifecycle(events, now=now),
+        "skill_hibernating": aggregate_skill_hibernating(events, now=now),
+        "period_applied": period if period in _PERIOD_DELTAS or period == "all" else "all",
     }
 
 
@@ -965,6 +1227,7 @@ _CSS_FILES = (
     "60_surface.css",       # Surface 3 panel + tooltip border colors (Issue #74)
 )
 _MAIN_JS_FILES = (
+    "05_period.js",               # period toggle closure + getCurrentPeriod / wirePeriodToggle (Issue #85)
     "10_helpers.js",              # esc / fmtN / pad / STATUS_LABEL / setConnStatus
     "15_heartbeat.js",            # live heartbeat sparkline (Issue #83)
     "20_load_and_render.js",      # async loadAndRender (KPI / ranking / sparkline / projects)
@@ -979,6 +1242,22 @@ _MAIN_JS_FILES = (
 )
 
 
+def _concat_main_js() -> str:
+    """`_MAIN_JS_FILES` を順に読んで 1 つの JS bundle 文字列に連結する.
+
+    `_concat_main_js()` is a test seam exposed for `tests/test_dashboard_period_toggle.py`;
+    not a public API.
+
+    `"".join(...)` (= no separator) で連結する: byte-identical to pre-refactor `_HTML_TEMPLATE`;
+    do not introduce separators (改行など) — assembled `_HTML_TEMPLATE` の bytes が変わって
+    `EXPECTED_TEMPLATE_SHA256` の drift detection が壊れる。
+    """
+    return "".join(
+        (_TEMPLATE_DIR / "scripts" / name).read_text(encoding="utf-8")
+        for name in _MAIN_JS_FILES
+    )
+
+
 def _build_html_template() -> str:
     """`template/` 配下を起動時に 1 度だけ concat して `_HTML_TEMPLATE` を作る。
 
@@ -987,7 +1266,7 @@ def _build_html_template() -> str:
     """
     styles = "".join((_TEMPLATE_DIR / "styles" / name).read_text(encoding="utf-8") for name in _CSS_FILES)
     router_js = (_TEMPLATE_DIR / "scripts" / "00_router.js").read_text(encoding="utf-8")
-    main_js = "".join((_TEMPLATE_DIR / "scripts" / name).read_text(encoding="utf-8") for name in _MAIN_JS_FILES)
+    main_js = _concat_main_js()
     shell = (_TEMPLATE_DIR / "shell.html").read_text(encoding="utf-8")
     return (shell
             .replace("__INCLUDE_STYLES__\n", styles)
@@ -1195,18 +1474,30 @@ class DashboardHandler(BaseHTTPRequestHandler):
         touch = getattr(self.server, "touch", None)
         if callable(touch):
             touch()
-        if self.path == "/api/data":
+        from urllib.parse import urlparse
+        path_only = urlparse(self.path).path
+        if path_only == "/api/data":
             self._serve_api()
-        elif self.path == "/healthz":
+        elif path_only == "/healthz":
             self._serve_healthz()
-        elif self.path == "/events":
+        elif path_only == "/events":
             self._serve_events()
         else:
             self._serve_html()
 
     def _serve_api(self):
+        # query param `period` を取得 → allow-list 外 / 欠落 / 空値は "all" に倒す。
+        # `parse_qs(keep_blank_values=False)` (default) は `?period=` を dict から drop するので
+        # `q.get("period", ["all"])[0]` が "all" を返す。allow-list check は dict lookup の **後** に
+        # 必ず効かせる順序で書く (将来 keep_blank_values=True に切替えても "empty で fallback しない"
+        # 誤動作を起こさないため。閉じた loop での UX 優先で 400 は返さない: lenient 慣習)。
+        from urllib.parse import parse_qs, urlparse
+        q = parse_qs(urlparse(self.path).query)
+        period = q.get("period", ["all"])[0]
+        if period not in _PERIOD_DELTAS and period != "all":
+            period = "all"
         events = load_events()
-        data = build_dashboard_data(events)
+        data = build_dashboard_data(events, period=period)
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")

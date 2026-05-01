@@ -238,6 +238,14 @@
     __livePrev = next;
   }
 
+  // codex round 4 / Issue #85: period 切り替え時に呼んで、次の loadAndRender で
+  // diff/toast/highlight が「前 period の snapshot vs 新 period の snapshot」を比較
+  // しないようにする。reset 後初回の render は __livePrev=null なので diff/toast
+  // が抑止される (= 通常の初回 load と同じ no-noise 経路)。
+  function resetLiveSnapshot() {
+    __livePrev = null;
+  }
+
   // loadAndRender の overlap を直列化する wrapper。
   //
   // 70_init_eventsource.js の SSE message handler / 60_hashchange_listener.js
@@ -279,6 +287,7 @@
       diffLiveSnapshot,
       formatToastSummary,
       commitLiveSnapshot,
+      resetLiveSnapshot,
       scheduleLoadAndRender,
       getLivePrev: function () { return __livePrev; },
     };

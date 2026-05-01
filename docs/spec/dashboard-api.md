@@ -8,6 +8,49 @@
 > `dashboard/server.py:_filter_usage_events()` で一括管理。本仕様で「usage 系」と
 > 書いたフィールドはすべてこの helper を経由している。
 
+## Query parameters (Issue #85, v0.7.3〜)
+
+### `period` (optional)
+
+- 値: `"7d"` / `"30d"` / `"90d"` / `"all"` (default `"all"`)
+- `"all"` 以外を渡すと、Overview / Patterns / KPI counter の **11 field** が
+  rolling window (`now - timedelta(days=N) <= ts <= now`) で切られた events から
+  集計される。Quality / Surface / `session_stats` の **8 field** は **常に全期間**
+  (period 不変)。
+- 不正値 / 空値 / 不在 → `"all"` に fallback (lenient: 400 を返さない)。
+- 三段 pair-straddling filter: timestamp 第一段 cut 後、`subagent_start ↔ subagent_lifecycle_start` の
+  `INVOCATION_MERGE_WINDOW_SECONDS = 1.0s` 以内 sibling、および
+  `subagent_start ↔ subagent_stop` の paired 直近を再 include する。これは
+  `subagent_metrics._pair_invocations_with_stops` の `start_ts <= stop_ts < next_start_ts`
+  pairing semantics を尊重し、`failure_rate` / `avg_duration_ms` / pXX duration が
+  period boundary 跨ぎで silent drift しないことを保証するため。
+
+### Period 適用 scope (11 field)
+
+- KPI counter: `total_events` / `skill_kinds_total` / `subagent_kinds_total` / `project_total`
+- Overview: `skill_ranking` / `subagent_ranking` / `daily_trend` / `project_breakdown`
+- Patterns: `hourly_heatmap` / `skill_cooccurrence` / `project_skill_matrix`
+
+### 全期間 (period 不変) scope (8 field)
+
+- Quality: `subagent_failure_trend` / `permission_prompt_skill_breakdown` /
+  `permission_prompt_subagent_breakdown` / `compact_density`
+- Surface: `skill_invocation_breakdown` / `skill_lifecycle` / `skill_hibernating`
+- `session_stats` (lifetime metric)
+
+### Filter 対象外 (3 field)
+
+- `last_updated` (常に server clock)
+- `health_alerts` (独立 log 読み出し)
+- `period_applied` (echo)
+
+### `period_applied` (response field)
+
+- server で正規化した period 文字列を additive に echo する。frontend は
+  `period_applied !== 'all'` のとき Overview/Patterns sub に `<period> 集計 · ` の
+  badge prefix を出す (例: `7d 集計 · top 10 · max 42`)。
+- 古い frontend (period unaware) は読まないので backward-compat。
+
 ## トップレベル形
 
 ```json
@@ -29,7 +72,8 @@
   "health_alerts":           [...],
   "skill_invocation_breakdown":  [...],
   "skill_lifecycle":             [...],
-  "skill_hibernating":           { ... }
+  "skill_hibernating":           { ... },
+  "period_applied":          "all" | "7d" | "30d" | "90d"
 }
 ```
 

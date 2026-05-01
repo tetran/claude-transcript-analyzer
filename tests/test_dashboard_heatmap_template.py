@@ -74,7 +74,8 @@ class TestPatternsHeatmapDOM:
     def test_loadAndRender_invokes_heatmap_renderer(self):
         """loadAndRender 経路から renderHourlyHeatmap が呼ばれる。"""
         template = _load_template()
-        assert 'renderHourlyHeatmap(data.hourly_heatmap)' in template, \
+        # Issue #85: 第 2 引数で period badge を渡すようになった
+        assert 'renderHourlyHeatmap(data.hourly_heatmap' in template, \
             "renderHourlyHeatmap call from loadAndRender missing"
 
 # ============================================================

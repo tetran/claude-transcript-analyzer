@@ -77,8 +77,9 @@ class TestPatternsCrossTabsDOM:
 
     def test_loadAndRender_invokes_cross_tab_renderers(self):
         template = _load_template()
-        assert 'renderSkillCooccurrence(data.skill_cooccurrence)' in template
-        assert 'renderProjectSkillMatrix(data.project_skill_matrix)' in template
+        # Issue #85: 第 2 引数で period badge を渡すようになった
+        assert 'renderSkillCooccurrence(data.skill_cooccurrence' in template
+        assert 'renderProjectSkillMatrix(data.project_skill_matrix' in template
 
     def test_cooccurrence_table_has_thead(self):
         # Proposal 1: count 単位は sessions

@@ -1,14 +1,24 @@
   async function loadAndRender() {
   let data;
   try {
+    // Issue #85: period toggle 値を毎 fetch 時に評価して URL に載せる。
+    // 関数参照を IIFE 評価時に capture せず call-time lookup する形なので、
+    // toggle 切替直後の SSE refresh も新 period で fetch される (race-free)。
+    const __periodVal = (typeof getCurrentPeriod === 'function') ? getCurrentPeriod() : 'all';
+    const __apiUrl = '/api/data?period=' + encodeURIComponent(__periodVal);
     data = (typeof window.__DATA__ !== 'undefined')
       ? window.__DATA__
-      : await (await fetch('/api/data', { cache: 'no-store' })).json();
+      : await (await fetch(__apiUrl, { cache: 'no-store' })).json();
   } catch (e) {
     console.error('データの読み込みに失敗しました:', e);
     return;
   }
   const ss = data.session_stats || {};
+
+  // Issue #85: period_applied !== 'all' のとき、Overview/Patterns sub に
+  // '<period> 集計 · ' を additive prefix で連結する。'all' のときは prefix 空 = 現状互換。
+  const __periodApplied = (data && typeof data.period_applied === 'string') ? data.period_applied : 'all';
+  const __periodBadge = (__periodApplied !== 'all') ? (__periodApplied + ' 集計 · ') : '';
 
   // header (Issue #65: local TZ 表記に統一)
   document.getElementById('lastRx').textContent = formatLocalTimestamp(data.last_updated);
@@ -115,8 +125,8 @@
   }
   renderRank('skillBody', data.skill_ranking || [], 'skill');
   renderRank('subBody', data.subagent_ranking || [], 'subagent');
-  document.getElementById('skillSub').textContent = 'top ' + (data.skill_ranking||[]).length + ' · max ' + (((data.skill_ranking||[])[0]||{}).count || 0);
-  document.getElementById('subSub').textContent = 'top ' + (data.subagent_ranking||[]).length + ' · max ' + (((data.subagent_ranking||[])[0]||{}).count || 0);
+  document.getElementById('skillSub').textContent = __periodBadge + 'top ' + (data.skill_ranking||[]).length + ' · max ' + (((data.skill_ranking||[])[0]||{}).count || 0);
+  document.getElementById('subSub').textContent = __periodBadge + 'top ' + (data.subagent_ranking||[]).length + ' · max ' + (((data.subagent_ranking||[])[0]||{}).count || 0);
 
   // ---- sparkline (Issue #65: local TZ 集約) ----
   // localDays は localDailyFromHourly で sort 済 / local 日付 key。
@@ -216,7 +226,7 @@
     document.getElementById('sparkStats').innerHTML = sparkStats.map(r =>
       '<div class="row"><span class="k">' + r.k + '</span><span class="v">' + r.v + '</span></div>'
     ).join('');
-    document.getElementById('dailySub').textContent = days.length + ' days · ' + active + ' active';
+    document.getElementById('dailySub').textContent = __periodBadge + days.length + ' days · ' + active + ' active';
   }
 
   // ---- projects ----
@@ -243,16 +253,16 @@
       '<div class="pp">' + pct + '</div>' +
     '</div>';
   }).join('');
-  document.getElementById('projSub').textContent = projs.length + ' projects · Σ ' + fmtN(projTotal);
+  document.getElementById('projSub').textContent = __periodBadge + projs.length + ' projects · Σ ' + fmtN(projTotal);
 
   // ---- hourly heatmap (Issue #58) ----
-  renderHourlyHeatmap(data.hourly_heatmap);
+  renderHourlyHeatmap(data.hourly_heatmap, __periodBadge);
 
   // ---- skill cooccurrence (Issue #59 / B1) ----
-  renderSkillCooccurrence(data.skill_cooccurrence);
+  renderSkillCooccurrence(data.skill_cooccurrence, __periodBadge);
 
   // ---- project × skill heatmap (Issue #59 / B2) ----
-  renderProjectSkillMatrix(data.project_skill_matrix);
+  renderProjectSkillMatrix(data.project_skill_matrix, __periodBadge);
 
   // ---- subagent percentile table (Issue #60 / A5) ----
   renderSubagentPercentile(data.subagent_ranking);
