@@ -158,6 +158,7 @@ class TestBackwardCompatibility:
         """static export 経路: window.__DATA__ は fetch より先に参照される"""
         template = _load_template()
         window_data_pos = template.index('window.__DATA__')
-        fetch_pos = template.index("fetch('/api/data'")
+        # Issue #85: fetch URL に period query が乗ったため substring を変更
+        fetch_pos = template.index("fetch(__apiUrl")
         assert window_data_pos < fetch_pos, \
-            "window.__DATA__ must be checked before fetch('/api/data') for static export compat"
+            "window.__DATA__ must be checked before fetch for static export compat"

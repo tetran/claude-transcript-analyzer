@@ -5,7 +5,8 @@
   //  hashchange listener (下) が page 切替時に loadAndRender を再実行するので、
   //  navigate 直後でも空のままにはならない。
   // ============================================================
-  function renderHourlyHeatmap(payload) {
+  function renderHourlyHeatmap(payload, periodBadge) {
+    const __badge = (typeof periodBadge === 'string') ? periodBadge : '';
     if (document.body.dataset.activePage !== 'patterns') return;
     const root = document.getElementById('patterns-heatmap');
     if (!root) return;
@@ -48,7 +49,7 @@
     const sub = document.getElementById('patterns-heatmap-sub');
     if (sub) {
       const total = buckets.reduce((s, b) => s + b.count, 0);
-      sub.textContent = fmtN(total) + ' events · ' + fmtN(buckets.length) + ' hour buckets';
+      sub.textContent = __badge + fmtN(total) + ' events · ' + fmtN(buckets.length) + ' hour buckets';
     }
   }
 
@@ -57,7 +58,8 @@
   //  page-scoped early-out + 空配列時の empty state 表示。pair は server から
   //  すでに count 降順 + lexicographic 昇順で並んでおり、再 sort 不要。
   // ============================================================
-  function renderSkillCooccurrence(items) {
+  function renderSkillCooccurrence(items, periodBadge) {
+    const __badge = (typeof periodBadge === 'string') ? periodBadge : '';
     if (document.body.dataset.activePage !== 'patterns') return;
     const tbody = document.querySelector('#patterns-cooccurrence tbody');
     if (!tbody) return;
@@ -80,7 +82,7 @@
     }
     const sub = document.getElementById('patterns-cooccurrence-sub');
     if (sub) {
-      sub.textContent = list.length + ' pairs (top 100)';
+      sub.textContent = __badge + list.length + ' pairs (top 100)';
     }
   }
 
@@ -89,7 +91,8 @@
   //  server は dense matrix + covered_count + total_count を返し、ここで描画。
   //  カバー率 (covered/total) を sub label に出して top 漏れの量を可視化 (Proposal 2)。
   // ============================================================
-  function renderProjectSkillMatrix(payload) {
+  function renderProjectSkillMatrix(payload, periodBadge) {
+    const __badge = (typeof periodBadge === 'string') ? periodBadge : '';
     if (document.body.dataset.activePage !== 'patterns') return;
     const root = document.getElementById('patterns-projskill');
     if (!root) return;
@@ -150,7 +153,7 @@
         const pct = Math.round((covered / total) * 100);
         s += ' · ' + pct + '% covered (' + fmtN(covered) + '/' + fmtN(total) + ')';
       }
-      sub.textContent = s;
+      sub.textContent = __badge + s;
     }
   }
 

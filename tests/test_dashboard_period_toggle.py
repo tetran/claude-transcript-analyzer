@@ -778,6 +778,142 @@ class TestPeriodAwareFetch:
         assert "getCurrentPeriod" in bundle
 
 
+class TestPeriodAppliedBadge:
+    """Step 6: period_applied !== 'all' のとき該当 sub に '<period> 集計' badge prefix."""
+
+    def _mod(self, tmp_path):
+        return load_dashboard_module(tmp_path / "nonexistent.jsonl")
+
+    def _render_sub_via_node(self, mod, period_applied: str) -> dict:
+        """build_dashboard_data 結果を window.__DATA__ に注入し loadAndRender を Node で走らせて、
+        Overview/Patterns sub の textContent を回収する."""
+        import subprocess
+        import shutil
+        import json as _json
+        node = shutil.which("node")
+        if node is None:
+            import pytest as _pytest
+            _pytest.skip("node not available")
+        bundle = mod._concat_main_js()
+        # 適当な dummy data。period_applied のみ test-relevant.
+        data = {
+            "last_updated": "2026-05-01T00:00:00+00:00",
+            "total_events": 1,
+            "skill_ranking": [{"name": "x", "count": 1, "failure_count": 0, "failure_rate": 0.0}],
+            "subagent_ranking": [],
+            "skill_kinds_total": 1,
+            "subagent_kinds_total": 0,
+            "project_total": 1,
+            "daily_trend": [{"date": "2026-05-01", "count": 1}],
+            "project_breakdown": [{"project": "p", "count": 1}],
+            "hourly_heatmap": {"buckets": [], "max": 0, "total": 0},
+            "skill_cooccurrence": [],
+            "project_skill_matrix": {"projects": [], "skills": [], "rows": [], "covered": 0, "total": 0},
+            "subagent_failure_trend": {"weeks": [], "series": []},
+            "permission_prompt_skill_breakdown": [],
+            "permission_prompt_subagent_breakdown": [],
+            "compact_density": {"hist": [], "worst": []},
+            "session_stats": {"total_sessions": 1, "resume_rate": 0, "compact_count": 0, "permission_prompt_count": 0},
+            "health_alerts": [],
+            "skill_invocation_breakdown": [],
+            "skill_lifecycle": [],
+            "skill_hibernating": {"items": [], "active_excluded_count": 0, "scope_note": ""},
+            "period_applied": period_applied,
+        }
+
+        # element store: id -> { textContent, _html }
+        script = r"""
+process.on("unhandledRejection", () => {});
+const store = {};
+function makeEl(id) {
+  if (!store[id]) {
+    store[id] = {
+      id,
+      textContent: "",
+      innerHTML: "",
+      hidden: false,
+      classList: { add: () => {}, remove: () => {}, contains: () => false, toggle: () => {} },
+      _attrs: {},
+      dataset: {},
+      style: {},
+      setAttribute: function(k, v) { this._attrs[k] = v; },
+      getAttribute: function(k) { return this._attrs[k] || null; },
+      removeAttribute: function(k) { delete this._attrs[k]; },
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      appendChild: () => {},
+      insertBefore: () => {},
+      remove: () => {},
+      querySelectorAll: () => [],
+      querySelector: () => null,
+      contains: () => false,
+      closest: () => null,
+      offsetWidth: 0,
+    };
+  }
+  return store[id];
+}
+globalThis.window = { __DATA__: JSON.parse(process.env.DATA), addEventListener: () => {}, location: { hash: "" } };
+globalThis.document = {
+  body: { dataset: {}, classList: { add: () => {}, remove: () => {}, contains: () => false } },
+  getElementById: (id) => makeEl(id),
+  querySelectorAll: () => [],
+  querySelector: () => null,
+  createElement: (tag) => makeEl("__el_" + Math.random()),
+  createElementNS: (ns, tag) => makeEl("__el_" + Math.random()),
+  addEventListener: () => {},
+};
+globalThis.fetch = async () => ({ ok: true, json: async () => JSON.parse(process.env.DATA) });
+globalThis.EventSource = undefined;
+try { eval("(async function(){" + process.env.BUNDLE + "})();"); } catch (e) {}
+
+// 同期評価で 70_init_eventsource.js は await 待ちするので、ここで明示的に少し待つ必要は無く、
+// loadAndRender は scheduleLoadAndRender → microtask で動く。一度 process.nextTick を使って flush。
+setImmediate(() => {
+  setImmediate(() => {
+    const out = {};
+    for (const id of Object.keys(store)) {
+      out[id] = store[id].textContent || "";
+    }
+    console.log(JSON.stringify(out));
+    process.exit(0);
+  });
+});
+"""
+        result = subprocess.run(
+            [node, "-e", script],
+            env={**os.environ, "BUNDLE": bundle, "DATA": _json.dumps(data)},
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert result.returncode == 0, f"node failed: stderr={result.stderr}"
+        lines = [ln for ln in result.stdout.strip().splitlines() if ln.strip().startswith("{")]
+        assert lines, f"no JSON output: stdout={result.stdout!r}"
+        return _json.loads(lines[-1])
+
+    def test_badge_appears_when_period_applied_is_7d(self, tmp_path):
+        mod = self._mod(tmp_path)
+        out = self._render_sub_via_node(mod, "7d")
+        # Overview の sub 4 つ + Patterns sub 3 つに '7d' badge 文字列が prefix される
+        for sub_id in ("dailySub", "skillSub", "subSub", "projSub",
+                       "patterns-heatmap-sub"):
+            text = out.get(sub_id, "")
+            # 何らかのテキストがあり、かつ '7d' が含まれる (badge format は plan §3 Step 8 で <period> 集計)
+            if text:
+                assert "7d" in text, f"{sub_id} に '7d' badge が無い: {text!r}"
+
+    def test_badge_absent_when_period_applied_is_all(self, tmp_path):
+        mod = self._mod(tmp_path)
+        out = self._render_sub_via_node(mod, "all")
+        for sub_id in ("dailySub", "skillSub", "subSub", "projSub"):
+            text = out.get(sub_id, "")
+            # 'all' のとき "7d" / "30d" / "90d" のような badge 文字列は付かない
+            for not_expected in ("7d 集計", "30d 集計", "90d 集計"):
+                assert not_expected not in text, \
+                    f"{sub_id} に period=all で {not_expected!r} が出ている: {text!r}"
+
+
 class TestConcatMainJsByteInvariant:
     """Step 4a: `_concat_main_js()` helper 切り出し refactor の byte-identical 不変条件."""
 
