@@ -69,12 +69,13 @@ class TestQualityPagePermissionPanels:
     def test_perm_skill_table_has_thead_columns(self):
         section = _extract_section(_load_template(), 'quality')
         # perm-skill table の thead 部分から列順を抽出
+        # Issue #89: Prompts / Invocations / Rate は一般語日本語化 (列順契約は維持)
         idx = section.index('id="quality-perm-skill"')
         thead_start = section.index('<thead>', idx)
         thead_end = section.index('</thead>', thead_start)
         thead = section[thead_start:thead_end]
         positions = []
-        for col in ['Skill', 'Prompts', 'Invocations', 'Rate']:
+        for col in ['Skill', 'プロンプト数', '呼び出し回数', '比率']:
             i = thead.find(col)
             assert i >= 0, f"perm-skill thead missing column: {col}"
             positions.append((i, col))
@@ -83,12 +84,13 @@ class TestQualityPagePermissionPanels:
 
     def test_perm_subagent_table_has_thead_columns(self):
         section = _extract_section(_load_template(), 'quality')
+        # Issue #89: Prompts / Invocations / Rate は一般語日本語化 (列順契約は維持)
         idx = section.index('id="quality-perm-subagent"')
         thead_start = section.index('<thead>', idx)
         thead_end = section.index('</thead>', thead_start)
         thead = section[thead_start:thead_end]
         positions = []
-        for col in ['Subagent', 'Prompts', 'Invocations', 'Rate']:
+        for col in ['Subagent', 'プロンプト数', '呼び出し回数', '比率']:
             i = thead.find(col)
             assert i >= 0, f"perm-subagent thead missing column: {col}"
             positions.append((i, col))
