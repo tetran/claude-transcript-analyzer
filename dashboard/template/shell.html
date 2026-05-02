@@ -279,11 +279,11 @@ __INCLUDE_STYLES__
       <div class="panel" id="quality-perm-skill-panel">
         <div class="panel-head c-mint">
           <div class="ttl-wrap">
-            <span class="ttl"><span class="dot"></span>Permission prompt × skill (top 10)</span>
+            <span class="ttl"><span class="dot"></span>承認待ち × skill (top 10)</span>
             <span class="help-host">
               <button class="help-btn" type="button" aria-label="説明を表示" aria-expanded="false" aria-describedby="hp-perm-skill" data-help-id="hp-perm-skill">?</button>
               <span class="help-pop" id="hp-perm-skill" role="tooltip" data-place="right">
-                <span class="pop-ttl">Permission per skill</span>
+                <span class="pop-ttl">skill ごとの承認待ち</span>
                 <span class="pop-body">承認待ち発生の <strong>直前 30 秒以内 (or 実行中)</strong> に発火していた <code>skill_tool</code> に帰属。1 prompt は 1 候補にのみ帰属 (skill / subagent 重複なし)。<code>permission_rate</code> = 帰属 prompt 数 / 総 skill_tool 数。<strong>1 呼び出しで複数回 permission を聞かれる skill</strong> は rate &gt; 1.0 になる (上限 1.0 で打ち切らない)。settings.json の allowlist 整理 (上位の skill が頻出する Bash / MCP コマンドを <code>permissions.allow</code> に追加) のヒントとして使う。</span>
               </span>
             </span>
@@ -309,11 +309,11 @@ __INCLUDE_STYLES__
       <div class="panel" id="quality-perm-subagent-panel">
         <div class="panel-head c-coral">
           <div class="ttl-wrap">
-            <span class="ttl"><span class="dot"></span>Permission prompt × subagent (top 10)</span>
+            <span class="ttl"><span class="dot"></span>承認待ち × subagent (top 10)</span>
             <span class="help-host">
               <button class="help-btn" type="button" aria-label="説明を表示" aria-expanded="false" aria-describedby="hp-perm-sub" data-help-id="hp-perm-sub">?</button>
               <span class="help-pop" id="hp-perm-sub" role="tooltip" data-place="right">
-                <span class="pop-ttl">Permission per subagent</span>
+                <span class="pop-ttl">subagent ごとの承認待ち</span>
                 <span class="pop-body">承認待ち発生を <strong>subagent 呼び出しの実行区間</strong> に帰属。長時間 subagent の途中で発火した prompt も実行区間内で正しく拾う。skill / subagent 重複なし (= 1 prompt は 1 候補のみ)。</span>
               </span>
             </span>
