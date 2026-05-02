@@ -44,11 +44,11 @@
       helpTtl: '総イベント数', helpBody: 'skill 利用と subagent 呼び出しの合計件数。subagent は PostToolUse / SubagentStart の重複発火を <code>1 呼び出し = 1 件</code> に重複排除済み。session_start や notification は含めない。' },
     { id: 'kpi-skills', k: 'skills',
       v: (data.skill_kinds_total != null ? data.skill_kinds_total : (data.skill_ranking||[]).length),
-      s: '種類数', cls: '',
+      s: '種類', cls: '',
       helpTtl: 'スキル種別数', helpBody: '観測された skill の種類数。skill 本体（PostToolUse(Skill)）とユーザー入力の slash command（UserPromptExpansion / Submit）を合算してカウント。' },
     { id: 'kpi-subs', k: 'subagents',
       v: (data.subagent_kinds_total != null ? data.subagent_kinds_total : (data.subagent_ranking||[]).length),
-      s: '種類数', cls: 'c-coral',
+      s: '種類', cls: 'c-coral',
       helpTtl: 'Subagent 種別数', helpBody: '観測された subagent の種類数（呼び出し単位で重複排除済み）。' },
     { id: 'kpi-projs', k: 'projects',
       v: (data.project_total != null ? data.project_total : (data.project_breakdown||[]).length),
@@ -63,7 +63,7 @@
     { id: 'kpi-perm', k: 'permission gate', v: ss.permission_prompt_count || 0, sm: true,
       cls: (ss.permission_prompt_count||0) > 5 ? 'warn' : 'c-mute',
       warn: (ss.permission_prompt_count||0) > 5,
-      helpTtl: '承認待ち', helpBody: '許可ダイアログ（Notification の type=<code>permission</code> / <code>permission_prompt</code>）の発生回数。多いと作業中の中断が増えていることを示す。' },
+      helpTtl: '承認待ち', helpBody: '承認依頼（Notification の type=<code>permission</code> / <code>permission_prompt</code>）の発生回数。多いと作業中の中断が増えていることを示す。' },
   ];
 
   document.getElementById('kpiRow').innerHTML = kpis.map(g => {

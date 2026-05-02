@@ -130,7 +130,7 @@ def test_required_new_labels_present():
         # ※ k: の「カードタイトル」は user follow-up により全英語維持。
         # required 側にも total events / projects / resume rate / permission gate
         # を pin することはしない (Claude-spec 以外も英語形に統一)。
-        "s: '種類数'",
+        "s: '種類'",
         "s: 'ディレクトリ単位'",
 
         # KPI helpTtl 翻訳 (Q2)
