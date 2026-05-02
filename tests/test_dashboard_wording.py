@@ -169,7 +169,7 @@ def test_invariant_keys_unchanged():
     """data-* / class / id / page key / MODE_LABEL key / MODE_TIP key が変わっていないこと。
 
     §1 Non-Goals 構造保証: schema フィールド・data-* attribute・MODE_LABEL/MODE_TIP key
-    などは触らない。MODE_TIP の 'mixed' キーは既存バグ温存の証拠として明示的に存在を assert。
+    などは触らない。MODE_TIP のキーは Issue #94 で 'mixed' → 'dual' に整合化済。
     """
     template = _load()
     invariants = [
@@ -181,8 +181,7 @@ def test_invariant_keys_unchanged():
         'data-tip="perm-skill"', 'data-tip="perm-subagent"',
         'data-tip="histogram"', 'data-tip="worst-session"',
         'data-tip="inv"', 'data-tip="life"', 'data-tip="hib"',
-        "'dual'", "'llm-only'", "'user-only'",  # MODE_LABEL key
-        "'mixed'",  # MODE_TIP key (バグ温存の証拠)
+        "'dual'", "'llm-only'", "'user-only'",  # MODE_LABEL / MODE_TIP key (Issue #94 で整合化)
         "'accelerating'", "'stable'", "'decelerating'", "'new'",
         "'warming_up'", "'resting'", "'idle'",
         # KPI id は runtime に DOM concat で生成されるので、JS 側の literal ('id: \'kpi-*\'')
@@ -207,20 +206,65 @@ def test_invariant_keys_unchanged():
     assert mode_label_match, "MODE_LABEL 宣言ブロックが見つからない (50_renderers_surface.js の構造変化を疑え)"
     mode_label_block = mode_label_match.group(1)
 
-    # MODE_TIP には 'mixed' があり、'dual' は無い (本 issue ではバグを温存し別 issue で修正)
-    assert "'mixed'" in mode_tip_block, "MODE_TIP の 'mixed' キーが消えた (バグ温存契約)"
-    assert "'dual'" not in mode_tip_block, "MODE_TIP に 'dual' を追加してはならない (別 issue)"
+    # MODE_TIP には 'dual' があり、旧キー 'mixed' は無い (Issue #94 で整合化)
+    assert "'dual'" in mode_tip_block, "MODE_TIP の 'dual' キーが消えた (Issue #94 整合契約)"
+    assert "'mixed'" not in mode_tip_block, "MODE_TIP に 'mixed' を再導入してはならない (Issue #94 で除去済)"
 
     # MODE_LABEL には 'dual' があり、'mixed' は無い (既存設計)
     assert "'dual'" in mode_label_block, "MODE_LABEL の 'dual' キーが消えた"
     assert "'mixed'" not in mode_label_block, "MODE_LABEL に 'mixed' を追加してはならない"
 
     # === Chip ↔ tooltip parity (iter2 P4: 表示文字列が両ブロックで一致する契約) ===
-    # MODE_LABEL[dual] と MODE_TIP[mixed] は **同じ表示文字列** を持つ。
+    # MODE_LABEL[dual] と MODE_TIP[dual] が同じ表示文字列 '🤝 Dual' を持つ (chip ↔ tooltip parity)。
     assert "'🤝 Dual'" in mode_label_block, "MODE_LABEL の 'dual' 値は '🤝 Dual'"
-    assert "'🤝 Dual'" in mode_tip_block, "MODE_TIP の 'mixed' 値も MODE_LABEL と同じ '🤝 Dual'"
+    assert "'🤝 Dual'" in mode_tip_block, "MODE_TIP の 'dual' 値も MODE_LABEL と同じ '🤝 Dual'"
     assert "'🤖 LLM-only'" in mode_label_block and "'🤖 LLM-only'" in mode_tip_block
     assert "'👤 User-only'" in mode_label_block and "'👤 User-only'" in mode_tip_block
+
+
+# mode は dual / llm-only / user-only の 3 種。将来拡張時はここを更新。
+EXPECTED_MODE_COUNT = 3
+
+
+def test_mode_label_tip_key_parity():
+    """MODE_LABEL (writer) と MODE_TIP (reader) の key 集合が完全一致していること (Issue #94)。
+
+    Issue #94 で `MODE_TIP` の key を `'mixed'` → `'dual'` に整合化した。
+    schema → renderer (MODE_LABEL) → tooltip (MODE_TIP) のキー一致が崩れると
+    tooltip lookup が miss する (例: `'mixed'` 残存時に dual 行 hover で生 literal 表示)。
+    本 test は片側のみ更新された場合の structural regression を fail-fast で検知する。
+
+    既存の chip ↔ tooltip display parity test (test_invariant_keys_unchanged 内 L218-)
+    は **value-based** (`'🤝 Dual'` 等の表示文字列の有無)、本 test は **key-based**
+    (lookup キー集合の一致)。両軸が直交する defense-in-depth。
+    """
+    template = _load()
+
+    mode_label_match = re.search(r"const MODE_LABEL\s*=\s*\{([^}]+)\}", template)
+    assert mode_label_match, "MODE_LABEL 宣言ブロックが見つからない"
+    mode_tip_match = re.search(r"const MODE_TIP\s*=\s*\{([^}]+)\}", template)
+    assert mode_tip_match, "MODE_TIP 宣言ブロックが見つからない"
+
+    # colon-anchored regex で key だけを抽出 (value 側 emoji 文字列の false positive 回避)
+    label_keys = set(re.findall(r"'([a-z][a-z-]*)'\s*:", mode_label_match.group(1)))
+    tip_keys = set(re.findall(r"'([a-z][a-z-]*)'\s*:", mode_tip_match.group(1)))
+
+    # 多層 fail-fast guard: 空 set 化 (regex 完全失敗で false green) を阻止
+    assert label_keys, "MODE_LABEL からキーが 1 つも抽出できない (regex 失敗を疑え)"
+    assert tip_keys, "MODE_TIP からキーが 1 つも抽出できない (regex 失敗を疑え)"
+
+    # 個数固定: block 抽出 regex の partial-match で短い set が返るリスクを閉じる
+    assert len(label_keys) == EXPECTED_MODE_COUNT, (
+        f"MODE_LABEL key count drifted: {sorted(label_keys)}"
+    )
+    assert len(tip_keys) == EXPECTED_MODE_COUNT, (
+        f"MODE_TIP key count drifted: {sorted(tip_keys)}"
+    )
+
+    # 本体: 両者の key 集合一致 (片側更新の structural regression を検出)
+    assert label_keys == tip_keys, (
+        f"MODE_LABEL keys {sorted(label_keys)} != MODE_TIP keys {sorted(tip_keys)}"
+    )
 
 
 def test_period_toggle_labels_intact():
