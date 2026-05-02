@@ -83,14 +83,16 @@ class TestHtmlTemplateFallback:
     def test_template_has_dynamic_fallback_fetch(self):
         """動的ダッシュボードとしても機能するよう fetch フォールバックが残っていることを確認。"""
         m = self._import()
-        assert "fetch('/api/data'" in m._HTML_TEMPLATE
+        # Issue #85: fetch URL は `'/api/data?period=' + ...` に変わった (period query が常に乗る)
+        assert "/api/data?period=" in m._HTML_TEMPLATE
 
     def test_template_prefers_window_data_over_fetch(self):
         """window.__DATA__ が fetch より先に参照されることを確認。"""
         m = self._import()
         tmpl = m._HTML_TEMPLATE
         window_data_pos = tmpl.index("window.__DATA__")
-        fetch_pos = tmpl.index("fetch('/api/data'")
+        # Issue #85: fetch 直接ではなく __apiUrl 変数経由 (period query を組み立てる)
+        fetch_pos = tmpl.index("fetch(__apiUrl")
         assert window_data_pos < fetch_pos
 
     def test_template_uses_static_badge_for_window_data(self):

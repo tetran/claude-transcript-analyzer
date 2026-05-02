@@ -38,6 +38,49 @@
   /* `<section data-page="...">` は hidden 切替で常駐。 */
   .page[hidden] { display: none; }
 
+  /* Issue #85: 期間トグル (Overview / Patterns 限定).
+     header (display: grid; grid-template-columns: 1fr auto) の 2 列目 slot に
+     入るので右端に来る。slot 自体は flex で末尾揃えにしておき、トグル DOM が
+     垂直中央に来るようにする (header の lede 行高さに揃える)。 */
+  .period-toggle-slot {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+  }
+  .period-toggle {
+    display: inline-flex;
+    gap: 4px;
+  }
+  .period-toggle button {
+    padding: 4px 10px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--ink-soft);
+    background: transparent;
+    border: 1px solid var(--line);
+    border-radius: var(--r-sm);
+    cursor: pointer;
+    transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
+  }
+  .period-toggle button:hover {
+    color: var(--ink);
+    background: var(--bg-panel);
+  }
+  .period-toggle button[aria-pressed="true"] {
+    color: var(--mint);
+    background: var(--bg-panel);
+    border-color: var(--mint);
+  }
+  .period-toggle button:focus-visible {
+    outline: 2px solid var(--peri);
+    outline-offset: 2px;
+  }
+  /* Quality / Surface 表示時は toggle 非表示 (router の body.dataset.activePage 既存契約). */
+  body[data-active-page="quality"] #periodToggle,
+  body[data-active-page="surface"] #periodToggle {
+    display: none;
+  }
+
   /* Patterns / Quality / Surface タブの連続する panel 間マージン (Issue #71)。
      Overview は `.two-up` gap + 後続 panel の inline `margin-top:14px` で既に
      間隔が確保されている。adjacent-sibling combinator なので 1 件目の panel

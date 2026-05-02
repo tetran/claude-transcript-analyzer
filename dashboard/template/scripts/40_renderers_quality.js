@@ -11,7 +11,7 @@
     if (!tbody) return;
     const list = Array.isArray(items) ? items : [];
     if (list.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="7" class="empty">subagent データなし</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="7" class="empty">no data</td></tr>';
     } else {
       tbody.innerHTML = list.map((it) => {
         const c = it.count || 0;
@@ -54,7 +54,7 @@
     if (!root) return;
     const list = Array.isArray(items) ? items : [];
     if (list.length === 0) {
-      root.innerHTML = '<div class="empty" style="padding:24px;text-align:center;color:var(--ink-faint)">trend データなし</div>';
+      root.innerHTML = '<div class="empty" style="padding:24px;text-align:center;color:var(--ink-faint)">no data</div>';
       if (legend) legend.innerHTML = '';
       if (sub) sub.textContent = '';
       return;
@@ -69,7 +69,7 @@
       e.byWeek.set(r.week_start, r);
       weekSet.add(r.week_start);
     }
-    // server は観測なし週を返さない (sparse) ので、観測週だけで weekSet を作ると
+    // server は観測ゼロ週を返さない (sparse) ので、観測週だけで weekSet を作ると
     // W1/W3 のみ観測時に空 W2 が x-axis から消えて W1 と W3 が隣接描画される。
     // observedWeeks の最初〜最後を 7-day 増分で densify し、空週も timeline 上に
     // calendar 時系列として表示する (xOf(i) が暦週位置に揃う)。
@@ -172,14 +172,14 @@
     if (!tbody) return;
     const list = Array.isArray(items) ? items : [];
     if (list.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="4" class="empty">permission prompt なし</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="4" class="empty">no data</td></tr>';
     } else {
       tbody.innerHTML = list.map(it => {
         const c = it.prompt_count || 0;
         const inv = it.invocation_count || 0;
         const rate = it.permission_rate || 0;
         const rateClass = rate >= 0.5 ? 'num rate-warn' : 'num';
-        const al = it.skill + ': ' + c + ' prompts / ' + inv + ' invocations (' + Math.round(rate * 100) + '%)';
+        const al = it.skill + ': ' + c + ' prompts / ' + inv + ' 呼び出し (' + Math.round(rate * 100) + '%)';
         return '<tr data-tip="perm-skill" data-name="' + esc(it.skill) +
           '" data-c="' + c + '" data-inv="' + inv + '" data-rate="' + rate +
           '" tabindex="0" role="row" aria-label="' + esc(al) + '">' +
@@ -200,14 +200,14 @@
     if (!tbody) return;
     const list = Array.isArray(items) ? items : [];
     if (list.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="4" class="empty">permission prompt なし</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="4" class="empty">no data</td></tr>';
     } else {
       tbody.innerHTML = list.map(it => {
         const c = it.prompt_count || 0;
         const inv = it.invocation_count || 0;
         const rate = it.permission_rate || 0;
         const rateClass = rate >= 0.5 ? 'num rate-warn' : 'num';
-        const al = it.subagent_type + ': ' + c + ' prompts / ' + inv + ' invocations (' + Math.round(rate * 100) + '%)';
+        const al = it.subagent_type + ': ' + c + ' prompts / ' + inv + ' 呼び出し (' + Math.round(rate * 100) + '%)';
         return '<tr data-tip="perm-subagent" data-name="' + esc(it.subagent_type) +
           '" data-c="' + c + '" data-inv="' + inv + '" data-rate="' + rate +
           '" tabindex="0" role="row" aria-label="' + esc(al) + '">' +
@@ -265,7 +265,7 @@
     // worst sessions table
     if (worstTbody) {
       if (worst.length === 0) {
-        worstTbody.innerHTML = '<tr><td colspan="3" class="empty">compact なし</td></tr>';
+        worstTbody.innerHTML = '<tr><td colspan="3" class="empty">no data</td></tr>';
       } else {
         worstTbody.innerHTML = worst.map(w => {
           const sid = w.session_id || '';
@@ -274,8 +274,8 @@
           const c = w.count || 0;
           // P3 反映: 空 project は (unknown) ラベルで明示。空セルだと「データ欠損」と
           // 「project が空文字」が見分けつかなくなる UX 問題を回避。
-          const projCell = proj === '' ? '<span class="dim">(unknown)</span>' : esc(proj);
-          const projForLabel = proj === '' ? 'unknown' : proj;
+          const projCell = proj === '' ? '<span class="dim">（不明）</span>' : esc(proj);
+          const projForLabel = proj === '' ? '不明' : proj;
           const al = sidShort + ' (' + projForLabel + '): ' + c + ' compacts';
           return '<tr data-tip="worst-session" data-sid="' + esc(sid) + '" data-proj="' + esc(proj) +
             '" data-c="' + c + '" tabindex="0" role="row" aria-label="' + esc(al) + '">' +

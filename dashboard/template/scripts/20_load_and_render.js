@@ -1,18 +1,29 @@
   async function loadAndRender() {
   let data;
   try {
+    // Issue #85: period toggle 値を毎 fetch 時に評価して URL に載せる。
+    // 関数参照を IIFE 評価時に capture せず call-time lookup する形なので、
+    // toggle 切替直後の SSE refresh も新 period で fetch される (race-free)。
+    const __periodVal = (typeof getCurrentPeriod === 'function') ? getCurrentPeriod() : 'all';
+    const __apiUrl = '/api/data?period=' + encodeURIComponent(__periodVal);
     data = (typeof window.__DATA__ !== 'undefined')
       ? window.__DATA__
-      : await (await fetch('/api/data', { cache: 'no-store' })).json();
+      : await (await fetch(__apiUrl, { cache: 'no-store' })).json();
   } catch (e) {
     console.error('データの読み込みに失敗しました:', e);
     return;
   }
   const ss = data.session_stats || {};
 
+  // Issue #85: period_applied !== 'all' のとき、Overview/Patterns sub に
+  // '<period> 集計 · ' を additive prefix で連結する。'all' のときは prefix 空 = 現状互換。
+  const __periodApplied = (data && typeof data.period_applied === 'string') ? data.period_applied : 'all';
+  const __periodBadge = (__periodApplied !== 'all') ? (__periodApplied + ' 集計 · ') : '';
+
   // header (Issue #65: local TZ 表記に統一)
   document.getElementById('lastRx').textContent = formatLocalTimestamp(data.last_updated);
-  document.getElementById('sessVal').textContent = (ss.total_sessions || 0) + ' sessions';
+  // footer の `<span class="k">sessions</span>` (Issue #89) と重複しないよう数字単独で書き出す。
+  document.getElementById('sessVal').textContent = ss.total_sessions || 0;
 
   // Issue #65: daily 系 KPI / sparkline は data.daily_trend (= server UTC bucket) ではなく
   // hourly_heatmap.buckets を local TZ で再集計した localDays を使う。
@@ -30,18 +41,18 @@
   // ---- KPI definitions (ヘルプ本文を含む) ----
   const kpis = [
     { id: 'kpi-total', k: 'total events', v: fmtN(data.total_events), s: '<em>' + localDays.length + '</em> 日間の観測', cls: '',
-      helpTtl: '総イベント数', helpBody: 'スキル利用と subagent invocation の合計件数。subagent は PostToolUse / SubagentStart の重複発火を <code>1 invocation = 1 件</code> に dedup 済み。session_start や notification は含めない。' },
+      helpTtl: '総イベント数', helpBody: 'skill 利用と subagent 呼び出しの合計件数。subagent は PostToolUse / SubagentStart の重複発火を <code>1 呼び出し = 1 件</code> に重複排除済み。session_start や notification は含めない。' },
     { id: 'kpi-skills', k: 'skills',
       v: (data.skill_kinds_total != null ? data.skill_kinds_total : (data.skill_ranking||[]).length),
-      s: 'unique kinds', cls: '',
-      helpTtl: 'スキル種別数', helpBody: '観測されたスキルの種類数。スキル本体（PostToolUse(Skill)）とユーザー入力のスラッシュコマンド（UserPromptExpansion / Submit）を合算してカウント。' },
+      s: '種類', cls: '',
+      helpTtl: 'スキル種別数', helpBody: '観測された skill の種類数。skill 本体（PostToolUse(Skill)）とユーザー入力の slash command（UserPromptExpansion / Submit）を合算してカウント。' },
     { id: 'kpi-subs', k: 'subagents',
       v: (data.subagent_kinds_total != null ? data.subagent_kinds_total : (data.subagent_ranking||[]).length),
-      s: 'unique kinds', cls: 'c-coral',
-      helpTtl: 'Subagent 種別数', helpBody: '観測された subagent の種類数（invocation 単位で dedup 済み）。' },
+      s: '種類', cls: 'c-coral',
+      helpTtl: 'Subagent 種別数', helpBody: '観測された subagent の種類数（呼び出し単位で重複排除済み）。' },
     { id: 'kpi-projs', k: 'projects',
       v: (data.project_total != null ? data.project_total : (data.project_breakdown||[]).length),
-      s: 'distinct cwds', cls: 'c-peach',
+      s: 'ディレクトリ単位', cls: 'c-peach',
       helpTtl: 'プロジェクト数', helpBody: '利用が観測されたプロジェクト（cwd 単位）。同じディレクトリ配下のセッションは同一プロジェクトとして集計。' },
     { id: 'kpi-sess', k: 'sessions', v: ss.total_sessions || 0, cls: 'c-peri',
       helpTtl: 'セッション数', helpBody: 'SessionStart hook で観測された Claude Code セッションの開始回数。同じ session_id の startup と resume は別セッションとして数える。' },
@@ -52,7 +63,7 @@
     { id: 'kpi-perm', k: 'permission gate', v: ss.permission_prompt_count || 0, sm: true,
       cls: (ss.permission_prompt_count||0) > 5 ? 'warn' : 'c-mute',
       warn: (ss.permission_prompt_count||0) > 5,
-      helpTtl: 'Permission Prompt', helpBody: '許可ダイアログ（Notification の type=<code>permission</code> / <code>permission_prompt</code>）の発生回数。多いと作業中の中断が増えていることを示す。' },
+      helpTtl: '承認待ち', helpBody: '承認依頼（Notification の type=<code>permission</code> / <code>permission_prompt</code>）の発生回数。多いと作業中の中断が増えていることを示す。' },
   ];
 
   document.getElementById('kpiRow').innerHTML = kpis.map(g => {
@@ -102,7 +113,7 @@
         (it.failure_count != null ? ' data-fail="' + it.failure_count + '"' : '') +
         (it.failure_rate != null ? ' data-fail-rate="' + it.failure_rate + '"' : '') +
         (it.avg_duration_ms != null ? ' data-avg="' + it.avg_duration_ms + '"' : '');
-      const al = it.name + ': ' + it.count + (kind === 'subagent' ? ' invocations' : ' uses');
+      const al = it.name + ': ' + it.count + (kind === 'subagent' ? ' 呼び出し' : ' 件');
       return '<div class="rank-row ' + kind + '"' + dataAttrs +
         ' tabindex="0" role="img" aria-label="' + esc(al) + '">' +
         '<div class="rk">' + pad(i+1,2) + '</div>' +
@@ -115,8 +126,8 @@
   }
   renderRank('skillBody', data.skill_ranking || [], 'skill');
   renderRank('subBody', data.subagent_ranking || [], 'subagent');
-  document.getElementById('skillSub').textContent = 'top ' + (data.skill_ranking||[]).length + ' · max ' + (((data.skill_ranking||[])[0]||{}).count || 0);
-  document.getElementById('subSub').textContent = 'top ' + (data.subagent_ranking||[]).length + ' · max ' + (((data.subagent_ranking||[])[0]||{}).count || 0);
+  document.getElementById('skillSub').textContent = __periodBadge + 'top ' + (data.skill_ranking||[]).length + ' · max ' + (((data.skill_ranking||[])[0]||{}).count || 0);
+  document.getElementById('subSub').textContent = __periodBadge + 'top ' + (data.subagent_ranking||[]).length + ' · max ' + (((data.subagent_ranking||[])[0]||{}).count || 0);
 
   // ---- sparkline (Issue #65: local TZ 集約) ----
   // localDays は localDailyFromHourly で sort 済 / local 日付 key。
@@ -172,7 +183,7 @@
       const cx = xs(i);
       const x = Math.max(0, cx - bandHalfW).toFixed(2);
       const w = Math.min(W - parseFloat(x), bandHalfW * 2).toFixed(2);
-      const al = d.date + ': ' + d.count + ' events';
+      const al = d.date + ': ' + d.count + ' 件';
       return '<rect class="day-band" x="' + x + '" y="0" width="' + w + '" height="' + (H - pad_y) + '" ' +
         'fill="transparent" data-tip="daily" data-d="' + d.date + '" data-c="' + d.count + '" ' +
         'tabindex="0" role="img" aria-label="' + al + '"/>';
@@ -208,15 +219,15 @@
     const avg = total / days.length;
     const active = days.filter(d=>d.count>0).length;
     const sparkStats = [
-      { k: 'peak',     v: max + (max > 0 ? ' / ' + peakDate.slice(5) : '') },
-      { k: 'avg/day',  v: avg.toFixed(1) },
-      { k: 'active',   v: active + '/' + days.length + 'd' },
-      { k: 'window',   v: days[0].date.slice(5) + ' → ' + days[days.length-1].date.slice(5) },
+      { k: 'ピーク',          v: max + (max > 0 ? ' / ' + peakDate.slice(5) : '') },
+      { k: '1 日あたり平均',  v: avg.toFixed(1) },
+      { k: '稼働日数',        v: active + '/' + days.length + 'd' },
+      { k: '期間',            v: days[0].date.slice(5) + ' → ' + days[days.length-1].date.slice(5) },
     ];
     document.getElementById('sparkStats').innerHTML = sparkStats.map(r =>
       '<div class="row"><span class="k">' + r.k + '</span><span class="v">' + r.v + '</span></div>'
     ).join('');
-    document.getElementById('dailySub').textContent = days.length + ' days · ' + active + ' active';
+    document.getElementById('dailySub').textContent = __periodBadge + days.length + ' days · ' + active + ' active';
   }
 
   // ---- projects ----
@@ -224,7 +235,7 @@
   const projTotal = projs.reduce((s,p)=>s+p.count, 0);
   const palette = ['#6fe3c8','#ff8a76','#8aa6ff','#ffc97a','#ff6f9c','#a78bfa','#7ed3a3','#ffa86b','#5dc9e2','#e6a8e8'];
   function projPct(p) { return projTotal ? (p.count/projTotal*100).toFixed(1) + '%' : '0.0%'; }
-  function projAria(p, pct) { return esc(p.project) + ': ' + fmtN(p.count) + ' events (' + pct + ')'; }
+  function projAria(p, pct) { return esc(p.project) + ': ' + fmtN(p.count) + ' 件 (' + pct + ')'; }
   document.getElementById('stack').innerHTML = projs.map((p, i) => {
     const w = projTotal ? (p.count/projTotal*100) : 0;
     const pct = projPct(p);
@@ -243,16 +254,16 @@
       '<div class="pp">' + pct + '</div>' +
     '</div>';
   }).join('');
-  document.getElementById('projSub').textContent = projs.length + ' projects · Σ ' + fmtN(projTotal);
+  document.getElementById('projSub').textContent = __periodBadge + projs.length + ' projects · Σ ' + fmtN(projTotal);
 
   // ---- hourly heatmap (Issue #58) ----
-  renderHourlyHeatmap(data.hourly_heatmap);
+  renderHourlyHeatmap(data.hourly_heatmap, __periodBadge);
 
   // ---- skill cooccurrence (Issue #59 / B1) ----
-  renderSkillCooccurrence(data.skill_cooccurrence);
+  renderSkillCooccurrence(data.skill_cooccurrence, __periodBadge);
 
   // ---- project × skill heatmap (Issue #59 / B2) ----
-  renderProjectSkillMatrix(data.project_skill_matrix);
+  renderProjectSkillMatrix(data.project_skill_matrix, __periodBadge);
 
   // ---- subagent percentile table (Issue #60 / A5) ----
   renderSubagentPercentile(data.subagent_ranking);

@@ -39,6 +39,19 @@ __INCLUDE_STYLES__
           <span class="num" id="ledeProjects">—</span> projects
         </div>
       </div>
+      <!-- Issue #85: 期間トグル slot (Overview / Patterns 各 header に配置)。
+           toggle DOM は 1 つで、router の active page 切替に応じて
+           05_period.js が該当 slot に move する。Quality / Surface 表示時は
+           移動先が無く、page-scoped CSS rule で display:none に倒す。
+           static export 経路では 05_period.js 内で hidden 属性を立てる。 -->
+      <div class="period-toggle-slot" data-period-slot="overview">
+        <div class="period-toggle" id="periodToggle" role="group" aria-label="集計期間">
+          <button type="button" data-period="7d" aria-pressed="false">7d</button>
+          <button type="button" data-period="30d" aria-pressed="false">30d</button>
+          <button type="button" data-period="90d" aria-pressed="false">90d</button>
+          <button type="button" data-period="all" aria-pressed="true">全期間</button>
+        </div>
+      </div>
     </header>
 
     <div class="kpi-row" id="kpiRow"></div>
@@ -47,11 +60,11 @@ __INCLUDE_STYLES__
       <div class="panel">
         <div class="panel-head">
           <div class="ttl-wrap">
-            <span class="ttl"><span class="dot"></span>スキル利用ランキング</span>
+            <span class="ttl"><span class="dot"></span>Skill 利用ランキング</span>
             <span class="help-host">
               <button class="help-btn" type="button" aria-label="説明を表示" aria-expanded="false" aria-describedby="hp-rank-skill" data-help-id="hp-rank-skill">?</button>
               <span class="help-pop" id="hp-rank-skill" role="tooltip" data-place="right">
-                <span class="pop-ttl">スキル利用ランキング</span>
+                <span class="pop-ttl">Skill 利用ランキング</span>
                 <span class="pop-body">PostToolUse(Skill) と UserPromptExpansion / UserPromptSubmit を合算した利用回数の上位 10 件。失敗率は PostToolUseFailure(Skill) ÷ skill_tool 件数。<code>/exit</code> <code>/clear</code> <code>/help</code> などの組み込みコマンドは集計から除外。</span>
               </span>
             </span>
@@ -63,7 +76,7 @@ __INCLUDE_STYLES__
       <div class="panel">
         <div class="panel-head c-coral">
           <div class="ttl-wrap">
-            <span class="ttl"><span class="dot"></span>サブエージェント呼び出し</span>
+            <span class="ttl"><span class="dot"></span>Subagent 呼び出し</span>
             <span class="help-host">
               <button class="help-btn" type="button" aria-label="説明を表示" aria-expanded="false" aria-describedby="hp-rank-sub" data-help-id="hp-rank-sub">?</button>
               <span class="help-pop" id="hp-rank-sub" role="tooltip" data-place="right">
@@ -86,7 +99,7 @@ __INCLUDE_STYLES__
             <button class="help-btn" type="button" aria-label="説明を表示" aria-expanded="false" aria-describedby="hp-daily" data-help-id="hp-daily">?</button>
             <span class="help-pop" id="hp-daily" role="tooltip" data-place="right">
               <span class="pop-ttl">日別利用件数推移</span>
-              <span class="pop-body"><code>skill_tool</code> + <code>user_slash_command</code> + subagent invocation の日次集計。session_start や notification は含めない。peak は最大値の日付、active は利用が観測された日数。</span>
+              <span class="pop-body"><code>skill_tool</code> + <code>user_slash_command</code> + subagent 呼び出しの日次集計。session_start や notification は含めない。ピークは最大値の日付、稼働日数は利用が観測された日数。</span>
             </span>
           </span>
         </div>
@@ -108,7 +121,7 @@ __INCLUDE_STYLES__
             <button class="help-btn" type="button" aria-label="説明を表示" aria-expanded="false" aria-describedby="hp-proj" data-help-id="hp-proj">?</button>
             <span class="help-pop" id="hp-proj" role="tooltip" data-place="right">
               <span class="pop-ttl">プロジェクト別利用状況</span>
-              <span class="pop-body">cwd（プロジェクトディレクトリ）ごとの利用件数。上位 10 件を表示。帯は全体に占める割合、legend の数字は件数と全体比 (%)。</span>
+              <span class="pop-body">cwd（プロジェクトディレクトリ）ごとの利用件数。上位 10 件を表示。帯は全体に占める割合、凡例の数字は件数と全体比 (%)。</span>
             </span>
           </span>
         </div>
@@ -129,6 +142,9 @@ __INCLUDE_STYLES__
           <h1 id="page-patterns-title"><span class="accent">Patterns</span></h1>
           <p class="lede">利用パターンを可視化します。</p>
         </div>
+        <!-- Issue #85: 期間トグル slot (空)。05_period.js が hashchange で
+             Overview slot から #periodToggle を move してくる。 -->
+        <div class="period-toggle-slot" data-period-slot="patterns"></div>
       </header>
 
       <div class="panel" id="patterns-heatmap-panel">
@@ -139,7 +155,7 @@ __INCLUDE_STYLES__
               <button class="help-btn" type="button" aria-label="説明を表示" aria-expanded="false" aria-describedby="hp-heatmap" data-help-id="hp-heatmap">?</button>
               <span class="help-pop" id="hp-heatmap" role="tooltip" data-place="right">
                 <span class="pop-ttl">時間帯ヒートマップ</span>
-                <span class="pop-body">usage 系イベント (<code>skill_tool</code> / <code>user_slash_command</code> / subagent invocation) を曜日 × 時間帯のグリッドで集計。色が濃いほど件数が多い。タイムゾーンはブラウザ local。subagent は invocation 単位に dedup 済み。</span>
+                <span class="pop-body">usage 系イベント (<code>skill_tool</code> / <code>user_slash_command</code> / subagent 呼び出し) を曜日 × 時間帯のグリッドで集計。色が濃いほど件数が多い。タイムゾーンはブラウザ local。subagent は呼び出し単位に重複排除済み。</span>
               </span>
             </span>
           </div>
@@ -154,11 +170,11 @@ __INCLUDE_STYLES__
       <div class="panel" id="patterns-cooccurrence-panel">
         <div class="panel-head c-coral">
           <div class="ttl-wrap">
-            <span class="ttl"><span class="dot"></span>スキル共起マトリクス</span>
+            <span class="ttl"><span class="dot"></span>Skill 同時利用マトリクス</span>
             <span class="help-host">
               <button class="help-btn" type="button" aria-label="説明を表示" aria-expanded="false" aria-describedby="hp-cooc" data-help-id="hp-cooc">?</button>
               <span class="help-pop" id="hp-cooc" role="tooltip" data-place="right">
-                <span class="pop-ttl">スキル共起</span>
+                <span class="pop-ttl">Skill 同時利用</span>
                 <span class="pop-body">同じセッション内で一緒に使われた skill / slash command のペアを集計。<strong>カウント単位はセッション数</strong> (同一セッション内の重複呼び出しは 1 とみなす)。subagent は対象外。多い順に上位 100 ペアを表示。</span>
               </span>
             </span>
@@ -178,19 +194,19 @@ __INCLUDE_STYLES__
       <div class="panel" id="patterns-projskill-panel">
         <div class="panel-head c-peach">
           <div class="ttl-wrap">
-            <span class="ttl"><span class="dot"></span>プロジェクト × スキル</span>
+            <span class="ttl"><span class="dot"></span>Project × Skill</span>
             <span class="help-host">
               <button class="help-btn" type="button" aria-label="説明を表示" aria-expanded="false" aria-describedby="hp-projskill" data-help-id="hp-projskill">?</button>
               <span class="help-pop" id="hp-projskill" role="tooltip" data-place="right">
-                <span class="pop-ttl">プロジェクト × スキル</span>
-                <span class="pop-body">プロジェクト (上位 10) × スキル (上位 10) のクロス利用件数。色が濃いほど件数が多い。subagent は対象外。上位漏れは表示しないが、サブラベルに上位 10×10 の<strong>カバー率</strong>を表示。</span>
+                <span class="pop-ttl">Project × Skill</span>
+                <span class="pop-body">プロジェクト (上位 10) × スキル (上位 10) のクロス利用件数。色が濃いほど件数が多い。subagent は対象外。上位 10×10 に含まれない組み合わせは表示しないが、サブラベルに上位 10×10 の<strong>カバー率</strong>を表示。</span>
               </span>
             </span>
           </div>
           <span class="sub" id="patterns-projskill-sub"></span>
         </div>
         <div class="panel-body">
-          <div class="projskill" id="patterns-projskill" role="img" aria-label="プロジェクト × スキル ヒートマップ"></div>
+          <div class="projskill" id="patterns-projskill" role="img" aria-label="Project × Skill ヒートマップ"></div>
           <div class="projskill-legend" id="patterns-projskill-legend"></div>
         </div>
       </div>
@@ -201,7 +217,7 @@ __INCLUDE_STYLES__
       <header class="header">
         <div>
           <h1 id="page-quality-title"><span class="accent">Quality</span></h1>
-          <p class="lede">実行品質と摩擦シグナルを可視化します。</p>
+          <p class="lede">実行品質と摩擦の兆候を可視化します。</p>
         </div>
       </header>
 
@@ -214,7 +230,7 @@ __INCLUDE_STYLES__
               <button class="help-btn" type="button" aria-label="説明を表示" aria-expanded="false" aria-describedby="hp-percentile" data-help-id="hp-percentile">?</button>
               <span class="help-pop" id="hp-percentile" role="tooltip" data-place="right">
                 <span class="pop-ttl">所要時間 (percentile)</span>
-                <span class="pop-body">subagent_type ごとの invocation 所要時間を p50 / p90 / p99 で集計。<strong>p99 は最遅 1% の閾値</strong>。avg 平均値だけでは見えない長尾分布を確認できる。計算手法は <code>statistics.quantiles(method="inclusive")</code> = Excel <code>PERCENTILE.INC</code> 等価 (線形補間)。所要時間サンプル数が 1 のときは全 percentile が同値、0 のときは「-」。</span>
+                <span class="pop-body">subagent_type ごとの呼び出し所要時間を p50 / p90 / p99 で集計。<strong>p99 は最遅 1% の閾値</strong>。平均だけでは見えない、裾の長い分布 (long tail) を確認できる。計算手法は <code>statistics.quantiles(method="inclusive")</code> = Excel <code>PERCENTILE.INC</code> 等価 (線形補間)。所要時間サンプル数が 1 のときは全 percentile が同値、0 のときは「-」。</span>
               </span>
             </span>
           </div>
@@ -225,9 +241,9 @@ __INCLUDE_STYLES__
             <thead>
               <tr>
                 <th>Subagent</th>
-                <th class="num">Count</th>
-                <th class="num">Samples</th>
-                <th class="num">avg</th>
+                <th class="num">件数</th>
+                <th class="num">サンプル数</th>
+                <th class="num">平均</th>
                 <th class="num">p50</th>
                 <th class="num">p90</th>
                 <th class="num">p99</th>
@@ -247,7 +263,7 @@ __INCLUDE_STYLES__
               <button class="help-btn" type="button" aria-label="説明を表示" aria-expanded="false" aria-describedby="hp-trend" data-help-id="hp-trend">?</button>
               <span class="help-pop" id="hp-trend" role="tooltip" data-place="right">
                 <span class="pop-ttl">失敗率 (週次)</span>
-                <span class="pop-body">subagent invocation の <strong>週ごとの失敗率</strong> を折れ線で表示。週は <strong>月曜 00:00 UTC 起算</strong>。default で count 上位 5 type に絞って描画 (画面の混雑回避)。observed 0 の週はライン上に点が打たれない。</span>
+                <span class="pop-body">subagent 呼び出しの <strong>週ごとの失敗率</strong> を折れ線で表示。週は <strong>月曜 00:00 UTC 起算</strong>。既定で件数上位 5 種に絞って描画 (画面の混雑回避)。observed 0 の週はライン上に点が打たれない。</span>
               </span>
             </span>
           </div>
@@ -263,12 +279,12 @@ __INCLUDE_STYLES__
       <div class="panel" id="quality-perm-skill-panel">
         <div class="panel-head c-mint">
           <div class="ttl-wrap">
-            <span class="ttl"><span class="dot"></span>Permission prompt × skill (top 10)</span>
+            <span class="ttl"><span class="dot"></span>承認待ち × skill (top 10)</span>
             <span class="help-host">
               <button class="help-btn" type="button" aria-label="説明を表示" aria-expanded="false" aria-describedby="hp-perm-skill" data-help-id="hp-perm-skill">?</button>
               <span class="help-pop" id="hp-perm-skill" role="tooltip" data-place="right">
-                <span class="pop-ttl">Permission per skill</span>
-                <span class="pop-body">permission notification の <strong>直前 30 秒以内 (or 実行中)</strong> に発火していた <code>skill_tool</code> に帰属。1 prompt は 1 候補にのみ帰属 (skill / subagent disjoint)。<code>permission_rate</code> = 帰属 prompt 数 / 総 skill_tool 数。<strong>1 invocation で複数回 permission を聞かれる skill</strong> は rate &gt; 1.0 になる (clamp しない)。settings.json の allowlist 整理 (上位の skill が頻出する Bash / MCP コマンドを <code>permissions.allow</code> に追加) のヒントとして使う。</span>
+                <span class="pop-ttl">skill ごとの承認待ち</span>
+                <span class="pop-body">承認待ち発生の <strong>直前 30 秒以内 (or 実行中)</strong> に発火していた <code>skill_tool</code> に帰属。1 prompt は 1 候補にのみ帰属 (skill / subagent 重複なし)。<code>permission_rate</code> = 帰属 prompt 数 / 総 skill_tool 数。<strong>1 呼び出しで複数回 permission を聞かれる skill</strong> は rate &gt; 1.0 になる (上限 1.0 で打ち切らない)。settings.json の allowlist 整理 (上位の skill が頻出する Bash / MCP コマンドを <code>permissions.allow</code> に追加) のヒントとして使う。</span>
               </span>
             </span>
           </div>
@@ -279,9 +295,9 @@ __INCLUDE_STYLES__
             <thead>
               <tr>
                 <th>Skill</th>
-                <th class="num">Prompts</th>
-                <th class="num">Invocations</th>
-                <th class="num">Rate</th>
+                <th class="num">プロンプト数</th>
+                <th class="num">呼び出し回数</th>
+                <th class="num">比率</th>
               </tr>
             </thead>
             <tbody></tbody>
@@ -293,12 +309,12 @@ __INCLUDE_STYLES__
       <div class="panel" id="quality-perm-subagent-panel">
         <div class="panel-head c-coral">
           <div class="ttl-wrap">
-            <span class="ttl"><span class="dot"></span>Permission prompt × subagent (top 10)</span>
+            <span class="ttl"><span class="dot"></span>承認待ち × subagent (top 10)</span>
             <span class="help-host">
               <button class="help-btn" type="button" aria-label="説明を表示" aria-expanded="false" aria-describedby="hp-perm-sub" data-help-id="hp-perm-sub">?</button>
               <span class="help-pop" id="hp-perm-sub" role="tooltip" data-place="right">
-                <span class="pop-ttl">Permission per subagent</span>
-                <span class="pop-body">permission notification を <strong>subagent invocation の execution interval</strong> に帰属。長時間 subagent の途中で発火した prompt も interval-cover で正しく拾う。skill table と disjoint (= 1 prompt は 1 candidate のみ)。</span>
+                <span class="pop-ttl">subagent ごとの承認待ち</span>
+                <span class="pop-body">承認待ち発生を <strong>subagent 呼び出しの実行区間</strong> に帰属。長時間 subagent の途中で発火した prompt も実行区間内で正しく拾う。skill / subagent 重複なし (= 1 prompt は 1 候補のみ)。</span>
               </span>
             </span>
           </div>
@@ -309,9 +325,9 @@ __INCLUDE_STYLES__
             <thead>
               <tr>
                 <th>Subagent</th>
-                <th class="num">Prompts</th>
-                <th class="num">Invocations</th>
-                <th class="num">Rate</th>
+                <th class="num">プロンプト数</th>
+                <th class="num">呼び出し回数</th>
+                <th class="num">比率</th>
               </tr>
             </thead>
             <tbody></tbody>
@@ -328,7 +344,7 @@ __INCLUDE_STYLES__
               <button class="help-btn" type="button" aria-label="説明を表示" aria-expanded="false" aria-describedby="hp-compact" data-help-id="hp-compact">?</button>
               <span class="help-pop" id="hp-compact" role="tooltip" data-place="right">
                 <span class="pop-ttl">Compact 密度</span>
-                <span class="pop-body">session ごとの <code>compact_start</code> 回数 histogram (0 / 1 / 2 / 3+)。<strong>3+ session が多い</strong> = タスク粒度過大 / <code>/clear</code> タイミングを逃した signal。worst session に載った session_id は session 切り出し / 早期リスタートの示唆。</span>
+                <span class="pop-body">session ごとの <code>compact_start</code> 回数 histogram (0 / 1 / 2 / 3+)。<strong>3+ session が多い</strong> = タスク粒度過大 / <code>/clear</code> タイミングを逃した兆候。最多セッション一覧に載った session_id は session 切り出し / 早期リスタートの示唆。</span>
               </span>
             </span>
           </div>
@@ -341,7 +357,7 @@ __INCLUDE_STYLES__
               <thead>
                 <tr>
                   <th>Session</th>
-                  <th>Project</th>
+                  <th>プロジェクト</th>
                   <th class="num">Compacts</th>
                 </tr>
               </thead>
@@ -357,7 +373,7 @@ __INCLUDE_STYLES__
       <header class="header">
         <div>
           <h1 id="page-surface-title"><span class="accent">Surface</span></h1>
-          <p class="lede">スキルが「呼ばれているか」「育っているか」「使われていないか」を 3 panel で可視化します。</p>
+          <p class="lede">Skill が「呼ばれているか」「育っているか」「使われていないか」を 3 つのパネルで可視化します。</p>
         </div>
       </header>
 
@@ -370,7 +386,7 @@ __INCLUDE_STYLES__
               <button class="help-btn" type="button" aria-label="説明を表示" aria-expanded="false" aria-describedby="hp-inv" data-help-id="hp-inv">?</button>
               <span class="help-pop" id="hp-inv" role="tooltip" data-place="right">
                 <span class="pop-ttl">LLM 自律 vs ユーザー手動</span>
-                <span class="pop-body">同一 skill に対する <code>skill_tool</code> (🤖 LLM が <code>Skill</code> ツールで自律発火) と <code>user_slash_command</code> (👤 ユーザーが <code>/foo</code> で手動発火) の件数比。Mode は <strong>dual</strong> (両方観測) / <strong>llm-only</strong> (Skill ツールのみ) / <strong>user-only</strong> (slash command のみ) の 3-way。<code>dual</code> の LLM 率は <code>tool / (tool + slash)</code>。低い (= ユーザー手動依存が強い) skill は description / trigger が弱く LLM が「思いつかない」候補。</span>
+                <span class="pop-body">同一 skill に対する <code>skill_tool</code> (🤖 LLM が <code>Skill</code> ツールで自律発火) と <code>user_slash_command</code> (👤 ユーザーが <code>/foo</code> で手動発火) の件数比。Mode は <strong>dual</strong> (両方観測) / <strong>llm-only</strong> (Skill ツールのみ) / <strong>user-only</strong> (slash command のみ) の 3-way。<code>dual</code> の LLM 率は <code>tool / (tool + slash)</code>。低い (= ユーザー手動依存が強い) skill は <code>description</code> / <code>trigger</code> が弱く LLM が「思いつかない」候補。</span>
               </span>
             </span>
           </div>
@@ -381,9 +397,9 @@ __INCLUDE_STYLES__
             <thead>
               <tr>
                 <th>Skill</th>
-                <th>Mode</th>
+                <th>起動モード</th>
                 <th class="num">🤖 LLM</th>
-                <th class="num">👤 User</th>
+                <th class="num">👤 ユーザー</th>
                 <th class="num">LLM率</th>
               </tr>
             </thead>
@@ -401,7 +417,7 @@ __INCLUDE_STYLES__
               <button class="help-btn" type="button" aria-label="説明を表示" aria-expanded="false" aria-describedby="hp-life" data-help-id="hp-life">?</button>
               <span class="help-pop" id="hp-life" role="tooltip" data-place="right">
                 <span class="pop-ttl">初回 / 直近 / トレンド</span>
-                <span class="pop-body">各 skill の <code>first_seen</code> / <code>last_seen</code> + 直近 30 日件数 + 全期間件数 + trend ラベル (📈 加速 / ➡️ 安定 / 📉 減速 / 🌱 新規)。<code>first_seen</code> から 14 日未満は trend 判定不可で 🌱 新規。それ以外は <code>recent_rate / overall_rate</code> 比 (>1.5 加速、<0.5 減速、それ以外安定)。並び順は <code>last_seen</code> 降順。</span>
+                <span class="pop-body">各 skill の <code>first_seen</code> / <code>last_seen</code> + 直近 30 日件数 + 全期間件数 + トレンドラベル (📈 加速 / ➡️ 安定 / 📉 減速 / 🌱 新規)。<code>first_seen</code> から 14 日未満はトレンド判定不可で 🌱 新規。それ以外は <code>recent_rate / overall_rate</code> 比 (>1.5 加速、<0.5 減速、それ以外安定)。並び順は <code>last_seen</code> 降順。</span>
               </span>
             </span>
           </div>
@@ -424,16 +440,16 @@ __INCLUDE_STYLES__
         </div>
       </div>
 
-      <!-- (3) Hibernating skills: 未活用 / 新着検知 -->
+      <!-- (3) 休眠スキル: 未活用 / 新着検知 -->
       <div class="panel" id="surface-hib-panel">
         <div class="panel-head c-peach">
           <div class="ttl-wrap">
-            <span class="ttl"><span class="dot"></span>Hibernating skills</span>
+            <span class="ttl"><span class="dot"></span>休眠スキル</span>
             <span class="help-host">
               <button class="help-btn" type="button" aria-label="説明を表示" aria-expanded="false" aria-describedby="hp-hib" data-help-id="hp-hib">?</button>
               <span class="help-pop" id="hp-hib" role="tooltip" data-place="right">
                 <span class="pop-ttl">未活用 / 新着検知</span>
-                <span class="pop-body"><code>~/.claude/skills/*/SKILL.md</code> と usage を cross-reference。14 日以内に呼ばれた skill は <em>active</em> として除外 (Lifecycle panel 側で見える)。残った skill を 🌱 新着 (warming up: mtime ≤14 日 / 未使用) / 💤 休眠 (resting: 15〜30 日未使用) / 🪦 死蔵 (idle: 30 日以上未使用 or 古い install で未使用) に分類。Plugin-bundled skill (<code>~/.claude/plugins/*/skills/</code>) は対象外。</span>
+                <span class="pop-body"><code>~/.claude/skills/*/SKILL.md</code> と usage を突合せ。直近 14 日以内に呼ばれた skill は稼働中として除外 (Lifecycle panel 側で見える)。残った skill を 🌱 新着 (warming up: 更新日時 14 日以内 / 未使用) / 💤 休眠 (resting: 15〜30 日未使用) / 🪦 死蔵 (idle: 30 日以上未使用 or 古い install で未使用) に分類。Plugin 同梱の skill (<code>~/.claude/plugins/*/skills/</code>) は対象外。</span>
               </span>
             </span>
           </div>
@@ -456,7 +472,7 @@ __INCLUDE_STYLES__
               <tr>
                 <th>Skill</th>
                 <th>状態</th>
-                <th>mtime</th>
+                <th>更新日時</th>
                 <th>最終呼び出し</th>
                 <th class="num">経過</th>
               </tr>
@@ -472,10 +488,10 @@ __INCLUDE_STYLES__
       <div class="meta">
         <span class="conn-status" id="connStatus" data-state="reconnect" role="status" aria-live="polite">○ 接続準備中</span>
         <span class="meta-item"><span class="k">最終更新</span><span class="v" id="lastRx">—</span></span>
-        <span class="meta-item"><span class="k">セッション</span><span class="v" id="sessVal">—</span></span>
+        <span class="meta-item"><span class="k">sessions</span><span class="v" id="sessVal">—</span></span>
       </div>
       <div class="credits">
-        <span class="accent">claude-transcript-analyzer</span> · v0.7.2<span class="sep">·</span>stdlib only · no third-party js
+        <span class="accent">claude-transcript-analyzer</span> · v0.7.3<span class="sep">·</span>stdlib only · no third-party js
       </div>
     </footer>
   </div>

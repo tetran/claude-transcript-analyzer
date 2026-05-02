@@ -5,7 +5,8 @@
   //  hashchange listener (下) が page 切替時に loadAndRender を再実行するので、
   //  navigate 直後でも空のままにはならない。
   // ============================================================
-  function renderHourlyHeatmap(payload) {
+  function renderHourlyHeatmap(payload, periodBadge) {
+    const __badge = (typeof periodBadge === 'string') ? periodBadge : '';
     if (document.body.dataset.activePage !== 'patterns') return;
     const root = document.getElementById('patterns-heatmap');
     if (!root) return;
@@ -32,7 +33,7 @@
         const bg = c
           ? 'background: rgba(111, 227, 200, ' + (0.08 + intensity * 0.92).toFixed(3) + ')'
           : '';
-        const al = labels[wd] + ' ' + pad(h, 2) + ':00 — ' + c + ' events';
+        const al = labels[wd] + ' ' + pad(h, 2) + ':00 — ' + c + ' 件';
         html += '<div class="heatmap-cell" style="' + bg + '"' +
           ' data-tip="heatmap" data-wd="' + labels[wd] + '" data-h="' + pad(h, 2) +
           '" data-c="' + c + '" tabindex="0" role="img" aria-label="' + al + '"></div>';
@@ -48,7 +49,7 @@
     const sub = document.getElementById('patterns-heatmap-sub');
     if (sub) {
       const total = buckets.reduce((s, b) => s + b.count, 0);
-      sub.textContent = fmtN(total) + ' events · ' + fmtN(buckets.length) + ' hour buckets';
+      sub.textContent = __badge + fmtN(total) + ' events · ' + fmtN(buckets.length) + ' hour buckets';
     }
   }
 
@@ -57,13 +58,14 @@
   //  page-scoped early-out + 空配列時の empty state 表示。pair は server から
   //  すでに count 降順 + lexicographic 昇順で並んでおり、再 sort 不要。
   // ============================================================
-  function renderSkillCooccurrence(items) {
+  function renderSkillCooccurrence(items, periodBadge) {
+    const __badge = (typeof periodBadge === 'string') ? periodBadge : '';
     if (document.body.dataset.activePage !== 'patterns') return;
     const tbody = document.querySelector('#patterns-cooccurrence tbody');
     if (!tbody) return;
     const list = Array.isArray(items) ? items : [];
     if (list.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="3" class="empty">共起データなし</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="3" class="empty">no data</td></tr>';
     } else {
       tbody.innerHTML = list.map((it) => {
         const a = (it.pair && it.pair[0]) || '';
@@ -80,7 +82,7 @@
     }
     const sub = document.getElementById('patterns-cooccurrence-sub');
     if (sub) {
-      sub.textContent = list.length + ' pairs (top 100)';
+      sub.textContent = __badge + list.length + ' pairs (top 100)';
     }
   }
 
@@ -89,7 +91,8 @@
   //  server は dense matrix + covered_count + total_count を返し、ここで描画。
   //  カバー率 (covered/total) を sub label に出して top 漏れの量を可視化 (Proposal 2)。
   // ============================================================
-  function renderProjectSkillMatrix(payload) {
+  function renderProjectSkillMatrix(payload, periodBadge) {
+    const __badge = (typeof periodBadge === 'string') ? periodBadge : '';
     if (document.body.dataset.activePage !== 'patterns') return;
     const root = document.getElementById('patterns-projskill');
     if (!root) return;
@@ -102,7 +105,7 @@
 
     if (projects.length === 0 || skills.length === 0) {
       root.style.gridTemplateColumns = '';
-      root.innerHTML = '<div class="projskill-empty">データなし</div>';
+      root.innerHTML = '<div class="projskill-empty">no data</div>';
       if (legend) legend.innerHTML = '';
       if (sub) sub.textContent = '';
       return;
@@ -150,7 +153,7 @@
         const pct = Math.round((covered / total) * 100);
         s += ' · ' + pct + '% covered (' + fmtN(covered) + '/' + fmtN(total) + ')';
       }
-      sub.textContent = s;
+      sub.textContent = __badge + s;
     }
   }
 

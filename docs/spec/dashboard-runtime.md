@@ -133,3 +133,32 @@ page-scoped early-out (`if (document.body.dataset.activePage !== '<page>') retur
 hashchange listener を 1 本持つ。router IIFE は先に登録されているため
 `body.dataset.activePage` が更新されてから main IIFE の listener が走り、新 page
 の renderer が正しく動く。
+
+### Period toggle (Issue #85, v0.7.3〜)
+
+- **配置**: 各 page header の右端 slot に表示。`<header class="header">` は
+  `display: grid; grid-template-columns: 1fr auto;` の 2 カラム構成で、
+  右側 (auto) カラムに `<div class="period-toggle-slot" data-period-slot="<page>">` を置く。
+  toggle DOM (`<div id="periodToggle">`) は **1 つだけ** で、初期配置は Overview slot に居る。
+  4 ボタン (`data-period="7d|30d|90d|all"`) で `aria-pressed` で active 表現。
+- **Page 切替時の DOM move**: `05_period.js` の `movePeriodToggleToActivePage()` が
+  hashchange listener で active page slot に DOM を `appendChild` で move する
+  (1 DOM 維持 / state sync 不要)。router IIFE (`00_router.js`) の hashchange listener
+  で `body.dataset.activePage` が先に更新されてから本 listener が走る (登録順 = 発火順)。
+- **可視範囲**: Overview / Patterns 表示時のみ可視。Quality / Surface には slot が
+  存在しないので move 先が無く、`body[data-active-page="quality"|"surface"] #periodToggle { display: none }`
+  の page-scoped CSS rule で隠す (toggle DOM は前 page の slot に残る)。
+- **State**: `05_period.js` の closure-private `__periodCurrent` で持ち、
+  `window.__period.{getCurrentPeriod, setCurrentPeriod, wirePeriodToggle}` を expose。
+  click handler で `aria-pressed` 付け替え + `setCurrentPeriod(p)` + 再 fetch を呼ぶ。
+- **Fetch 経路**: `20_load_and_render.js` の fetch URL は毎呼び出し時に
+  `'/api/data?period=' + encodeURIComponent(getCurrentPeriod())` で組み立てる
+  (call-time lookup で SSE refresh も新 period で走る = race-free)。
+- **永続化なし**: reload で `'all'` にリセットされる仕様 (URL hash 同期 / localStorage
+  保存は本 issue scope 外、将来 issue で再検討)。
+- **Static export**: `render_static_html` 経路 (`window.__DATA__` 既存) では
+  `wirePeriodToggle()` の冒頭で toggle に `hidden` 属性を立てて click bind を skip
+  する (server を経由しないので period 切り替え自体に意味がない)。
+- **Badge 表示**: response の `period_applied !== 'all'` のとき Overview の
+  `dailySub` / `skillSub` / `subSub` / `projSub` と Patterns 3 sub に
+  `<period> 集計 · ` を additive prefix。`'all'` のときは prefix なし (現状互換)。

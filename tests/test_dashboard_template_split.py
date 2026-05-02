@@ -25,28 +25,7 @@ _DASHBOARD_PATH = Path(__file__).parent.parent / "dashboard" / "server.py"
 # 改行の取り扱いを含めた byte 等価性を保証する。
 #
 # 意図的な template 変更時は新 hash に更新する (docstring 参照)。
-# 履歴:
-#   - 39ad755c...: v0.7.0 / Issue #67 split 直後
-#   - 7538e22b...: Issue #65 / local TZ 化で 10_helpers.js + 20_load_and_render.js 改修
-#   - f27e07c7...: Issue #65 fix-up / formatLocalTimestamp に falsy ガード追加
-#   - e7440528...: Issue #69 / live diff highlight + toast (25_live_diff.js 追加, shell.html / 10_components.css / 20_load_and_render.js / _MAIN_JS_FILES 改修)
-#   - 4feb318f...: Issue #69 fix-up / KPI tile に id="' + g.id + '" を追加 (applyHighlights getElementById 命中)
-#   - f53d0dab...: Issue #69 UX 調整 / toast を横方向中央寄せ + coral 系 color に変更
-#   - a4885a23...: Issue #69 UX 調整 / toast 表示時間を 4s → 6s に延長
-#   - f7bcb6b0...: Issue #69 UX 調整 / toast fade-out transition を 240ms 完走させる二段 timer 設計
-#   - 42d23915...: Issue #69 UX 調整 / 表示中上書き時の slide-in 再生 + 表示時間を 6s → 4s に戻す
-#   - 2964f3e9...: Issue #69 UX 調整 / requestAnimationFrame で frame 分割 (style 変更 collapse 回避)
-#   - e787b78b...: Issue #69 UX 調整 / CSS animation (@keyframes toast-in/out) に切替 (CSS transition 方式は実機で再生されない問題への対処)
-#   - 4f4b511f...: Issue #69 fix-up / scheduleLoadAndRender で SSE refresh と hashchange の loadAndRender 並行発火を直列化 (stale-snapshot race 対策)
-#   - ef1c669f...: v0.7.1 release / footer の version 表記 v0.7 → v0.7.1 に bump
-#   - 2c38c50e...: Issue #81 / Overview KPI 上段の `kpi-skills` / `kpi-subs` / `kpi-projs` / `ledeProjects` を `*_kinds_total` / `project_total` (cap 無し) を読むように切替 + help body 文言更新 + 25_live_diff.js も同期 (20_load_and_render.js / 25_live_diff.js)
-#   - af715e7b...: Issue #83 / Live heartbeat sparkline (15_heartbeat.css + 15_heartbeat.js 追加 / shell.html nav.page-nav に <svg id="heartbeat"> + sr-only span / 10_helpers.js setConnStatus 経由で heartbeat sync / 70_init_eventsource.js で start + bump)
-#   - 31fc9f48...: Issue #83 codex Round 1 fix-up / __hbTick を refresh-rate 非依存に切替 (requestAnimationFrame の timestamp で elapsed-ms 駆動。HB_MS_PER_SAMPLE=33 / HB_MAX_CATCHUP_SAMPLES=5 / __hbLastTickMs / __hbAccumMs 追加)
-#   - 2bab4e88...: Issue #83 codex Round 2 fix-up / idle baseline に breathing wave 追加 (__hbTickCount + sin) + stopHeartbeat() で __hbLastTickMs / __hbAccumMs リセット (resume 時 catch-up 暴走防止)
-#   - 4b429ad2...: Issue #83 user follow-up / heartbeat 線そのものを常時明滅 (CSS @keyframes heartbeat-pulse で stroke-opacity を 1.0 ↔ 0.4 で 1s 周期、state 別 opacity と独立軸)
-#   - 5883a091...: Issue #83 user follow-up tweak / 明滅周期を 1s → 3s に調整 (呼吸テンポ感 / ambient indicator として落ち着いた pulse)
-#   - 28745c0d...: v0.7.2 release / footer の version 表記 v0.7.1 → v0.7.2 に bump
-EXPECTED_TEMPLATE_SHA256 = "28745c0d8e0cc540f9ec2a6d75ff154a21ed1f1bcfd226f94b43a2eabca13567"
+EXPECTED_TEMPLATE_SHA256 = "c1bf0068c8019b9a87826902fee7193abc44d7c432096139fabe211650eed474"
 
 
 def _load_dashboard_module(tmp_path: Path):

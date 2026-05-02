@@ -55,11 +55,12 @@ class TestSurfacePagePanels:
         thead_start = section.index('<thead>', idx)
         thead_end = section.index('</thead>', thead_start)
         thead = section[thead_start:thead_end]
-        # 列順: Skill / Mode / LLM / User / LLM率
-        # (LLM / User は Mode 列の値 user-only / llm-only と統一感を持たせる)
+        # 列順: Skill / 起動モード / LLM / ユーザー / LLM率
+        # (LLM / ユーザー は MODE_LABEL の値 dual / llm-only / user-only と整合)
         # 「自律率」は「自殺率」と誤読されうるため UI は「LLM率」に揃える (API field 名は autonomy_rate のまま)
+        # Issue #89: Mode → 起動モード、User → ユーザー (一般語日本語化)
         positions = []
-        for col in ['Skill', 'Mode', 'LLM', 'User']:
+        for col in ['Skill', '起動モード', 'LLM', 'ユーザー']:
             i = thead.find(col)
             assert i >= 0, f"surface-inv thead missing column: {col}"
             positions.append((i, col))
@@ -135,7 +136,8 @@ class TestSurfacePagePanels:
         thead_start = section.index('<thead>', idx)
         thead_end = section.index('</thead>', thead_start)
         thead = section[thead_start:thead_end]
-        for col in ['Skill', '状態', 'mtime', '最終呼び出し', '経過']:
+        # Issue #89: mtime → 更新日時 (一般語日本語化)
+        for col in ['Skill', '状態', '更新日時', '最終呼び出し', '経過']:
             assert col in thead, f"surface-hib thead missing column: {col}"
 
     def test_hibernating_renderer_exists(self):
