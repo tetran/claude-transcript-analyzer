@@ -49,7 +49,8 @@ _DASHBOARD_PATH = Path(__file__).parent.parent / "dashboard" / "server.py"
 #   - 7b1575a2...: Issue #85 / Dashboard period toggle (05_period.js + period-toggle DOM/CSS / shell.html nav に periodToggle / 30_pages.css に .period-toggle + page-scoped hide / 20_load_and_render.js fetch URL に period query + sub badge prefix / 30_renderers_patterns.js renderer 第 2 引数で badge 受領)
 #   - 043e5666...: Issue #85 codex Round 4 fix-up / 25_live_diff.js に resetLiveSnapshot を追加 + 05_period.js click handler で period 切替時に resetLiveSnapshot 呼出 (前 period snapshot と新 period snapshot の false-burst diff 抑止)
 #   - 34734785...: Issue #85 follow-up / トグルを各 page header の右端に移動 (shell.html nav から除去 + Overview/Patterns 各 header に data-period-slot / 30_pages.css に .period-toggle-slot 追加 / 05_period.js に movePeriodToggleToActivePage + hashchange listener)
-EXPECTED_TEMPLATE_SHA256 = "34734785b10c9b9cb25090c1a20777a8fd281f03c858d1e136b0c47ab8934dcb"
+#   - 3bae20b9...: Issue #89 / Dashboard 文言全体修正 (英語残存 / 表記揺れ / 難解日本語の整理 — shell.html panel ttl/pop-ttl/pop-body/th/lede + 20_load_and_render.js KPI 配列/sparkline/aria-label + 30/40/50 renderers の empty state を no data 統一 + 90_data_tooltip.js MODE_TIP 'Mixed' → 'Dual' chip-tooltip parity)
+EXPECTED_TEMPLATE_SHA256 = "3bae20b93ce2c6e3a86b906e079289bb09b3e14fb9b9c5cb6275758fe8476f9b"
 
 
 def _load_dashboard_module(tmp_path: Path):
