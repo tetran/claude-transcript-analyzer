@@ -22,7 +22,8 @@
 
   // header (Issue #65: local TZ 表記に統一)
   document.getElementById('lastRx').textContent = formatLocalTimestamp(data.last_updated);
-  document.getElementById('sessVal').textContent = (ss.total_sessions || 0) + ' sessions';
+  // footer の `<span class="k">sessions</span>` (Issue #89) と重複しないよう数字単独で書き出す。
+  document.getElementById('sessVal').textContent = ss.total_sessions || 0;
 
   // Issue #65: daily 系 KPI / sparkline は data.daily_trend (= server UTC bucket) ではなく
   // hourly_heatmap.buckets を local TZ で再集計した localDays を使う。
@@ -39,7 +40,7 @@
 
   // ---- KPI definitions (ヘルプ本文を含む) ----
   const kpis = [
-    { id: 'kpi-total', k: '総イベント数', v: fmtN(data.total_events), s: '<em>' + localDays.length + '</em> 日間の観測', cls: '',
+    { id: 'kpi-total', k: 'total events', v: fmtN(data.total_events), s: '<em>' + localDays.length + '</em> 日間の観測', cls: '',
       helpTtl: '総イベント数', helpBody: 'skill 利用と subagent 呼び出しの合計件数。subagent は PostToolUse / SubagentStart の重複発火を <code>1 呼び出し = 1 件</code> に重複排除済み。session_start や notification は含めない。' },
     { id: 'kpi-skills', k: 'skills',
       v: (data.skill_kinds_total != null ? data.skill_kinds_total : (data.skill_ranking||[]).length),
@@ -49,17 +50,17 @@
       v: (data.subagent_kinds_total != null ? data.subagent_kinds_total : (data.subagent_ranking||[]).length),
       s: '種類数', cls: 'c-coral',
       helpTtl: 'Subagent 種別数', helpBody: '観測された subagent の種類数（呼び出し単位で重複排除済み）。' },
-    { id: 'kpi-projs', k: 'プロジェクト数',
+    { id: 'kpi-projs', k: 'projects',
       v: (data.project_total != null ? data.project_total : (data.project_breakdown||[]).length),
       s: 'ディレクトリ単位', cls: 'c-peach',
       helpTtl: 'プロジェクト数', helpBody: '利用が観測されたプロジェクト（cwd 単位）。同じディレクトリ配下のセッションは同一プロジェクトとして集計。' },
     { id: 'kpi-sess', k: 'sessions', v: ss.total_sessions || 0, cls: 'c-peri',
       helpTtl: 'セッション数', helpBody: 'SessionStart hook で観測された Claude Code セッションの開始回数。同じ session_id の startup と resume は別セッションとして数える。' },
-    { id: 'kpi-resume', k: 'Resume 率', v: ss.total_sessions ? Math.round((ss.resume_rate||0)*100)+'%' : '--', sm: true, cls: 'c-mute',
+    { id: 'kpi-resume', k: 'resume rate', v: ss.total_sessions ? Math.round((ss.resume_rate||0)*100)+'%' : '--', sm: true, cls: 'c-mute',
       helpTtl: 'Resume 率', helpBody: 'セッション開始のうち <code>--resume</code> での再開（source="resume"）が占める割合。新規 startup と区別される。' },
     { id: 'kpi-compact', k: 'compactions', v: ss.compact_count || 0, sm: true, cls: 'c-mute',
       helpTtl: 'Compact 数', helpBody: 'コンテキスト自動圧縮（PreCompact hook）の発生回数。auto / manual の両方を合算。' },
-    { id: 'kpi-perm', k: '承認待ち', v: ss.permission_prompt_count || 0, sm: true,
+    { id: 'kpi-perm', k: 'permission gate', v: ss.permission_prompt_count || 0, sm: true,
       cls: (ss.permission_prompt_count||0) > 5 ? 'warn' : 'c-mute',
       warn: (ss.permission_prompt_count||0) > 5,
       helpTtl: '承認待ち', helpBody: '許可ダイアログ（Notification の type=<code>permission</code> / <code>permission_prompt</code>）の発生回数。多いと作業中の中断が増えていることを示す。' },

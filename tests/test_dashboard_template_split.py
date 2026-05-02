@@ -50,7 +50,8 @@ _DASHBOARD_PATH = Path(__file__).parent.parent / "dashboard" / "server.py"
 #   - 043e5666...: Issue #85 codex Round 4 fix-up / 25_live_diff.js に resetLiveSnapshot を追加 + 05_period.js click handler で period 切替時に resetLiveSnapshot 呼出 (前 period snapshot と新 period snapshot の false-burst diff 抑止)
 #   - 34734785...: Issue #85 follow-up / トグルを各 page header の右端に移動 (shell.html nav から除去 + Overview/Patterns 各 header に data-period-slot / 30_pages.css に .period-toggle-slot 追加 / 05_period.js に movePeriodToggleToActivePage + hashchange listener)
 #   - 3bae20b9...: Issue #89 / Dashboard 文言全体修正 (英語残存 / 表記揺れ / 難解日本語の整理 — shell.html panel ttl/pop-ttl/pop-body/th/lede + 20_load_and_render.js KPI 配列/sparkline/aria-label + 30/40/50 renderers の empty state を no data 統一 + 90_data_tooltip.js MODE_TIP 'Mixed' → 'Dual' chip-tooltip parity)
-EXPECTED_TEMPLATE_SHA256 = "3bae20b93ce2c6e3a86b906e079289bb09b3e14fb9b9c5cb6275758fe8476f9b"
+#   - ca3672af...: Issue #89 fix-up / KPI tile 小キャプション (k:) を全英語に戻す + footer sessions 重複解消 (sessVal を数字単独に変更) + percentile tooltip の p90/p99 lbl 前に半角スペース追加 (Codex Round 1 P3 + ユーザー追加要請)
+EXPECTED_TEMPLATE_SHA256 = "ca3672af83467b8d89deb11337095145f4135e379db38fc5c7ff6c0eec1883de"
 
 
 def _load_dashboard_module(tmp_path: Path):

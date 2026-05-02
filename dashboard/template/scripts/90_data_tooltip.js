@@ -119,8 +119,8 @@
         kind: 'percentile',
         html: '<span class="ttl">' + esc(name) + '</span>' +
               '<span class="lbl">p50</span><span class="val">' + fmtDur(p50) + '</span>' +
-              '<span class="lbl">p90</span><span class="val">' + fmtDur(p90) + '</span>' +
-              '<span class="lbl">p99</span><span class="val">' + fmtDur(p99) + '</span>'
+              ' <span class="lbl">p90</span><span class="val">' + fmtDur(p90) + '</span>' +
+              ' <span class="lbl">p99</span><span class="val">' + fmtDur(p99) + '</span>'
       };
     }
     if (kind === 'trend') {

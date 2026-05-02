@@ -54,11 +54,9 @@ def test_no_residual_english_labels():
         # Hibernating skills 翻訳 (❶, v4)
         "Hibernating skills",
 
-        # KPI tile k/s 一般語日本語化 (❸, §2.5, v5 反映)
-        "k: 'total events'",
-        "k: 'projects'",
-        "k: 'resume rate'",
-        "k: 'permission gate'",
+        # KPI tile s: 一般語日本語化 (❸, §2.5)。
+        # ※ k: の「カードタイトル」は user follow-up でユーザー判断により全英語に戻す。
+        # forbidden には残さない (total events / projects / resume rate / permission gate)。
         "s: 'unique kinds'",
         "s: 'distinct cwds'",
 
@@ -128,11 +126,10 @@ def test_required_new_labels_present():
         # Hibernating skills 翻訳 (❶, v4)
         "休眠スキル",
 
-        # KPI tile k/s 日本語化 (❸, §2.5, v5 反映)
-        "k: '総イベント数'",
-        "k: 'プロジェクト数'",
-        "k: 'Resume 率'",
-        "k: '承認待ち'",
+        # KPI tile s: 日本語化 (❸, §2.5)。
+        # ※ k: の「カードタイトル」は user follow-up により全英語維持。
+        # required 側にも total events / projects / resume rate / permission gate
+        # を pin することはしない (Claude-spec 以外も英語形に統一)。
         "s: '種類数'",
         "s: 'ディレクトリ単位'",
 
