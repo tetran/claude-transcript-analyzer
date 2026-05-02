@@ -33,7 +33,7 @@
         const bg = c
           ? 'background: rgba(111, 227, 200, ' + (0.08 + intensity * 0.92).toFixed(3) + ')'
           : '';
-        const al = labels[wd] + ' ' + pad(h, 2) + ':00 — ' + c + ' events';
+        const al = labels[wd] + ' ' + pad(h, 2) + ':00 — ' + c + ' 件';
         html += '<div class="heatmap-cell" style="' + bg + '"' +
           ' data-tip="heatmap" data-wd="' + labels[wd] + '" data-h="' + pad(h, 2) +
           '" data-c="' + c + '" tabindex="0" role="img" aria-label="' + al + '"></div>';
@@ -65,7 +65,7 @@
     if (!tbody) return;
     const list = Array.isArray(items) ? items : [];
     if (list.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="3" class="empty">共起データなし</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="3" class="empty">no data</td></tr>';
     } else {
       tbody.innerHTML = list.map((it) => {
         const a = (it.pair && it.pair[0]) || '';
@@ -105,7 +105,7 @@
 
     if (projects.length === 0 || skills.length === 0) {
       root.style.gridTemplateColumns = '';
-      root.innerHTML = '<div class="projskill-empty">データなし</div>';
+      root.innerHTML = '<div class="projskill-empty">no data</div>';
       if (legend) legend.innerHTML = '';
       if (sub) sub.textContent = '';
       return;

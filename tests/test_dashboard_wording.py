@@ -259,7 +259,9 @@ def test_empty_state_messages_unified():
     template = _load()
     # word-boundary に厳密化: class 値が "empty" 単体 か "empty <修飾>" / "<修飾> empty" の形のみ。
     # `empty-row` / `empty-state-warn` 等の派生 class 名は除外する。
-    pattern = re.compile(r'class="(?:[^"]*\s)?empty(?:\s[^"]*)?">([^<]+)<')
+    # `projskill-empty` は Issue #59 の独立 class 名 (CSS 上 `.empty` と同じ属性) で、
+    # plan §1 Non-Goals により class 名は維持。本 test では同 class も empty 一族として拾う。
+    pattern = re.compile(r'class="(?:[^"]*\s)?(?:empty|projskill-empty)(?:\s[^"]*)?">([^<]+)<')
     matches = pattern.findall(template)
     assert matches, "empty 状態セルが 1 件もマッチしない (regex 不一致の可能性)"
     for txt in matches:
