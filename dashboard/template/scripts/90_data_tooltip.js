@@ -168,7 +168,7 @@
       const sid = el.getAttribute('data-sid') || '';
       const proj = el.getAttribute('data-proj') || '';
       const c = el.getAttribute('data-c') || '0';
-      const projDisplay = proj === '' ? '(unknown)' : proj;
+      const projDisplay = proj === '' ? '（不明）' : proj;
       return {
         kind: 'worst-session',
         html: '<span class="ttl">' + esc(sid) + '</span>' +
@@ -223,7 +223,7 @@
       const MODE_TIP = {
         'llm-only':  '🤖 LLM-only',
         'user-only': '👤 User-only',
-        'mixed':     '🤝 Mixed',
+        'mixed':     '🤝 Dual',
       };
       const rateText = rateRaw === '' ?
         '<span class="dim">—</span>' :
@@ -269,7 +269,7 @@
       const name = el.getAttribute('data-name') || '';
       const status = el.getAttribute('data-status') || '';
       const STATUS_TIP = {
-        'warming_up': '🌱 新着 (mtime ≤14 日 / 未使用)',
+        'warming_up': '🌱 新着 (更新日時 14 日以内 / 未使用)',
         'resting':    '💤 休眠 (15〜30 日未使用)',
         'idle':       '🪦 死蔵 (30 日以上未使用)',
       };

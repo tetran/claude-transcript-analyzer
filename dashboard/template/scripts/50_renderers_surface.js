@@ -98,7 +98,7 @@
     if (sub) sub.textContent = list.length + ' skill(s)';
   }
 
-  // Panel 3: Hibernating skills
+  // Panel 3: 休眠スキル
   function renderSkillHibernating(payload) {
     if (document.body.dataset.activePage !== 'surface') return;
     const data = (payload && typeof payload === 'object') ? payload : {};

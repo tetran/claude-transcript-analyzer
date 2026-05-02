@@ -69,7 +69,7 @@
       e.byWeek.set(r.week_start, r);
       weekSet.add(r.week_start);
     }
-    // server は観測なし週を返さない (sparse) ので、観測週だけで weekSet を作ると
+    // server は観測ゼロ週を返さない (sparse) ので、観測週だけで weekSet を作ると
     // W1/W3 のみ観測時に空 W2 が x-axis から消えて W1 と W3 が隣接描画される。
     // observedWeeks の最初〜最後を 7-day 増分で densify し、空週も timeline 上に
     // calendar 時系列として表示する (xOf(i) が暦週位置に揃う)。
