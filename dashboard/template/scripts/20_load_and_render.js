@@ -39,30 +39,30 @@
 
   // ---- KPI definitions (ヘルプ本文を含む) ----
   const kpis = [
-    { id: 'kpi-total', k: 'total events', v: fmtN(data.total_events), s: '<em>' + localDays.length + '</em> 日間の観測', cls: '',
-      helpTtl: '総イベント数', helpBody: 'スキル利用と subagent invocation の合計件数。subagent は PostToolUse / SubagentStart の重複発火を <code>1 invocation = 1 件</code> に dedup 済み。session_start や notification は含めない。' },
+    { id: 'kpi-total', k: '総イベント数', v: fmtN(data.total_events), s: '<em>' + localDays.length + '</em> 日間の観測', cls: '',
+      helpTtl: '総イベント数', helpBody: 'skill 利用と subagent 呼び出しの合計件数。subagent は PostToolUse / SubagentStart の重複発火を <code>1 呼び出し = 1 件</code> に重複排除済み。session_start や notification は含めない。' },
     { id: 'kpi-skills', k: 'skills',
       v: (data.skill_kinds_total != null ? data.skill_kinds_total : (data.skill_ranking||[]).length),
-      s: 'unique kinds', cls: '',
-      helpTtl: 'スキル種別数', helpBody: '観測されたスキルの種類数。スキル本体（PostToolUse(Skill)）とユーザー入力のスラッシュコマンド（UserPromptExpansion / Submit）を合算してカウント。' },
+      s: '種類数', cls: '',
+      helpTtl: 'スキル種別数', helpBody: '観測された skill の種類数。skill 本体（PostToolUse(Skill)）とユーザー入力の slash command（UserPromptExpansion / Submit）を合算してカウント。' },
     { id: 'kpi-subs', k: 'subagents',
       v: (data.subagent_kinds_total != null ? data.subagent_kinds_total : (data.subagent_ranking||[]).length),
-      s: 'unique kinds', cls: 'c-coral',
-      helpTtl: 'Subagent 種別数', helpBody: '観測された subagent の種類数（invocation 単位で dedup 済み）。' },
-    { id: 'kpi-projs', k: 'projects',
+      s: '種類数', cls: 'c-coral',
+      helpTtl: 'Subagent 種別数', helpBody: '観測された subagent の種類数（呼び出し単位で重複排除済み）。' },
+    { id: 'kpi-projs', k: 'プロジェクト数',
       v: (data.project_total != null ? data.project_total : (data.project_breakdown||[]).length),
-      s: 'distinct cwds', cls: 'c-peach',
+      s: 'ディレクトリ単位', cls: 'c-peach',
       helpTtl: 'プロジェクト数', helpBody: '利用が観測されたプロジェクト（cwd 単位）。同じディレクトリ配下のセッションは同一プロジェクトとして集計。' },
     { id: 'kpi-sess', k: 'sessions', v: ss.total_sessions || 0, cls: 'c-peri',
       helpTtl: 'セッション数', helpBody: 'SessionStart hook で観測された Claude Code セッションの開始回数。同じ session_id の startup と resume は別セッションとして数える。' },
-    { id: 'kpi-resume', k: 'resume rate', v: ss.total_sessions ? Math.round((ss.resume_rate||0)*100)+'%' : '--', sm: true, cls: 'c-mute',
+    { id: 'kpi-resume', k: 'Resume 率', v: ss.total_sessions ? Math.round((ss.resume_rate||0)*100)+'%' : '--', sm: true, cls: 'c-mute',
       helpTtl: 'Resume 率', helpBody: 'セッション開始のうち <code>--resume</code> での再開（source="resume"）が占める割合。新規 startup と区別される。' },
     { id: 'kpi-compact', k: 'compactions', v: ss.compact_count || 0, sm: true, cls: 'c-mute',
       helpTtl: 'Compact 数', helpBody: 'コンテキスト自動圧縮（PreCompact hook）の発生回数。auto / manual の両方を合算。' },
-    { id: 'kpi-perm', k: 'permission gate', v: ss.permission_prompt_count || 0, sm: true,
+    { id: 'kpi-perm', k: '承認待ち', v: ss.permission_prompt_count || 0, sm: true,
       cls: (ss.permission_prompt_count||0) > 5 ? 'warn' : 'c-mute',
       warn: (ss.permission_prompt_count||0) > 5,
-      helpTtl: 'Permission Prompt', helpBody: '許可ダイアログ（Notification の type=<code>permission</code> / <code>permission_prompt</code>）の発生回数。多いと作業中の中断が増えていることを示す。' },
+      helpTtl: '承認待ち', helpBody: '許可ダイアログ（Notification の type=<code>permission</code> / <code>permission_prompt</code>）の発生回数。多いと作業中の中断が増えていることを示す。' },
   ];
 
   document.getElementById('kpiRow').innerHTML = kpis.map(g => {
@@ -112,7 +112,7 @@
         (it.failure_count != null ? ' data-fail="' + it.failure_count + '"' : '') +
         (it.failure_rate != null ? ' data-fail-rate="' + it.failure_rate + '"' : '') +
         (it.avg_duration_ms != null ? ' data-avg="' + it.avg_duration_ms + '"' : '');
-      const al = it.name + ': ' + it.count + (kind === 'subagent' ? ' invocations' : ' uses');
+      const al = it.name + ': ' + it.count + (kind === 'subagent' ? ' 呼び出し' : ' 件');
       return '<div class="rank-row ' + kind + '"' + dataAttrs +
         ' tabindex="0" role="img" aria-label="' + esc(al) + '">' +
         '<div class="rk">' + pad(i+1,2) + '</div>' +
@@ -182,7 +182,7 @@
       const cx = xs(i);
       const x = Math.max(0, cx - bandHalfW).toFixed(2);
       const w = Math.min(W - parseFloat(x), bandHalfW * 2).toFixed(2);
-      const al = d.date + ': ' + d.count + ' events';
+      const al = d.date + ': ' + d.count + ' 件';
       return '<rect class="day-band" x="' + x + '" y="0" width="' + w + '" height="' + (H - pad_y) + '" ' +
         'fill="transparent" data-tip="daily" data-d="' + d.date + '" data-c="' + d.count + '" ' +
         'tabindex="0" role="img" aria-label="' + al + '"/>';
@@ -218,10 +218,10 @@
     const avg = total / days.length;
     const active = days.filter(d=>d.count>0).length;
     const sparkStats = [
-      { k: 'peak',     v: max + (max > 0 ? ' / ' + peakDate.slice(5) : '') },
-      { k: 'avg/day',  v: avg.toFixed(1) },
-      { k: 'active',   v: active + '/' + days.length + 'd' },
-      { k: 'window',   v: days[0].date.slice(5) + ' → ' + days[days.length-1].date.slice(5) },
+      { k: 'ピーク',          v: max + (max > 0 ? ' / ' + peakDate.slice(5) : '') },
+      { k: '1 日あたり平均',  v: avg.toFixed(1) },
+      { k: '稼働日数',        v: active + '/' + days.length + 'd' },
+      { k: '期間',            v: days[0].date.slice(5) + ' → ' + days[days.length-1].date.slice(5) },
     ];
     document.getElementById('sparkStats').innerHTML = sparkStats.map(r =>
       '<div class="row"><span class="k">' + r.k + '</span><span class="v">' + r.v + '</span></div>'
@@ -234,7 +234,7 @@
   const projTotal = projs.reduce((s,p)=>s+p.count, 0);
   const palette = ['#6fe3c8','#ff8a76','#8aa6ff','#ffc97a','#ff6f9c','#a78bfa','#7ed3a3','#ffa86b','#5dc9e2','#e6a8e8'];
   function projPct(p) { return projTotal ? (p.count/projTotal*100).toFixed(1) + '%' : '0.0%'; }
-  function projAria(p, pct) { return esc(p.project) + ': ' + fmtN(p.count) + ' events (' + pct + ')'; }
+  function projAria(p, pct) { return esc(p.project) + ': ' + fmtN(p.count) + ' 件 (' + pct + ')'; }
   document.getElementById('stack').innerHTML = projs.map((p, i) => {
     const w = projTotal ? (p.count/projTotal*100) : 0;
     const pct = projPct(p);
