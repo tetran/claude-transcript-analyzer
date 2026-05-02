@@ -17,13 +17,13 @@
     const sub = document.getElementById('surface-inv-sub');
     if (!tbody) return;
     const MODE_LABEL = {
-      'dual':      '🤝 dual',
-      'llm-only':  '🤖 llm-only',
-      'user-only': '👤 user-only',
+      'dual':      '🤝 Dual',
+      'llm-only':  '🤖 LLM-only',
+      'user-only': '👤 User-only',
     };
     const list = Array.isArray(items) ? items : [];
     if (list.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="5" class="empty">観測なし</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="5" class="empty">no data</td></tr>';
     } else {
       tbody.innerHTML = list.map(it => {
         const mode = it.mode || '';
@@ -71,7 +71,7 @@
     const list = Array.isArray(items) ? items : [];
     const nowMs = Date.now();
     if (list.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="6" class="empty">観測なし</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="6" class="empty">no data</td></tr>';
     } else {
       tbody.innerHTML = list.map(it => {
         const trend = it.trend || 'stable';
@@ -98,7 +98,7 @@
     if (sub) sub.textContent = list.length + ' skill(s)';
   }
 
-  // Panel 3: Hibernating skills
+  // Panel 3: 休眠スキル
   function renderSkillHibernating(payload) {
     if (document.body.dataset.activePage !== 'surface') return;
     const data = (payload && typeof payload === 'object') ? payload : {};
@@ -115,7 +115,7 @@
     };
     if (!tbody) return;
     if (items.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="5" class="empty">観測なし</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="5" class="empty">no data</td></tr>';
     } else {
       const nowMs = Date.now();
       tbody.innerHTML = items.map(it => {

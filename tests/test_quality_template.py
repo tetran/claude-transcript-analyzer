@@ -78,21 +78,22 @@ class TestQualityPageDOM:
             "renderSubagentFailureTrend(data.subagent_failure_trend) call missing"
 
     def test_percentile_table_has_thead_columns(self):
-        """列順は Subagent / Count / Samples / avg / p50 / p90 / p99 (Samples を Count
+        """列順は Subagent / 件数 / サンプル数 / 平均 / p50 / p90 / p99 (サンプル数 を 件数
         直後に置くことで、percentile の信頼度を最初に整理させる読み順を pin する。
-        sample_count <= count の関係も並びで読み取れる)。"""
+        sample_count <= count の関係も並びで読み取れる)。Issue #89 で Count / Samples /
+        avg を一般語日本語化したが列順契約は維持。"""
         section = _extract_section(_load_template(), 'quality')
         # thead 部分を抜き出して列順を確認
         thead_start = section.index('<thead>')
         thead_end = section.index('</thead>')
         thead = section[thead_start:thead_end]
         positions = []
-        for col in ['Subagent', 'Count', 'Samples', 'avg', 'p50', 'p90', 'p99']:
+        for col in ['Subagent', '件数', 'サンプル数', '平均', 'p50', 'p90', 'p99']:
             idx = thead.find(col)
             assert idx >= 0, f"thead missing column: {col}"
             positions.append((idx, col))
         assert positions == sorted(positions), \
-            f"thead 列順が想定と違う: {[c for _, c in positions]} (期待: Subagent, Count, Samples, avg, p50, p90, p99)"
+            f"thead 列順が想定と違う: {[c for _, c in positions]} (期待: Subagent, 件数, サンプル数, 平均, p50, p90, p99)"
 
     def test_trend_chart_uses_svg(self):
         """renderSubagentFailureTrend 内に <svg / <polyline / <circle が出る"""

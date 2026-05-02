@@ -111,7 +111,10 @@ class TestPatternsCrossTabsDOM:
         # Proposal 2 反映: sub label に covered/total のカバー率が組まれている
         template = _load_template()
         idx = template.index('function renderProjectSkillMatrix')
-        body = template[idx:idx + 2500]
+        # 2500 → 3000 chars: Issue #89 で empty state 文言が「データなし」(5 chars)
+        # → 「no data」(7 chars) に変わった分だけ関数尾の covered_count / % covered が
+        # 窓外に押し出されないよう余裕を持たせる。
+        body = template[idx:idx + 3000]
         assert 'covered_count' in body or 'covered' in body
         assert 'total_count' in body or '% covered' in body
 
