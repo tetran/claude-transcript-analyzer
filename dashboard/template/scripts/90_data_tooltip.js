@@ -223,7 +223,7 @@
       const MODE_TIP = {
         'llm-only':  '🤖 LLM-only',
         'user-only': '👤 User-only',
-        'mixed':     '🤝 Dual',
+        'dual':      '🤝 Dual',
       };
       const rateText = rateRaw === '' ?
         '<span class="dim">—</span>' :
