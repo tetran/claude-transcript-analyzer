@@ -346,7 +346,9 @@ class TestSubagentStopEvent:
         assert ev["session_id"] == "abc123"
         assert "timestamp" in ev
 
-    def test_subagent_stop_with_duration_and_success(self, tmp_path):
+    def test_subagent_stop_with_duration_and_success_payload_does_not_persist_them(self, tmp_path):
+        """drift guard: 実 SubagentStop payload に duration_ms / success は **存在しない**
+        (#93 ローカル観察)。仮に input に紛れていても event には書き出さないことを pin。"""
         usage_file = str(tmp_path / "usage.jsonl")
         stdin = {
             "hook_event_name": "SubagentStop",
@@ -360,10 +362,12 @@ class TestSubagentStopEvent:
         run_script(stdin, usage_file)
         ev = read_events(usage_file)[0]
         assert ev["event_type"] == "subagent_stop"
-        assert ev["duration_ms"] == 45000
-        assert ev["success"] is True
+        assert "duration_ms" not in ev, "duration_ms は実 SubagentStop payload に存在しない (Issue #100 / #93)"
+        assert "success" not in ev, "success は実 SubagentStop payload に存在しない (Issue #100 / #93)"
 
-    def test_subagent_stop_with_failure(self, tmp_path):
+    def test_subagent_stop_with_failure_payload_does_not_persist_success(self, tmp_path):
+        """drift guard: 実 SubagentStop payload に success は無いので、仮に false が
+        入っていても event には書き出さない (Issue #100 / #93)。"""
         usage_file = str(tmp_path / "usage.jsonl")
         stdin = {
             "hook_event_name": "SubagentStop",
@@ -375,7 +379,56 @@ class TestSubagentStopEvent:
         }
         run_script(stdin, usage_file)
         ev = read_events(usage_file)[0]
-        assert ev["success"] is False
+        assert "success" not in ev
+
+    def test_subagent_stop_drops_duration_ms_field_when_provided(self, tmp_path):
+        """drift guard: duration_ms / success が input に紛れても event には出さない
+        ことを直接 pin (Issue #100 / #93)。"""
+        usage_file = str(tmp_path / "usage.jsonl")
+        stdin = {
+            "hook_event_name": "SubagentStop",
+            "agent_type": "Explore",
+            "agent_id": "agent-x",
+            "duration_ms": 99999,
+            "success": True,
+            "session_id": "s1",
+            "cwd": "/p",
+        }
+        run_script(stdin, usage_file)
+        ev = read_events(usage_file)[0]
+        assert ev["event_type"] == "subagent_stop"
+        assert "duration_ms" not in ev
+        assert "success" not in ev
+
+    def test_subagent_stop_captures_agent_transcript_path(self, tmp_path):
+        """新規 capture: agent_transcript_path は filter validation の evidence。
+        値そのものは下流 dedup / filter で使わない (capture only)。"""
+        usage_file = str(tmp_path / "usage.jsonl")
+        stdin = {
+            "hook_event_name": "SubagentStop",
+            "agent_type": "Explore",
+            "agent_id": "agent-x",
+            "agent_transcript_path": "/Users/kkoichi/.claude/projects/foo/agent-x.jsonl",
+            "session_id": "s1",
+            "cwd": "/p",
+        }
+        run_script(stdin, usage_file)
+        ev = read_events(usage_file)[0]
+        assert ev["agent_transcript_path"] == "/Users/kkoichi/.claude/projects/foo/agent-x.jsonl"
+
+    def test_subagent_stop_omits_agent_transcript_path_when_absent(self, tmp_path):
+        """payload に無いときは event に key を入れない (後方互換 + メイン誤発火検出シグナル)。
+        Issue #93 観察: メインスレッド誤発火時は実 subagent 不在 → transcript file も不在。"""
+        usage_file = str(tmp_path / "usage.jsonl")
+        stdin = {
+            "hook_event_name": "SubagentStop",
+            "agent_type": "",
+            "session_id": "s1",
+            "cwd": "/p",
+        }
+        run_script(stdin, usage_file)
+        ev = read_events(usage_file)[0]
+        assert "agent_transcript_path" not in ev
 
     def test_subagent_stop_missing_optional_fields(self, tmp_path):
         """duration_ms / success / agent_id が無くても記録される（後方互換）"""
