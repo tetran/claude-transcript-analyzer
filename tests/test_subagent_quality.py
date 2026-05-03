@@ -51,11 +51,18 @@ def _start(name, session, ts, success=True, duration_ms=None, project="p"):
     return ev
 
 
-def _stop(name, session, ts, success=True, duration_ms=None):
+def _stop(name, session, ts, success=True, duration_ms=None, subagent_id=""):
+    """Helper for fabricating subagent_stop events in unit tests.
+
+    Issue #100: default を `""` に倒し、複数 stop を同 (session, type) bucket に積む
+    既存 fixture が `subagent_metrics._bucket_events` の (session_id, subagent_id) dedup
+    で silent collapse しないようにする。`""` は record_subagent.py:107 が agent_id 不在時に
+    入れる現契約と同じ semantic で、production 観察でも実際に発生するパターン。
+    distinct agent_id の dedup 挙動を試したい test は明示的に `subagent_id=` を渡す。"""
     ev = {
         "event_type": "subagent_stop",
         "subagent_type": name,
-        "subagent_id": "agent_x",
+        "subagent_id": subagent_id,
         "session_id": session,
         "timestamp": ts,
         "success": success,
@@ -237,12 +244,17 @@ class TestSubagentMetricsAddsPercentileFields:
         """同 (session, type) bucket に start 1 + stops 2 のような余り stops が
         あるとき、stop 単独イベントの duration_ms が durations に混入して
         sample_count > count を生まないことを pin (= orphan stop は invocation 単位
-        集計の対象外、`sample_count <= count` invariant を構造的に維持)。"""
+        集計の対象外、`sample_count <= count` invariant を構造的に維持)。
+
+        Issue #100: agent_id を distinct にしているのは Issue #100 dedup
+        ((session_id, subagent_id) min(timestamp) で stop を 1 件化) が orphan
+        scenario を構造的に消滅させないため (= 2 stops が dedup で 1 件に
+        collapse しないように agent_id を分ける)。"""
         events = [
             _start("Explore", "s", "2026-04-22T10:00:00+00:00", duration_ms=1000),
-            _stop("Explore", "s", "2026-04-22T10:00:01+00:00", duration_ms=1000),
+            _stop("Explore", "s", "2026-04-22T10:00:01+00:00", duration_ms=1000, subagent_id="orphan-paired"),
             # orphan stop: invocation がペアリングされない 2 つ目の stop
-            _stop("Explore", "s", "2026-04-22T11:00:00+00:00", duration_ms=5000),
+            _stop("Explore", "s", "2026-04-22T11:00:00+00:00", duration_ms=5000, subagent_id="orphan-extra"),
         ]
         m = subagent_metrics.aggregate_subagent_metrics(events)["Explore"]
         assert m["count"] == 1
@@ -256,11 +268,15 @@ class TestSubagentMetricsAddsPercentileFields:
 
     def test_orphan_stops_do_not_affect_failure_count_drift(self):
         """orphan stop fix 後も failure_count drift guard (Q1) を破らない:
-        _process_bucket と _bucket_invocation_records の failure_count が一致し続ける。"""
+        _process_bucket と _bucket_invocation_records の failure_count が一致し続ける。
+
+        Issue #100: agent_id を distinct にしているのは Issue #100 dedup
+        ((session_id, subagent_id) min(timestamp) で stop を 1 件化) が orphan
+        scenario を構造的に消滅させないため。"""
         events = [
             _start("Explore", "s", "2026-04-22T10:00:00+00:00", success=False),
-            _stop("Explore",  "s", "2026-04-22T10:00:01+00:00", success=False),
-            _stop("Explore",  "s", "2026-04-22T11:00:00+00:00", success=False),  # orphan
+            _stop("Explore",  "s", "2026-04-22T10:00:01+00:00", success=False, subagent_id="orphan-1"),
+            _stop("Explore",  "s", "2026-04-22T11:00:00+00:00", success=False, subagent_id="orphan-2"),  # orphan
         ]
         metrics = subagent_metrics.aggregate_subagent_metrics(events)
         trend = subagent_metrics.aggregate_subagent_failure_trend(events)
