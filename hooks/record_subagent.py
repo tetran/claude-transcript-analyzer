@@ -101,6 +101,12 @@ def _handle_subagent_start(data: dict) -> None:
 
 
 def _handle_subagent_stop(data: dict) -> None:
+    """SubagentStop hook payload を usage.jsonl に記録する。
+
+    Issue #100 (#93 調査結果): 実 SubagentStop payload に `duration_ms` / `success`
+    は存在しないため記録しない (=「常に False で読み捨てられていた」ガードを撤去)。
+    `agent_transcript_path` が来ていれば capture (filter validation 用 evidence)。
+    """
     event = {
         "event_type": "subagent_stop",
         "subagent_type": data.get("agent_type", ""),
@@ -109,10 +115,8 @@ def _handle_subagent_stop(data: dict) -> None:
         "session_id": data.get("session_id", ""),
         "timestamp": _now_iso(),
     }
-    if "duration_ms" in data:
-        event["duration_ms"] = data["duration_ms"]
-    if "success" in data:
-        event["success"] = data["success"]
+    if "agent_transcript_path" in data:
+        event["agent_transcript_path"] = data["agent_transcript_path"]
     append_event(DATA_FILE, event)
 
 
