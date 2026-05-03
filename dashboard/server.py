@@ -17,7 +17,9 @@ from typing import Callable, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from subagent_metrics import (
-    INVOCATION_MERGE_WINDOW_SECONDS,
+    _bucket_events,
+    _build_invocations,
+    _pair_invocations_with_stops,
     aggregate_subagent_failure_trend,
     aggregate_subagent_metrics,
     usage_invocation_events,
@@ -126,20 +128,19 @@ def _filter_events_by_period(
          `cutoff = now - timedelta(days=N)`。
 
       第二段 (canonical invocation/pair propagation): 各 (session_id, subagent_type)
-         バケットを `subagent_metrics._build_invocations` と同等のロジックで
-         canonical invocation 列に再構成し (`subagent_start` / `subagent_lifecycle_start`
-         を `INVOCATION_MERGE_WINDOW_SECONDS` 以内 + 異なる source なら 1 invocation
-         に merge)、各 invocation の paired stop は `_pair_invocations_with_stops`
-         同等の窓 (`[anchor_ts, next_anchor_ts)`) で配り当てる。
+         バケットの invocation/stop pair を `subagent_metrics._bucket_events`
+         + `_build_invocations` + `_pair_invocations_with_stops` に **委譲** して
+         構築する (= canonical 経路と同一の同定 / pairing semantic を再利用)。
          pair (= invocation の全 event + paired stop) のうち 1 event でも第一段で
          kept なら、pair 内全 event を再 include する。
          これにより `failure_rate` / `avg_duration_ms` / pXX duration が period
          boundary 跨ぎで silent drift しないことを構造的に保証する。
          clock skew で `ts > now` と落ちた stop は第一段の排除を尊重し、
          pair 一括 include の対象から除外する (codex round 2 / Issue #85)。
-
-    Mirrors subagent_metrics._build_invocations + _pair_invocations_with_stops
-    semantics. Keep in sync.
+         canonical 側の `(session_id, subagent_id) min(timestamp)` dedup
+         (Issue #100) も同経路で適用される — dup stops は同 session 内で
+         timestamp が clustered なので period 境界跨ぎ問題は起きず、stage 1 で
+         個別に kept される (実害ゼロ)。
     """
     if now is None:
         now = datetime.now(timezone.utc)
@@ -159,119 +160,38 @@ def _filter_events_by_period(
         if cutoff <= ts <= now:
             kept.add(i)
 
-    # 第二段 + 第三段は (session_id, subagent_type) バケット単位で動かす
-    bucket_indices: dict[tuple[str, str], list[int]] = {}
-    for i, ev in enumerate(events):
-        if ev.get("event_type") not in (
-            "subagent_start",
-            "subagent_lifecycle_start",
-            "subagent_stop",
-        ):
-            continue
-        if i not in parsed_idx:
-            continue
-        key = (ev.get("session_id", ""), ev.get("subagent_type", ""))
-        bucket_indices.setdefault(key, []).append(i)
-
-    # bucket は timestamp 順に並べておく
-    for indices in bucket_indices.values():
-        indices.sort(key=lambda idx: parsed_idx[idx])
-
-    # 第二段 + 第三段: 各 bucket を `_build_invocations` の canonical pairing で再構成し、
-    # kept event を含む invocation/pair に属する全 event を再 include。
-    #
-    # Round 2 fix (codex): 旧実装は kept anchor ごとに「sibling/stop を距離 1s 以内で 1 件
-    # 引っ張る」素朴版だったが、隣接 invocation の sibling を不当に pull してしまう
-    # ケース (start_A/lifecycle_A @ cutoff-0.4s + start_B/lifecycle_B @ cutoff+0.4s)
-    # と、未来日付 stop (clock skew で第一段で `ts > now` と drop されたもの) を
-    # 第三段が pull-back するケース両方を検出。canonical pairing に揃えて
-    # 構造的に塞ぐ。
-    _START_ETS = ("subagent_start", "subagent_lifecycle_start")
-    for indices in bucket_indices.values():
-        # `_build_invocations` を mirror: source 重複を merge せず、近接 sibling を 1 invocation 化
-        invocations: list[list[int]] = []  # 各 invocation は event index list
-        last_ts: Optional[datetime] = None
-        last_sources: set[str] = set()
-        for i in indices:
-            et = events[i].get("event_type")
-            if et == "subagent_stop":
-                continue  # 第二段は start/lifecycle のみで pairing
-            source = "start" if et == "subagent_start" else "lifecycle"
-            ts_i = parsed_idx[i]
-            merged = False
-            if (
-                invocations
-                and last_ts is not None
-                and source not in last_sources
-                and abs((ts_i - last_ts).total_seconds()) <= INVOCATION_MERGE_WINDOW_SECONDS
-            ):
-                invocations[-1].append(i)
-                last_sources.add(source)
-                merged = True
-            if not merged:
-                invocations.append([i])
-                last_sources = {source}
-            last_ts = ts_i
-
-        # invocation 境界 (anchor.ts) を求めて stops を canonical pairing で配り当て。
-        # `subagent_metrics._pair_invocations_with_stops` の semantics を mirror:
-        #   - 件数一致 (`len(invocations) == len(stops)`) → sequential 1:1 zip
-        #     (重複発火扱い、timestamp 検査なし。delayed/overlapping stops を許容)
-        #   - 件数不一致:
-        #     - `start.success=False` (start 由来 invocation) → stop プール非消費 / paired=None
-        #     - その他 → timestamp-window: `[anchor_ts, next_anchor_ts)` で最初の未消費 stop
-        inv_anchor_ts: list[datetime] = []
-        for inv_idx_list in invocations:
-            # anchor = subagent_start 優先, 無ければ lifecycle (canonical rep 選択)
-            anchor_idx = next(
-                (j for j in inv_idx_list if events[j].get("event_type") == "subagent_start"),
-                inv_idx_list[0],
-            )
-            inv_anchor_ts.append(parsed_idx[anchor_idx])
-
-        stops_in_bucket = sorted(
-            (j for j in indices if events[j].get("event_type") == "subagent_stop"),
-            key=lambda j: parsed_idx[j],
-        )
-        inv_paired_stop: list[Optional[int]] = [None] * len(invocations)
-        if len(invocations) == len(stops_in_bucket):
-            # 件数一致 → sequential 1:1 (canonical の "重複発火扱い" 分岐)
-            for i in range(len(invocations)):
-                inv_paired_stop[i] = stops_in_bucket[i]
-        else:
-            # 件数不一致 → timestamp-window pairing
-            # start.success=False の invocation は stop プールを消費しない。
-            stop_consumed = [False] * len(stops_in_bucket)
-            for i, anchor_ts in enumerate(inv_anchor_ts):
-                # canonical も start.success=False は stop パスを消費しない
-                start_idx = next(
-                    (j for j in invocations[i] if events[j].get("event_type") == "subagent_start"),
-                    None,
-                )
-                if start_idx is not None and events[start_idx].get("success") is False:
+    # 第二段: canonical helper に invocation 同定 + pair-with-stop を委譲。
+    # 旧実装は手で mirror していたが Issue #85 / #100 で sync drift リスクが
+    # 顕在化したため canonical 直 import に reroute (= mirror 撤去)。
+    # `id(ev)` で events list 内の index に逆引きする (events は live 中に
+    # GC されないので id は stable)。
+    # Stage 1 で drop された bad-ts event は canonical の pairing input から
+    # 除外する: 含めると `_pair_invocations_with_stops` が `ts is None` を
+    # 「window 制約 skip」と解釈し、bad-ts invocation が valid stop を誤って
+    # 消費して boundary-crossing invocation の pull-back を奪う
+    # (regression は test_bad_ts_subagent_event_does_not_consume_pair_stop_for_valid_invocation
+    # で pin)。
+    idx_by_id = {id(ev): i for i, ev in enumerate(events)}
+    parsed_events = [events[i] for i in sorted(parsed_idx)]
+    starts_by_key, stops_by_key, lifecycle_by_key = _bucket_events(parsed_events)
+    for key in set(starts_by_key) | set(lifecycle_by_key):
+        starts_sorted = sorted(starts_by_key.get(key, []), key=lambda e: e.get("timestamp", ""))
+        lifecycle_sorted = sorted(lifecycle_by_key.get(key, []), key=lambda e: e.get("timestamp", ""))
+        stops_sorted = sorted(stops_by_key.get(key, []), key=lambda e: e.get("timestamp", ""))
+        invocations = _build_invocations(starts_sorted, lifecycle_sorted)
+        for inv, paired_stop in _pair_invocations_with_stops(invocations, stops_sorted):
+            members: list[int] = []
+            for source_ev in (inv.get("start"), inv.get("lifecycle")):
+                if source_ev is None:
                     continue
-                next_anchor_ts = inv_anchor_ts[i + 1] if i + 1 < len(inv_anchor_ts) else None
-                for j_pos, stop_idx in enumerate(stops_in_bucket):
-                    if stop_consumed[j_pos]:
-                        continue
-                    stop_ts = parsed_idx[stop_idx]
-                    if stop_ts < anchor_ts:
-                        continue
-                    if next_anchor_ts is not None and stop_ts >= next_anchor_ts:
-                        continue
-                    stop_consumed[j_pos] = True
-                    inv_paired_stop[i] = stop_idx
-                    break
-
-        # canonical invocation/pair 単位で kept 伝播:
-        #   pair 内のいずれかの event が kept なら全員 kept
-        # ただし stop 第一段 drop 理由が `ts > now` (= future-dated, clock skew)
-        # の場合は pull-back せず — 第一段の `ts > now` 排除を尊重する。
-        for i, inv_idx_list in enumerate(invocations):
-            paired_stop_idx = inv_paired_stop[i]
-            members = list(inv_idx_list)
-            if paired_stop_idx is not None and parsed_idx[paired_stop_idx] <= now:
-                members.append(paired_stop_idx)
+                idx = idx_by_id.get(id(source_ev))
+                if idx is None:
+                    continue
+                members.append(idx)
+            if paired_stop is not None:
+                stop_idx = idx_by_id.get(id(paired_stop))
+                if stop_idx is not None and parsed_idx[stop_idx] <= now:
+                    members.append(stop_idx)
             if any(j in kept for j in members):
                 for j in members:
                     kept.add(j)

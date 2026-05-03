@@ -45,9 +45,11 @@ dispatch table) も `docs/transcript-format.md` に集約。
  "project": "chirper", "session_id": "...", "timestamp": "2026-02-28T10:06:00+00:00"}
 
 // Subagent 終了（SubagentStop）
+// 実 hook payload に duration_ms / success は **存在しない** (Issue #100 / #93)。
+// 集計時は (session_id, subagent_id) で min(timestamp) dedup される (同 hook 最大 4 重発火を観測)。
 {"event_type": "subagent_stop", "subagent_type": "Explore", "subagent_id": "agent_...",
  "project": "chirper", "session_id": "...", "timestamp": "2026-02-28T10:07:30+00:00",
- "duration_ms": 90000, "success": true}
+ "agent_transcript_path": "/Users/.../projects/.../agent_....jsonl"}
 
 // セッション開始 / 終了
 {"event_type": "session_start", "source": "startup", "model": "claude-opus-4-7",
@@ -72,6 +74,19 @@ dispatch table) も `docs/transcript-format.md` に集約。
  "memory_type": "project", "load_reason": "session_start",
  "project": "chirper", "session_id": "...", "timestamp": "2026-02-28T10:00:01+00:00"}
 ```
+
+### `subagent_stop` 注意
+
+- **`subagent_type == ""` レコードが構造的に存在する**: SubagentStop hook は
+  メインスレッド停止時にも誤発火することがあり、その場合 `subagent_type` が空。
+  集計側 (`subagent_metrics._bucket_events`) で `if not name: continue` により
+  構造的に除外している。背景・観察値・diagnostic 手順は
+  `docs/reference/subagent-invocation-pairing.md` の "Known artifact" 節を参照。
+- **`duration_ms` / `success` は記録しない**: 実 hook payload に存在しないため
+  `hooks/record_subagent.py:_handle_subagent_stop` はこれらを書き出さない。
+- **`agent_transcript_path`**: SubagentStop hook 入力に含まれる場合のみ
+  capture (filter validation 用 evidence)。aggregator では filter / dedup key
+  として使わない (capture only)。
 
 ## 関連 reference
 
