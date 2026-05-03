@@ -451,13 +451,12 @@ class TestFilterEventsByPeriod:
         assert out == events
 
     def test_bad_ts_subagent_event_does_not_consume_pair_stop_for_valid_invocation(self, tmp_path):
-        """Issue #100 refactor / codex Round 1 P2 regression:
-        bad-ts subagent_start (空 timestamp 等) が同 (session, type) bucket に
+        """bad-ts subagent_start (空 timestamp 等) が同 (session, type) bucket に
         いるとき、canonical pairing input から除外されないと
         `_pair_invocations_with_stops` が `ts is None` を「window 制約 skip」と
-        解釈して bad-ts invocation が valid stop を誤って消費。結果として
+        解釈して bad-ts invocation が valid stop を誤って消費する。結果として
         cutoff 直前の valid start が paired-stop pull-back の機会を失い、
-        period 集計から消える。
+        period 集計から消える (Issue #100)。
 
         旧 mirror 実装は `if i not in parsed_idx: continue` で bucketing 段階で
         bad-ts event を除外していた。canonical 委譲後も同 semantic を維持する

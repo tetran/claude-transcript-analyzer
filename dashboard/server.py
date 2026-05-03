@@ -169,7 +169,8 @@ def _filter_events_by_period(
     # 除外する: 含めると `_pair_invocations_with_stops` が `ts is None` を
     # 「window 制約 skip」と解釈し、bad-ts invocation が valid stop を誤って
     # 消費して boundary-crossing invocation の pull-back を奪う
-    # (codex Round 1 P2 fix)。
+    # (regression は test_bad_ts_subagent_event_does_not_consume_pair_stop_for_valid_invocation
+    # で pin)。
     idx_by_id = {id(ev): i for i, ev in enumerate(events)}
     parsed_events = [events[i] for i in sorted(parsed_idx)]
     starts_by_key, stops_by_key, lifecycle_by_key = _bucket_events(parsed_events)
