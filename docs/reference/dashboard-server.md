@@ -1,6 +1,8 @@
-# Dashboard サーバー実装 — SSE / HTML embed / component composition
+# Dashboard サーバー実装 — SSE / HTML embed / template assembly
 
-`dashboard/server.py` の実装上の非自明ポイントをまとめたリファレンス。stdlib のみで Server-Sent Events を提供し、`window.__DATA__` で初期データを注入し、pylint 違反を `.pylintrc` に逃さず合理的に解消した経緯。
+`dashboard/server.py` の実装上の非自明ポイントをまとめたリファレンス。stdlib のみで Server-Sent Events を提供し、`window.__DATA__` で初期データを注入し、pylint 違反を `.pylintrc` に逃さず合理的に解消した経緯、template 分割と single async IIFE 直下の shared closure 規約まで。
+
+frontend 実装 (TZ 変換 / SPA / sparse-dense / EventSource / fetch coalesce / UI label) は `dashboard-client.md`、aggregator 契約 (dict 順序 / retention cap / drift-guard / period filter) は `dashboard-aggregation.md` を参照。
 
 ---
 
@@ -282,355 +284,40 @@ return (shell
 - `(async function(){` / `})();` の IIFE wrapper は **shell.html 側に置いている**。split file は IIFE body の連続スライスのみ含み、自前で IIFE を開閉しない
 - byte 等価 smoke test (sha256) は強い regression guard。意図的に template を変更したら期待値の hash を更新する
 
----
+### Single async IIFE 直下の shared closure 規約
 
-## §5. Client-side TZ 変換 — UTC で送り local で見せる (Issue #58, #65)
+`shell.html` の `(async function(){ __INCLUDE_MAIN_JS__ })();` は **単一の async IIFE** であって ES module ではない (`<script type="module">` は使っていない)。`_MAIN_JS_FILES` の全ファイル (`10_helpers.js` 〜 `70_init_eventsource.js`) は **同一の関数スコープ closure** を共有し、module-graph hoisting の規則は **適用されない**。
 
-dashboard frontend は **server から UTC で受け取り、client 側で local TZ に変換**
-する分担。「server に client TZ を確実に教える経路が無い」(cookie / header /
-query は SSE と相性が悪い) のと、「DST 境界は `Date` の native methods が正しく
-扱える」のが採用理由。
+#### TDZ semantics の正確な理解
 
-### 該当箇所と入力
+- 後ろのファイル (例: 25) で `let __livePrev = null` を宣言すると、前のファイル (例: 20) の **関数本体** から参照できる。これは「module 間 hoisting」ではなく **「concat 後 IIFE 評価が完了したあとに関数が呼ばれる」** から成り立つ
+- 前のファイル (20) の **トップレベル文** で 25 の `let` を読むと TDZ の `ReferenceError` になる。**関数本体経由なら安全**
+- plan / test name に「module top-level」を書くな。**「IIFE 直下」/「function-scope top」** に統一する。「module top」は将来読者を ESM semantics 探しに誘導する bug-bait
 
-| 場所 | server output | frontend 変換 |
-|---|---|---|
-| Patterns hourly heatmap | `hourly_heatmap.buckets` (UTC hour) | `getDay()` / `getHours()` で local の `(weekday, hour)` 7×24 matrix に bin (`30_renderers_patterns.js`) |
-| Overview sparkline | `hourly_heatmap.buckets` (= 同上) | `localDailyFromHourly(buckets)` (10_helpers.js) で local 日付集約 → `[{date, count}]` |
-| header「最終更新」 | `last_updated` (ISO 8601 with `+00:00`) | `formatLocalTimestamp(iso)` (10_helpers.js) で `"YYYY-MM-DD HH:mm <TZ>"` |
+#### `__<feat>` prefix で名前空間を切る
 
-`subagent_failure_trend` は **Mon 00:00 UTC 起算** で固定 (= server pre-bin 済み
-の week_start を使う)。Issue #65 の射程外。
+closure-private state は **`__<feat>` prefix** をファイル冒頭で宣言する (`__livePrev` for `25_live_diff.js`、`__hb` for heartbeat 等)。新規ファイルはこの prefix で名前空間を確保するだけで他ファイルと衝突しない。`_MAIN_JS_FILES` 全結合に対して `let __<feat><Var>` 文字列が **exactly once** であることを literal-grep test で pin (`tests/test_dashboard_<feature>.py::TestTemplateConcat`)。
 
-### 実装の罠 — `toISOString` を使わない
+#### 単一 writer helper + grep pin で structural contract に変換
 
-`toISOString().slice(0, 10)` は **UTC 日付** を返すため、local TZ 集約には
-**使ってはいけない**。`localDailyFromHourly` / sparkline densify は
-`getFullYear()` / `getMonth()` / `getDate()` を手組みで連結して key を作る:
+「path Y では X を mutate しない」型の自然言語契約は stateless review では検証不能で、将来の inline 代入で簡単に破綻する。代わりに:
 
-```js
-const key = dt.getFullYear() + '-' + pad(dt.getMonth()+1, 2) + '-' + pad(dt.getDate(), 2);
-```
+1. mutation を **named helper 1 個** に閉じる (例: `commitLiveSnapshot(next)` が `__livePrev = next` を独占)
+2. `<helper-file>` (`25_live_diff.js`) に **declaration が 1 個だけ存在** することを literal-pin
+3. **他の `_MAIN_JS_FILES` のどこにも `<var-name> =` (assignment) が無い** ことを grep-pin
 
-densify (観測 0 の中間日も x 軸に並べる) も同様に `new Date(y, m-1, d)` で
-local cursor を作り `setDate(+1)` で進める。`new Date(date+'T00:00:00Z')` +
-`setUTCDate(+1)` 経路は UTC 日付を吐くので避ける。`Date` constructor は月 / 年
-またぎを自動補正するため `setDate(32)` 等でも正しく wrap する。
+JS parser を使わず stdlib-only test で済む。catch path で「mutate しない」契約は helper を呼ばない (catch 後 `return`) ことで自動的に成立する。
 
-### TZ 短縮名は環境依存
+helper を `window.__<feat> = { commit, get }` のように test surface に晒すと Node round-trip からも直接呼べ、DOM-heavy boundary とも干渉しない。helper 名は **契約を announce** する: `setPrev` ではなく `commitLiveSnapshot` (「commit」が「条件付き / 外から gate される」ことを示唆)。
 
-`Intl.DateTimeFormat(undefined, { timeZoneName: 'short' })` の出力は
-**ブラウザ / OS / locale 依存**。本リポジトリで実観測済みの組み合わせ:
+#### 連結順 = load-bearing structural fact
 
-- Node v24 + macOS: `"GMT+9"` (Issue #65 検証時)
-
-ブラウザ実機 (Safari / Edge / Firefox / 旧 Chromium) は未検証。`"JST"` を返す
-環境がある報告は古くから一般的だが、自リポジトリでの pin は持たない。仕様
-としては固定しない (= test pin は正規表現
-`^\d{4}-\d{2}-\d{2} \d{2}:\d{2} \S+$` で吸収)。ユーザー報告で表記が揺れる場合は
-"環境依存" として説明する。
-
-### export_html を別ホストで開いた場合
-
-`reports/export_html.py` は `<script>window.__DATA__ = ...</script>` でデータを
-inline するが、`Date` の TZ 変換は **閲覧ホスト** で実行される。生成ホスト ≠
-閲覧ホスト の場合 (例: JST マシンで生成 → CET マシンで閲覧) は **閲覧ホスト**
-の TZ で表示される。これは仕様 (受け手の体感に合わせるほうが自然)。
+`_MAIN_JS_FILES` の concat 順は `test_<file>_listed_in_main_js_files_tuple` 系で pin する。`__<feat>` の宣言ファイルが consumer ファイルより前か後かで TDZ pass/fail が決まるので、**順序自体が契約**。新規ファイルを足すときは declaration site の前後関係を意図的に決めて test に書く。
 
 ---
 
-## §6. Multi-page SPA shell — router/SSE 直交設計
+## 関連 reference
 
-dashboard は単一 HTML ページの SPA で、4 つの page (`#/`, `#/patterns`,
-`#/quality`, `#/surface`) を **DOM-resident sections + `hidden` toggle** で
-切り替える (Issue #57)。route 切替と SSE refresh が **完全に直交** している
-のが設計の肝。
-
-### 直交の方法 — DOM 残置 + hidden toggle
-
-```html
-<section data-page="overview">  ...全 widget...  </section>
-<section data-page="patterns" hidden>  ...全 widget...  </section>
-<section data-page="quality"  hidden>  ...全 widget...  </section>
-<section data-page="surface"  hidden>  ...全 widget...  </section>
-```
-
-- すべての `<section>` が **常に DOM 内にいる**。route 切替は `hidden`
-  attribute と `aria-current` / `body[data-active-page]` の更新のみ
-- 既存 renderer (`loadAndRender()`) は `getElementById('kpiRow')` 系の
-  **絶対 lookup** を使い続けられる (要素がまだ document に存在するため)
-- SSE refresh が hidden page も含む全 section を upserts → 戻ってきた時に
-  最新
-
-### Router の責務分離
-
-router IIFE (`00_router.js`) は
-
-- `HASH_TO_PAGE` テーブル (`#/` / `#/patterns` / `#/quality` / `#/surface`
-  → page 名)
-- `applyRoute()`: hidden toggle + dataset 更新
-- `hashchange` listener (router 自身の)
-
-の 3 機能 **だけ**。データフローを知らない。Main IIFE
-(`70_init_eventsource.js` 等) が SSE / `loadAndRender` を担当。
-
-### Page-scoped 早期 return + 独立 hashchange listener (Issue #58)
-
-重い renderer (例: `renderHourlyHeatmap`) は cost-control で
-**page-scoped early-out** を入れる:
-
-```javascript
-function renderHourlyHeatmap(data) {
-  if (document.body.dataset.activePage !== 'patterns') return;
-  // heavy render only when patterns is active
-}
-```
-
-問題: `#/` 起動 → `#/patterns` 遷移 で section の hidden は解けるが、
-widget の DOM は空のまま (前回の `loadAndRender` 時点では
-`activePage='overview'` で early-out していた)。
-
-解決: **main IIFE 側に独立 hashchange listener** を持たせ、route 切替で
-`loadAndRender()` を再実行:
-
-```javascript
-window.addEventListener('hashchange', () => {
-  loadAndRender().catch((err) => console.error('route change render 失敗', err));
-});
-```
-
-### Listener 順序の保証
-
-`addEventListener` callback は **登録順** で発火する。HTML template で
-`00_router.js` を `70_init_eventsource.js` より前に置いてあるので:
-
-1. router IIFE listener が先に走り `body.dataset.activePage = 'patterns'`
-2. main IIFE listener が後で走り `loadAndRender()` 再実行 → renderer の
-   early-out が pass する
-
-この順序保証は **template の concat 順** に依存する (`server.py` の
-`_MAIN_JS_FILES` tuple)。順序が崩れると early-out が pass せず空 widget の
-ままになる。
-
-### 設計コア
-
-- **router の job = state**, **SSE の job = side-effect**, **renderer は
-  両者の交差点**
-- 「mount/unmount per route」より「DOM 残置 + visibility toggle」が
-  既存 renderer の絶対 lookup を壊さないため有利
-- 新しい page-scoped widget を足す時:
-  1. `loadAndRender()` の中に renderer 呼び出しを追加 (SSE refresh + 初回
-     boot 両方で発火させる)
-  2. renderer 冒頭に `if (body.dataset.activePage !== '<page>') return;`
-  3. **新しい hashchange listener は足さない** — main IIFE に既存
-
-### 直交のテスト
-
-「Page B に遷移しても Page A の元 DOM は live」を assert:
-chrome-devtools MCP で hidden Page A の content を取り、SSE で usage.jsonl
-に append → reread して update を確認。**static export (export_html)** は
-`loadAndRender` を起動時 1 回しか呼ばないので、初期 hash で決まる first
-paint がそのまま固定。
-
-### 罠
-
-- **`href="#/x"` で済むものを `click` ハイジャックしない** — browser back/
-  forward / direct URL bookmark / keyboard Enter は native で動く
-- **空 hash の fallback table** は `""` / `"#"` / `"#/"` の 3 形を全て
-  default route にマップ。`||` fallback は unknown key しか catch しない
-- **`window.dispatchEvent` 等の cross-IIFE pub/sub に頼らない** — 同 event
-  に独立 listener 2 つで十分
-
----
-
-## §7. Sparse server / dense client — time-series axis contract
-
-時系列 chart で **server は zero buckets を意図的に omit** して dense 表現
-を返さない (API minimal)。client が **calendar gap を可視化するために axis
-densify** する責務を持つ — 怠ると無観測週が消えて時間軸が嘘をつく。
-
-### Bug 例 (Issue #60 で踏んだ)
-
-```javascript
-// ❌ NG — 観測のみで axis を作る
-const weeks = [...new Set(items.map(r => r.week_start))].sort();
-// weeks = ['2026-04-13', '2026-04-27']  // W2=04-20 が消える
-const xOf = (i) => padL + innerW * i / (weeks.length - 1);
-// → W1 と W3 が隣接 x 位置にレンダされ、無観測週が見えない
-```
-
-```javascript
-// ✅ OK — 観測区間を densify
-const observed = [...new Set(items.map(r => r.week_start))].sort();
-const weeks = [];
-const cursor = new Date(observed[0] + 'T00:00:00Z');
-const end = new Date(observed[observed.length - 1] + 'T00:00:00Z');
-while (cursor <= end) {
-  weeks.push(cursor.toISOString().slice(0, 10));
-  cursor.setUTCDate(cursor.getUTCDate() + 7);
-}
-// weeks = ['2026-04-13', '2026-04-20', '2026-04-27']
-```
-
-### 直交する 2 つの failure mode
-
-両方 fix が必要:
-
-| Failure mode | 例 | Fix |
-|---|---|---|
-| **Per-type polyline 橋渡し** | type X: i=0, i=2 観測 → polyline が i=1 を直線で結ぶ (型 Y は i=1 観測あり) | gap で polyline を **run に分割** |
-| **Global axis 崩壊** | 全 type で i=1 が無観測 → server が omit → axis から消える | 観測区間の **union timeline で densify** |
-
-「2 つ揃ってるか?」を sparse-data viz の review チェック項目に。
-
-### API spec の書き方
-
-server-side sparseness と client-side densify 責務を **両側 document**
-する。spec doc が「観測なし bucket は配列に含まれない」だけだと、次の
-consumer は同じバグを再構築する。`dashboard-api.md` 側に
-「**client は axis densify を実装する責務**」を明記。
-
-### 実装メモ
-
-- `Date.setUTCDate(getUTCDate() + 7)` が UTC 週進めの cheap で native な
-  方法。DST edge case を回避 (UTC は DST 無し)
-- 不正入力に備えて safety cap (e.g. 1040 週 ≒ 20 年) を入れる
-- 該当箇所: `30_renderers_patterns.js` の week-bin 構築 / `10_helpers.js`
-  の `localDailyFromHourly` (sparkline densify はこちらで)
-
----
-
-## §8. Dict iteration order を JSON contract として保つ
-
-server が dict を JSON で返し、`memory_type_dist` のように
-**「iteration order = count desc → key asc」** を契約として保証している
-ケース (Issue #62 など)。Python 3.7+ + `json.dumps` (no `sort_keys`) +
-ECMAScript spec の 3 層で order が保たれる。
-
-### 3 層の保証チェーン
-
-| 層 | 保証 |
-|---|---|
-| **(1) Python 3.7+ dict** | insertion order を保つ言語仕様 |
-| **(2) `json.dumps`** | dict を iteration 順に出力 (`sort_keys=False` がデフォルト) |
-| **(3) ECMAScript** | 仕様で string key の挿入順保持を規定 (`JSON.parse` で順序が保たれる) |
-
-3 層中どれが破れても **silently wrong** に corrupt する (例外は出ない)。
-
-### 自然敵 — `json.dumps(..., sort_keys=True)`
-
-refactor で「deterministic 出力」「diff 読みやすさ」を理由に reflex で足
-される。1 flag で server-side dict order が壊れる。**call site から見えない
-契約** なので review 時に気付けない。
-
-### Roundtrip regression test (load-bearing artifact)
-
-```python
-def test_dict_iteration_order_survives_json_roundtrip(self):
-    out = aggregate_X(events)
-    roundtripped = json.loads(json.dumps(out))
-    assert list(roundtripped["the_dist"].keys()) == ["expected", "order"]
-```
-
-これが **持続的 guard**。docstring / spec doc / memory file は人が読むだけ
-で機械的検証は無いので、test を書く。
-
-### 一時的 guard — 実装時の grep
-
-```bash
-grep -n 'sort_keys' dashboard/server.py reports/
-```
-
-これは **実装時の 1 度限り** の確認。将来 PR への持続的 guard にはならない
-(test がそれ)。
-
-### Aggregator docstring に caveat を残す
-
-```python
-def aggregate_X(events):
-    """...
-    json.dumps(..., sort_keys=True) を serialize 経路に混入させると本契約が
-    破壊される。test_dict_iteration_order_survives_json_roundtrip が
-    regression guard。
-    """
-```
-
-### List-of-dicts vs dict-with-order-contract
-
-| 軸 | dict + contract | list of `{"key": k, ...}` |
-|---|---|---|
-| Schema 表現の自然さ | 高 (「観測 key → count」) | 中 (二重表現) |
-| JSON サイズ | 小 | 大 |
-| consumer の access pattern | keyed lookup OK | 二度 iterate が必要 |
-| order 保証の強さ | 3 層依存 | 1 層 (list 自体) |
-| 1 contract 追加で増える test | regression test 1 本 | なし |
-
-**consumer 数が ≥3** なら list-of-dicts の方が安全 (explicit さが pay off)。
-1–2 consumer なら dict + contract も許容。
-
-### ECMAScript 版数の citation 注意
-
-「ECMAScript 2020+ で …」のように年号 / 番号を citation するのは
-confabulation 高リスク (CLAUDE.md "Number-shaped technical identifiers"
-参照)。「ECMAScript 仕様で string key の挿入順保持が規定されている」と
-書く方が安全。
-
----
-
-## §9. Retention-aware aggregator — defensive cap が trend を歪める罠
-
-`aggregate_skill_lifecycle` (Surface tab Issue #74) で `observation_days =
-min(180, max(days_since_first, 1))` という defensive cap を初版で入れていた
-が、plan-reviewer がバイアスを catch:
-
-| ケース | overall_rate | recent_rate (last 30d) | ratio | trend 判定 |
-|---|---|---|---|---|
-| **cap=180** (200 events / 365 日 → 180) | 200/180 = 1.11/d | 1.0/d | 0.90 | `stable` |
-| **cap 撤廃** (200 events / 365 日) | 200/365 = 0.55/d | 1.0/d | 1.83 | `accelerating` |
-
-cap が **古い skill の acceleration を `decelerating` 寄りに silent mask**
-していた。撤廃 (commit "Q2: cap 撤廃")。
-
-### Bias は方向 1 で危険
-
-denominator cap は **`overall_rate` を inflate** する → `recent / overall`
-比は下がる → `decelerating` 寄り。**asymmetric bias** は real signal と
-誤認しやすい (「古い skill は使われなくなる」という妥当に聞こえる story を
-fake data が支える)。
-
-### 上位 retention bound を確認するルール
-
-`min(N, ...)` cap を denominator に入れる前に: **既に上流の retention で
-N が bound されているか?**
-
-- yes (cap 値 ≧ retention) → cap は dead code、しかし
-  `--include-archive` 経由など retention bypass パスで bias を発動する
-- no (cap 値 < retention) → cap が second window を作る、downstream には
-  invisible
-
-本リポは **hot tier 180 日 retention** が dashboard データを自然に bound
-するので、`observation_days` への cap は redundant + 害 (archive 込み path
-で bias 発動)。
-
-### Spec wording の例
-
-「`observation_days` に cap を置かない — 本リポの 180 日 retention が
-dashboard データを自然に bound、`--include-archive` パスは意図的に広い窓を
-取る」を spec に書いておくと future PR の "let's add a safety cap" reflex を
-止めやすい。
-
-### Test guard
-
-`first_seen` / `last_seen` パターンの metric には、**N より長い span の
-データ** を fixture に入れて trend 判定を assert する unit test を書く。
-将来「cap を足したい」PR が test を破る → review で止まる。
-
-### 教訓
-
-- defensive cap の働く向きを **数値例 2 ケース (with / without)** で具体
-  確認してから入れる。「feels safer」で入れない
-- 「bias 方向は 1 つしか無い」cap は最も発見が遅い defect (real signal と
-  区別できない)
-- 上流に既に bound がある量に下流で cap を被せると、bypass path で bias を
-  発動する hidden surface が増える
+- `dashboard-client.md` — frontend 実装 (TZ 変換、SPA shell、sparse-dense densify、EventSource error path、fetch coalesce、UI label 整合性)
+- `dashboard-aggregation.md` — aggregator 契約 (dict 順序契約、retention-aware cap、capped ranking + drift-guard、period filter + 3-stage 包含 + wall-clock 注入)
 
