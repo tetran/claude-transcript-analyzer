@@ -450,6 +450,46 @@ class TestFilterEventsByPeriod:
         out = mod._filter_events_by_period(events, "wat", now=_FIXED_NOW)
         assert out == events
 
+    def test_bad_ts_subagent_event_does_not_consume_pair_stop_for_valid_invocation(self, tmp_path):
+        """Issue #100 refactor / codex Round 1 P2 regression:
+        bad-ts subagent_start (空 timestamp 等) が同 (session, type) bucket に
+        いるとき、canonical pairing input から除外されないと
+        `_pair_invocations_with_stops` が `ts is None` を「window 制約 skip」と
+        解釈して bad-ts invocation が valid stop を誤って消費。結果として
+        cutoff 直前の valid start が paired-stop pull-back の機会を失い、
+        period 集計から消える。
+
+        旧 mirror 実装は `if i not in parsed_idx: continue` で bucketing 段階で
+        bad-ts event を除外していた。canonical 委譲後も同 semantic を維持する
+        ため `parsed_events = [events[i] for i in sorted(parsed_idx)]` で
+        pre-filter する設計を pin。
+        """
+        mod = self._mod(tmp_path)
+        events = [
+            {"event_type": "subagent_start", "subagent_type": "Explore",
+             "session_id": "s", "timestamp": "", "success": True},  # bad ts
+            {"event_type": "subagent_start", "subagent_type": "Explore",
+             "session_id": "s", "timestamp": _ts(_FIXED_NOW, days=8), "success": True},  # before cutoff (7d)
+            {"event_type": "subagent_stop", "subagent_type": "Explore",
+             "session_id": "s", "timestamp": _ts(_FIXED_NOW, days=6)},  # in period
+        ]
+        out = mod._filter_events_by_period(events, "7d", now=_FIXED_NOW)
+        # bad-ts event は stage 1 で drop されたまま。
+        assert not any(ev.get("timestamp") == "" for ev in out), \
+            "bad-ts event は output に含まれてはいけない"
+        # valid pre-cutoff start が paired stop 経由で pull-back されている。
+        valid_pre_cutoff_start = next(
+            (ev for ev in out
+             if ev.get("event_type") == "subagent_start"
+             and ev.get("timestamp") == _ts(_FIXED_NOW, days=8)),
+            None,
+        )
+        assert valid_pre_cutoff_start is not None, \
+            "valid pre-cutoff start は paired stop 経由で pull-back されるべき"
+        # paired stop も output に含まれる。
+        assert any(ev.get("event_type") == "subagent_stop" for ev in out), \
+            "in-period stop は output に含まれる"
+
 
 def _make_event_set_for_period_test(now: datetime) -> list[dict]:
     """Step 2 / 7 で再利用する mixed events.

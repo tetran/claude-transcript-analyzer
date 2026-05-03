@@ -164,10 +164,15 @@ def _filter_events_by_period(
     # 旧実装は手で mirror していたが Issue #85 / #100 で sync drift リスクが
     # 顕在化したため canonical 直 import に reroute (= mirror 撤去)。
     # `id(ev)` で events list 内の index に逆引きする (events は live 中に
-    # GC されないので id は stable)。`parsed_idx` を gating に使い、bad-ts
-    # event を members から除外することで第一段の semantic を尊重する。
+    # GC されないので id は stable)。
+    # Stage 1 で drop された bad-ts event は canonical の pairing input から
+    # 除外する: 含めると `_pair_invocations_with_stops` が `ts is None` を
+    # 「window 制約 skip」と解釈し、bad-ts invocation が valid stop を誤って
+    # 消費して boundary-crossing invocation の pull-back を奪う
+    # (codex Round 1 P2 fix)。
     idx_by_id = {id(ev): i for i, ev in enumerate(events)}
-    starts_by_key, stops_by_key, lifecycle_by_key = _bucket_events(events)
+    parsed_events = [events[i] for i in sorted(parsed_idx)]
+    starts_by_key, stops_by_key, lifecycle_by_key = _bucket_events(parsed_events)
     for key in set(starts_by_key) | set(lifecycle_by_key):
         starts_sorted = sorted(starts_by_key.get(key, []), key=lambda e: e.get("timestamp", ""))
         lifecycle_sorted = sorted(lifecycle_by_key.get(key, []), key=lambda e: e.get("timestamp", ""))
@@ -179,16 +184,12 @@ def _filter_events_by_period(
                 if source_ev is None:
                     continue
                 idx = idx_by_id.get(id(source_ev))
-                if idx is None or idx not in parsed_idx:
+                if idx is None:
                     continue
                 members.append(idx)
             if paired_stop is not None:
                 stop_idx = idx_by_id.get(id(paired_stop))
-                if (
-                    stop_idx is not None
-                    and stop_idx in parsed_idx
-                    and parsed_idx[stop_idx] <= now
-                ):
+                if stop_idx is not None and parsed_idx[stop_idx] <= now:
                     members.append(stop_idx)
             if any(j in kept for j in members):
                 for j in members:
