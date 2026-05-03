@@ -100,6 +100,9 @@ def usage_invocation_events(events: list[dict]) -> list[dict]:
         et = ev.get("event_type")
         name = ev.get("subagent_type", "")
         if not name:
+            # メインスレッド停止時の SubagentStop hook 誤発火を構造的に除外
+            # (Issue #100 / #93)。本 helper は subagent_start / subagent_lifecycle_start
+            # のみ iterate するので subagent_stop の dedup 対象は無く、filter のみ適用。
             continue
         session = ev.get("session_id", "")
         key = (session, name)
@@ -162,10 +165,50 @@ def usage_invocation_intervals(events: list[dict]) -> list[tuple[float, float, d
 
 
 def _bucket_events(events: list[dict]) -> tuple[dict, dict, dict]:
-    """events を `(session_id, subagent_type)` キーで starts / stops / lifecycle に振り分け。"""
+    """events を `(session_id, subagent_type)` キーで starts / stops / lifecycle に振り分け。
+
+    `subagent_type == ""` は構造的に除外 (Issue #100 / #93):
+    SubagentStop hook はメインスレッド停止時にも誤発火し、その場合 type が空。
+    実 subagent 不在 / per-subagent transcript file も不在 (#93 ローカル調査) なので
+    aggregation 時 filter で 100% 即時救済できる。post-hoc heuristic ペアリングは
+    対象不在 → 不採用。詳細は docs/reference/subagent-invocation-pairing.md
+    "Known artifact" セクション参照。
+
+    `subagent_stop` は `(session_id, subagent_id)` で **min(timestamp)** dedup
+    (Issue #100 / #93): Claude Code が同 stop hook を最大 4 重発火する観察あり
+    (3 組 / 全期間 7 件)。timestamp 最小の 1 件のみ採用 (rescan_transcripts.py
+    --append 経由で input order が時間順と乖離しても正しく earliest を選ぶため
+    2-pass 化)。subagent_id が空 ("") の場合は dedup key を共有せず個別扱い
+    (= 既存ペアリング挙動を破壊しない)。
+
+    Key 設計: dedup は `(session_id, subagent_id)` で集約。Issue 本文の文言通り。
+    `subagent_id` がグローバル一意であっても session_id を含めることで
+    over-keying は無害 (false-collapse は発生しない); 仮にグローバル衝突が
+    あった場合の防御も兼ねる。
+
+    Order: type='' filter → agent_id dedup. 逆順だと type='' stop の
+    subagent_id が earliest_ts_by_dedup を汚染し、本物 subagent の dedup key と
+    衝突するリスク (本リポでは agent_id 衝突は希少だが構造的に防ぐ)。
+    """
+    earliest_ts_by_dedup: dict = {}
+    for ev in events:
+        if ev.get("event_type") != "subagent_stop":
+            continue
+        if not ev.get("subagent_type", ""):
+            continue
+        sid = ev.get("subagent_id", "")
+        if not sid:
+            continue
+        dedup_key = (ev.get("session_id", ""), sid)
+        ts = ev.get("timestamp", "")
+        cur = earliest_ts_by_dedup.get(dedup_key)
+        if cur is None or ts < cur:
+            earliest_ts_by_dedup[dedup_key] = ts
+
     starts_by_key: dict = {}
     stops_by_key: dict = {}
     lifecycle_by_key: dict = {}
+    accepted_dedup_keys: set = set()
     for ev in events:
         et = ev.get("event_type")
         name = ev.get("subagent_type", "")
@@ -175,6 +218,14 @@ def _bucket_events(events: list[dict]) -> tuple[dict, dict, dict]:
         if et == "subagent_start":
             starts_by_key.setdefault(key, []).append(ev)
         elif et == "subagent_stop":
+            sid = ev.get("subagent_id", "")
+            if sid:
+                dedup_key = (ev.get("session_id", ""), sid)
+                if ev.get("timestamp", "") != earliest_ts_by_dedup[dedup_key]:
+                    continue
+                if dedup_key in accepted_dedup_keys:
+                    continue
+                accepted_dedup_keys.add(dedup_key)
             stops_by_key.setdefault(key, []).append(ev)
         elif et == "subagent_lifecycle_start":
             lifecycle_by_key.setdefault(key, []).append(ev)
