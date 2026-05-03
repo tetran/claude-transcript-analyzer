@@ -54,33 +54,12 @@ data/usage.jsonl          ← append-only イベントログ (hot tier / 直近 
 テスト用途では `USAGE_JSONL` / `HEALTH_ALERTS_JSONL` / `ARCHIVE_DIR` /
 `ARCHIVE_STATE_FILE` / `USAGE_JSONL_LOCK` 環境変数で差し替えできる。
 
-## 主要 spec / reference へのポインタ
+## Docs - spec / reference
 
-詳細はトピック別に分割。CLAUDE.md からは概要 + 該当 doc へのポインタのみを置く。
+詳細はトピック別に分割。
 
-仕分け基準: 「違反すると **バグ**」= spec (`docs/spec/`) / 「知らないと
-**踏み抜く**」= reference (`docs/reference/`)。各ディレクトリの README に
-詳細な振り分けポリシー。
-
-### `docs/spec/` — 現行仕様 (contract)
-
-| トピック | ファイル |
-|---|---|
-| 生 transcript フォーマット + Hook 入力 JSON schema + Archive schema 進化規約 | `docs/transcript-format.md` |
-| `usage.jsonl` のイベント形式（収集後の event log schema） | `docs/spec/usage-jsonl-events.md` |
-| `/api/data` レスポンス schema（dashboard backend → frontend） | `docs/spec/dashboard-api.md` |
-| ライブダッシュボード運用仕様（起動条件 / URL 通知 / idle 停止 / 複数ページ router） | `docs/spec/dashboard-runtime.md` |
-| Retention + 月次アーカイブ運用仕様（環境変数 / 手動コマンド / 並列耐性） | `docs/spec/archive-runtime.md` |
-| GitHub Issue authoring 規約（Heavy / Light variant） | `docs/spec/issue-authoring.md` |
-
-### `docs/reference/` — 設計判断・gotcha・パターン
-
-| トピック | ファイル |
-|---|---|
-| ストレージ設計（JSONL primary / archive 不変性 / dedup 規律） | `docs/reference/storage.md` |
-| Cross-platform / Python launcher trilemma / Windows porting checklist | `docs/reference/cross-platform.md` |
-| Dashboard サーバー実装の非自明ポイント（SSE / JSON-in-`<script>` / component 分解 / template 分割の sentinel concat） | `docs/reference/dashboard-server.md` |
-| Subagent 二重観測の同定アルゴリズム + DRY 圧の教訓 | `docs/reference/subagent-invocation-pairing.md` |
+仕分け基準: 「違反すると **バグ**」= spec (`docs/spec/`) / 「知らないと**踏み抜く**」= reference (`docs/reference/`)。
+各ディレクトリの README に詳細な振り分けポリシー。
 
 ## ファイル構成
 
@@ -89,46 +68,13 @@ claude-transcript-analyzer/
 ├── .claude-plugin/
 │   ├── plugin.json           # プラグインメタデータ
 │   └── marketplace.json      # marketplace 用メタデータ
-├── hooks/
-│   ├── hooks.json            # プラグイン用フック定義（${CLAUDE_PLUGIN_ROOT} 参照）
-│   ├── _append.py            # lock 付き append + drop alert 記録 (Issue #30)
-│   ├── _launcher_common.py   # OS 別 fork-and-detach の共通実装 (Issue #30)
-│   ├── _lock.py              # POSIX/Windows lock 抽象 (Issue #44)
-│   ├── record_skill.py       # PostToolUse(Skill) / PostToolUseFailure(Skill)
-│   │                         # UserPromptSubmit / UserPromptExpansion 処理
-│   ├── record_subagent.py    # PostToolUse(Task|Agent) / PostToolUseFailure(Task|Agent)
-│   │                         # SubagentStart / SubagentStop 処理
-│   ├── record_session.py     # SessionStart/End, PreCompact/PostCompact,
-│   │                         # Notification, InstructionsLoaded 処理
-│   ├── verify_session.py     # Stop hook: transcript vs usage 照合・異常検知
-│   ├── launch_dashboard.py   # SessionStart / UserPromptExpansion / UserPromptSubmit /
-│   │                         # PostToolUse: ダッシュボードを fork-and-detach でべき等起動
-│   └── launch_archive.py     # SessionStart: archive job をべき等に fork-and-detach 起動 (Issue #30)
+├── hooks/                    # プラグイン用フック定義
 ├── commands/                 # スラッシュコマンド定義
-│   ├── restart-dashboard.md
-│   ├── usage-archive.md
-│   ├── usage-dashboard.md
-│   ├── usage-export-html.md
-│   └── usage-summary.md
-├── dashboard/
-│   ├── server.py             # ローカル HTTP ダッシュボードサーバー
-│   └── template/             # 起動時に concat される shell + styles + scripts (Issue #67)
-│       ├── shell.html        # head + nav + 4 page sections + footer + __INCLUDE_*__ センチネル
-│       ├── styles/           # 7 ファイル (base / components / help_tooltip / pages / patterns / quality / surface)
-│       └── scripts/          # 10 ファイル (router / helpers / load_and_render / 各 page renderers / hashchange / eventsource / help_popup / data_tooltip)
-├── reports/
-│   ├── _archive_loader.py    # archive/*.jsonl.gz を opt-in で読む共通 loader (Issue #30)
-│   ├── summary.py            # ターミナル集計レポート (--include-archive 対応)
-│   └── export_html.py        # 静的 HTML レポート生成 (--include-archive 対応)
+├── dashboard/                # ローカル HTTP ダッシュボードサーバー
+├── reports/                  # レポート生成スクリプト
 ├── subagent_metrics.py       # subagent 集計の共通ロジック (invocation 単位ペアリング)
-├── scripts/
-│   ├── archive_usage.py      # 180 日超を月次 .jsonl.gz にする archive job (Issue #30)
-│   ├── build_surface_fixture.py  # Surface タブ視覚 fixture 生成
-│   ├── restart_dashboard.py
-│   └── rescan_transcripts.py # 過去トランスクリプトの遡及スキャン
-├── data/
-│   └── usage.jsonl           # append-only イベントログ（テスト時のみ。
-│                             # プラグイン稼働時は ~/.claude/transcript-analyzer/）
+├── scripts/                  # 手動/バッチ実行用のユーティリティ
+├── data/                     # データ置き場（v0.7.3現在不使用）
 ├── tests/
 └── docs/
     ├── transcript-format.md  # 生 transcript フォーマット + Hook 入力 schema + Archive 進化規約

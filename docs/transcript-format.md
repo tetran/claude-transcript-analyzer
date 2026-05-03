@@ -28,6 +28,24 @@ Windows:
 
 このエンコード規則は `hooks/verify_session.py:_encode_cwd()` に集約されている。
 
+### 正規化規則の正規表現と非可逆性
+
+Python での実装は単一の 4 文字キャラクタクラス置換:
+
+```python
+import re
+_CWD_ENCODE = re.compile(r"[/\\:.]")
+def _encode_cwd(cwd: str) -> str:
+    return _CWD_ENCODE.sub("-", cwd)
+```
+
+絶対パスにそのまま適用するだけで、先頭の `-` を剥がす特別処理も不要。
+
+**マッピングは非可逆 (lossy)。** `<project-dir>` の名前から元の絶対パスを一意に復元できない:
+
+- `-Users-foo--worktrees-issue-1` は `/Users/foo/.worktrees/issue-1` にも `/Users/foo-/worktrees/issue-1` にも復号され得る
+- ラウンドトリップが必要なツールは元の `cwd` を別の場所に保存する必要がある — トランスクリプト JSON 自身が `cwd` フィールドを持っているのでそれを使う
+
 ### `<session-id>`
 
 Claude Code セッションごとに UUID 形式のファイルが1つ作られる。
