@@ -463,6 +463,22 @@ class TestSessionsRendererBehavior(unittest.TestCase):
         self.assertEqual(out['avgCost'], 0)
         self.assertEqual(out['cacheEfficiency'], 0)
 
+    def test_compute_kpi_even_count_median_is_average_of_middle_two(self):
+        """偶数件 (TOP_N_SESSIONS = 20 の常用ケース) では sorted[n/2-1] と sorted[n/2] の平均。
+
+        codex Round 1 / P2 指摘: median 計算が偶数件のとき上位中央 1 値しか返さず、
+        中央 2 値の平均にならない (= 系統的に高めに偏る)。
+        """
+        # 4 件 → sorted = [1,2,3,4] → median = (2+3)/2 = 2.5
+        sessions_js = (
+            "[{estimated_cost_usd:1.0, tokens:{input:0,output:0,cache_read:0,cache_creation:0}},"
+            "{estimated_cost_usd:2.0, tokens:{input:0,output:0,cache_read:0,cache_creation:0}},"
+            "{estimated_cost_usd:3.0, tokens:{input:0,output:0,cache_read:0,cache_creation:0}},"
+            "{estimated_cost_usd:4.0, tokens:{input:0,output:0,cache_read:0,cache_creation:0}}]"
+        )
+        out = self._run_node(f"window.__sessions.computeKpi({sessions_js})")
+        self.assertAlmostEqual(out['medianCost'], 2.5, places=4)
+
     def test_compute_kpi_top_cost_tracks_max(self):
         sessions_js = (
             "[{estimated_cost_usd:1.5, tokens:{input:0,output:0,cache_read:0,cache_creation:0}},"

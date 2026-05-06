@@ -98,7 +98,12 @@
       const costs = list.map(function(s){ return Number(s.estimated_cost_usd) || 0; });
       const totalCost = costs.reduce(function(a,b){ return a + b; }, 0);
       const sorted = costs.slice().sort(function(a,b){ return a - b; });
-      const median = sorted[Math.floor(sorted.length / 2)];
+      // 偶数件では中央 2 値の平均、奇数件では中央値そのもの (= true median)。
+      // TOP_N_SESSIONS = 20 (偶数) が常用ケースなので、偶数の正しさが UX 上 load-bearing。
+      const n = sorted.length;
+      const median = (n % 2 === 0)
+        ? (sorted[n / 2 - 1] + sorted[n / 2]) / 2
+        : sorted[Math.floor(n / 2)];
       const avg = totalCost / list.length;
 
       let inputSum = 0;
