@@ -93,7 +93,9 @@
       if (list.length === 0) {
         return { totalCost: 0, medianCost: 0, avgCost: 0, cacheEfficiency: 0,
                  topCost: 0, minCost: 0, sessionCount: 0,
-                 totalInputTokens: 0, totalCacheReadTokens: 0 };
+                 totalInputTokens: 0, totalCacheReadTokens: 0,
+                 opusCost: 0, opusShare: 0,
+                 medianMultiple: 0, topCostShare: 0 };
       }
       const costs = list.map(function(s){ return Number(s.estimated_cost_usd) || 0; });
       const totalCost = costs.reduce(function(a,b){ return a + b; }, 0);
@@ -105,27 +107,51 @@
         ? (sorted[n / 2 - 1] + sorted[n / 2]) / 2
         : sorted[Math.floor(n / 2)];
       const avg = totalCost / list.length;
+      const topCost = sorted[sorted.length - 1] || 0;
 
       let inputSum = 0;
       let cacheReadSum = 0;
+      // opus 系 model が含まれる session の cost を別集計 (1 枚目 KPI sub 用):
+      //   "うち opus セッション $X.XX (Y%)"
+      // 同 session 内に opus / sonnet 混在しても按分はしない (= "opus が使われた session"
+      // 単位の合計)。mock との文言整合を優先。
+      let opusCost = 0;
       for (let i = 0; i < list.length; i++) {
         const t = list[i].tokens || {};
         inputSum += Number(t.input || 0);
         cacheReadSum += Number(t.cache_read || 0);
+
+        const models = list[i].models || {};
+        let hasOpus = false;
+        for (const m in models) {
+          if (Object.prototype.hasOwnProperty.call(models, m) &&
+              inferModelFamily(m) === 'opus' && (Number(models[m]) || 0) > 0) {
+            hasOpus = true;
+            break;
+          }
+        }
+        if (hasOpus) opusCost += Number(list[i].estimated_cost_usd) || 0;
       }
       const denom = inputSum + cacheReadSum;
       const cacheEfficiency = denom > 0 ? (cacheReadSum / denom) : 0;
+      const opusShare = totalCost > 0 ? (opusCost / totalCost) : 0;
+      const medianMultiple = median > 0 ? (avg / median) : 0;
+      const topCostShare = totalCost > 0 ? (topCost / totalCost) : 0;
 
       return {
         totalCost: totalCost,
         medianCost: median,
         avgCost: avg,
         cacheEfficiency: cacheEfficiency,
-        topCost: sorted[sorted.length - 1] || 0,
+        topCost: topCost,
         minCost: sorted[0] || 0,
         sessionCount: list.length,
         totalInputTokens: inputSum,
         totalCacheReadTokens: cacheReadSum,
+        opusCost: opusCost,
+        opusShare: opusShare,
+        medianMultiple: medianMultiple,
+        topCostShare: topCostShare,
       };
     }
 
@@ -177,22 +203,45 @@
     function buildKpiHTML(kpi) {
       // 直近 N 件 合計コスト / 中央値 / 平均 / Cache 効率 — mock の決定通り 4 枚
       const totalLabel = '直近' + (kpi.sessionCount || 0) + '件 合計コスト';
+
+      // 1 枚目 (合計コスト) の sub: opus セッションの cost 比率。0 のときは空表示。
+      const opusSubText = (kpi.opusCost > 0 && kpi.totalCost > 0)
+        ? 'うち opus セッション <em>' + formatCostUsd(kpi.opusCost) +
+          '</em> (' + Math.round((kpi.opusShare || 0) * 100) + '%)'
+        : '';
+
+      // 2 枚目 (中央値) の sub: 最大 / 最小
+      const medianSubText = '最大 <em>' + formatCostUsd(kpi.topCost) +
+        '</em> · 最小 <em>' + formatCostUsd(kpi.minCost) + '</em>';
+
+      // 3 枚目 (平均) の sub: 中央値倍率 + 上位 1 件寄与率 (whale 偏りの可視化)。
+      // median = 0 のとき (中央値が 0 USD) は倍率が無限大になるので非表示。
+      const avgSubText = (kpi.medianCost > 0 && kpi.totalCost > 0)
+        ? '中央値の <em>' + (kpi.medianMultiple).toFixed(1) +
+          '×</em> · 上位 1 件で <em>' + Math.round((kpi.topCostShare || 0) * 100) + '%</em> 寄与'
+        : '';
+
+      // 4 枚目 (Cache 効率) の sub: cache_read と入力合計の内訳
       const cacheRead = kpi.totalCacheReadTokens || 0;
       const cacheDenom = (kpi.totalInputTokens || 0) + cacheRead;
       const cacheSubText = (cacheDenom > 0)
         ? 'cache_read <em>' + esc(fmtTokens(cacheRead)) + '</em> / 入力合計 <em>' +
           esc(fmtTokens(cacheDenom)) + '</em> tokens'
         : 'no data';
+
+      // mock の決定: 1 枚目 (合計コスト) は headline metric として `<div class="v">` (sm 無し / 26px)、
+      // 残り 3 枚は補助メトリックとして `<div class="v sm">` (20px) で size hierarchy を作る。
       const cards = [
-        { id: 'kpi-sess-total', cls: '', k: totalLabel, v: formatCostUsd(kpi.totalCost), s: '' },
-        { id: 'kpi-sess-median', cls: 'c-coral', k: 'セッション中央値', v: formatCostUsd(kpi.medianCost), s: '最大 <em>' + formatCostUsd(kpi.topCost) + '</em> · 最小 <em>' + formatCostUsd(kpi.minCost) + '</em>' },
-        { id: 'kpi-sess-avg', cls: 'c-peri', k: 'セッション平均', v: formatCostUsd(kpi.avgCost), s: '' },
-        { id: 'kpi-sess-cache', cls: 'c-peach', k: 'Cache 効率', v: Math.round((kpi.cacheEfficiency || 0) * 100) + '%', s: cacheSubText },
+        { id: 'kpi-sess-total',  cls: '',        k: totalLabel,            v: formatCostUsd(kpi.totalCost),                                       s: opusSubText,   big: true  },
+        { id: 'kpi-sess-median', cls: 'c-coral', k: 'セッション中央値',    v: formatCostUsd(kpi.medianCost),                                      s: medianSubText, big: false },
+        { id: 'kpi-sess-avg',    cls: 'c-peri',  k: 'セッション平均',      v: formatCostUsd(kpi.avgCost),                                         s: avgSubText,    big: false },
+        { id: 'kpi-sess-cache',  cls: 'c-peach', k: 'Cache 効率',          v: Math.round((kpi.cacheEfficiency || 0) * 100) + '%',                 s: cacheSubText,  big: false },
       ];
       return cards.map(function(g){
+        const vClass = g.big ? 'v' : 'v sm';
         return '<div class="kpi ' + g.cls + '" id="' + g.id + '">' +
           '<div class="k-row"><span class="k">' + esc(g.k) + '</span></div>' +
-          '<div class="v sm">' + g.v + '</div>' +
+          '<div class="' + vClass + '">' + g.v + '</div>' +
           (g.s ? '<div class="s">' + g.s + '</div>' : '<div class="s">&nbsp;</div>') +
         '</div>';
       }).join('');

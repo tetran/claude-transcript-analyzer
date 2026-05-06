@@ -486,3 +486,39 @@ class TestSessionsRendererBehavior(unittest.TestCase):
         )
         out = self._run_node(f"window.__sessions.computeKpi({sessions_js})")
         self.assertAlmostEqual(out['topCost'], 1.5, places=4)
+
+    def test_compute_kpi_opus_share_attributes_session_to_opus(self):
+        """opus が含まれる session は cost 全額が opusCost に寄与する (按分しない)。
+
+        mock の決定: 1 枚目 KPI sub「うち opus セッション $X.XX (Y%)」は
+        「opus が使われた session」単位の合計を表示する仕様 (model 内訳の按分は UX 上不要)。
+        """
+        # session A (opus 使用) cost=2.0、session B (sonnet のみ) cost=8.0
+        # → opusCost = 2.0、totalCost = 10.0、opusShare = 0.2
+        sessions_js = (
+            "[{estimated_cost_usd:2.0, models:{'claude-opus-4-7':3, 'claude-sonnet-4-6':1}, "
+            "tokens:{input:0,output:0,cache_read:0,cache_creation:0}},"
+            "{estimated_cost_usd:8.0, models:{'claude-sonnet-4-6':5}, "
+            "tokens:{input:0,output:0,cache_read:0,cache_creation:0}}]"
+        )
+        out = self._run_node(f"window.__sessions.computeKpi({sessions_js})")
+        self.assertAlmostEqual(out['opusCost'], 2.0, places=4)
+        self.assertAlmostEqual(out['opusShare'], 0.2, places=4)
+
+    def test_compute_kpi_median_multiple_and_top_cost_share(self):
+        """3 枚目 KPI sub「中央値の N× · 上位 1 件で M% 寄与」用メトリクス。
+
+        avg / median = medianMultiple、topCost / totalCost = topCostShare。
+        whale 偏りの可視化に使う (= mean が median から大きく乖離している = 上位寄り)。
+        """
+        # 4 件 (sorted=[1,2,3,4]): total=10, median=2.5, avg=2.5, topCost=4
+        # → medianMultiple = 2.5/2.5 = 1.0、topCostShare = 4/10 = 0.4
+        sessions_js = (
+            "[{estimated_cost_usd:1.0, tokens:{input:0,output:0,cache_read:0,cache_creation:0}},"
+            "{estimated_cost_usd:2.0, tokens:{input:0,output:0,cache_read:0,cache_creation:0}},"
+            "{estimated_cost_usd:3.0, tokens:{input:0,output:0,cache_read:0,cache_creation:0}},"
+            "{estimated_cost_usd:4.0, tokens:{input:0,output:0,cache_read:0,cache_creation:0}}]"
+        )
+        out = self._run_node(f"window.__sessions.computeKpi({sessions_js})")
+        self.assertAlmostEqual(out['medianMultiple'], 1.0, places=4)
+        self.assertAlmostEqual(out['topCostShare'], 0.4, places=4)

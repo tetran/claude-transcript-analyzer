@@ -4,6 +4,20 @@
      sessions-* namespace で slot in。color tokens は :root の既存 palette
      (mint / peach / coral / peri) を再利用してデザインの一貫性を保つ。
      ======================================================================== */
+
+  /* KPI 行は Overview 8 枚 (8 列 grid) と異なり、Sessions は 4 枚で 4 列 grid。
+     `section[data-page="sessions"]` scope で grid-template-columns を上書きする
+     (10_components.css の base `.kpi-row` には触らない)。
+     1 枚目 (合計コスト) の `<div class="v">` は base のまま 26px (= sm 無しで大きく)、
+     2/3/4 枚目は `v sm` (20px) で size hierarchy を作る。 */
+  section[data-page="sessions"] .kpi-row {
+    grid-template-columns: repeat(4, 1fr);
+  }
+  @media (max-width: 720px) {
+    section[data-page="sessions"] .kpi-row {
+      grid-template-columns: repeat(2, 1fr);
+    }
+  }
   .sessions-table {
     width: 100%;
     border-collapse: collapse;
