@@ -512,6 +512,34 @@ def aggregate_subagent_failure_trend(events: list[dict]) -> list[dict]:
     return result
 
 
+def session_subagent_counts(events: list[dict]) -> dict[str, int]:
+    """各 session の subagent invocation 件数を返す (Issue #99 / v0.8.0〜)。
+
+    `aggregate_subagent_metrics` と同じ invocation 同定 (`_bucket_events` +
+    `_build_invocations`) を使い、`(session_id, subagent_type)` バケット内で
+    dedup された invocation 数を session_id 単位で合計する。
+
+    用途: dashboard `/api/data` の `session_breakdown[].subagent_count` に
+    drift guard 整合させるための共通 helper。
+    `sum(session_subagent_counts(events).values())
+       == sum(m["count"] for m in aggregate_subagent_metrics(events).values())`
+    が cross-aggregator invariant として保たれる
+    (= type 軸合計 = session 軸合計)。
+
+    返却: `{session_id: count}`。invocation を持たない session は dict に
+    現れない (= 0 件は欠損として扱う)。
+    """
+    starts_by_key, _stops_by_key, lifecycle_by_key = _bucket_events(events)
+    counts: Counter = Counter()
+    for key in set(starts_by_key) | set(lifecycle_by_key):
+        session_id, _name = key
+        starts_sorted = sorted(starts_by_key.get(key, []), key=_ts_key)
+        lifecycle_sorted = sorted(lifecycle_by_key.get(key, []), key=_ts_key)
+        invocations = _build_invocations(starts_sorted, lifecycle_sorted)
+        counts[session_id] += len(invocations)
+    return dict(counts)
+
+
 def aggregate_subagent_metrics(events: list[dict]) -> dict[str, dict]:
     """subagent イベント列を invocation 単位でペアリングし、集計メトリクスを返す。
 

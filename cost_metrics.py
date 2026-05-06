@@ -1,0 +1,278 @@
+"""cost_metrics.py — assistant_usage events から session 単位の cost を導出する純関数群。
+
+Issue #99 / v0.8.0〜。`docs/reference/cost-calculation-design.md` §9-§10 で
+採用した「per-message 集計 (raw token + model 永続化、表示時にオンデマンド計算)」
+方針の実装。価格表は **DB / event log に保存しない**: 価格改定があれば
+本 module の `MODEL_PRICING` を update するだけで全期間の cost が再計算される。
+
+## 価格表の出典 (verbatim pin)
+
+価格は 2026-05-06 に Anthropic 公式 docs から目視で pin した:
+  https://platform.claude.com/docs/en/about-claude/pricing
+
+「Model pricing」table の値を **per-1M-token USD** で転記。本表記は cost を
+USD per 1M token で揃える AgenticSec / cost-calculation-design.md §2 の慣習に従う。
+
+| Model              | input | output | cache_read | 5m cache_creation |
+|--------------------|-------|--------|------------|-------------------|
+| Claude Opus 4.7      | $5    | $25    | $0.50      | $6.25             |
+| Claude Opus 4.6      | $5    | $25    | $0.50      | $6.25             |
+| Claude Opus 4.5    | $5    | $25    | $0.50      | $6.25             |
+| Claude Opus 4.1    | $15   | $75    | $1.50      | $18.75            |
+| Claude Opus 4      | $15   | $75    | $1.50      | $18.75            |
+| Claude Sonnet 4.6    | $3    | $15    | $0.30      | $3.75             |
+| Claude Sonnet 4.5    | $3    | $15    | $0.30      | $3.75             |
+| Claude Sonnet 4    | $3    | $15    | $0.30      | $3.75             |
+| Claude Sonnet 3.7  | $3    | $15    | $0.30      | $3.75             |
+| Claude Haiku 4.5   | $1    | $5     | $0.10      | $1.25             |
+| Claude Haiku 3.5   | $0.80 | $4     | $0.08      | $1                |
+| Claude Haiku 3     | $0.25 | $1.25  | $0.03      | $0.30             |
+
+## 既知 limitation (cost-calculation-design.md §10 / 設計判断)
+
+- **5-minute cache write のみ採用**: Anthropic は 5m / 1h で cache write 単価が異なる
+  (5m: 1.25x base、1h: 2x base)。transcript の `cache_creation_input_tokens` には
+  TTL の区別が無い (= 観測不能)。default の 5m を採用。1h 利用が一般化したら
+  schema 拡張で別 field 化する将来 issue。
+- **`inference_geo` の 1.1x multiplier 未適用**: data-residency 機能 (US-only routing)
+  使用時 +10% だが、global routing が default のため大半は影響なし。本 module は
+  applied として扱わない (= silent under-estimate になる data-residency ユーザーは
+  少数前提)。`assistant_usage.inference_geo` には raw 値が記録される。
+- **Sonnet 4.6 fallback**: 未知 model は Sonnet 4.6 rate で計算 (cost-calculation-design.md
+  §2 の中央値プロキシ規律)。新 model 登場で UI が壊れない / panel が空にならない安全側設計。
+- **値の "参考性"**: cost は実測 token × 価格表掛け算による参考値。価格改定で
+  過去値も動く (DB に snapshot しない方針 / cost-calculation-design.md §4 trade-off)。
+  監査用途は scope 外。
+"""
+from __future__ import annotations
+
+import sys
+from datetime import datetime
+from pathlib import Path
+from typing import NamedTuple
+
+# subagent_metrics は repo root 直下なので sys.path 経由で import (既存慣習)
+_ROOT = Path(__file__).resolve().parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
+from subagent_metrics import session_subagent_counts  # noqa: E402
+
+
+TOP_N_SESSIONS = 20
+
+
+class ModelPricing(NamedTuple):
+    """per-1M-token USD rate. 4 dimension (input / output / cache_read / cache_creation)。"""
+    input: float
+    output: float
+    cache_read: float
+    cache_creation: float
+
+
+# 公式値 verbatim pin (2026-05-06、出典 module docstring)
+MODEL_PRICING: dict[str, ModelPricing] = {
+    "claude-opus-4-7":   ModelPricing(input=5.00,  output=25.00, cache_read=0.50, cache_creation=6.25),
+    "claude-opus-4-6":   ModelPricing(input=5.00,  output=25.00, cache_read=0.50, cache_creation=6.25),
+    "claude-opus-4-5":   ModelPricing(input=5.00,  output=25.00, cache_read=0.50, cache_creation=6.25),
+    "claude-opus-4-1":   ModelPricing(input=15.00, output=75.00, cache_read=1.50, cache_creation=18.75),
+    "claude-opus-4":     ModelPricing(input=15.00, output=75.00, cache_read=1.50, cache_creation=18.75),
+    "claude-sonnet-4-6": ModelPricing(input=3.00,  output=15.00, cache_read=0.30, cache_creation=3.75),
+    "claude-sonnet-4-5": ModelPricing(input=3.00,  output=15.00, cache_read=0.30, cache_creation=3.75),
+    "claude-sonnet-4":   ModelPricing(input=3.00,  output=15.00, cache_read=0.30, cache_creation=3.75),
+    "claude-sonnet-3-7": ModelPricing(input=3.00,  output=15.00, cache_read=0.30, cache_creation=3.75),
+    "claude-haiku-4-5":  ModelPricing(input=1.00,  output=5.00,  cache_read=0.10, cache_creation=1.25),
+    "claude-haiku-3-5":  ModelPricing(input=0.80,  output=4.00,  cache_read=0.08, cache_creation=1.00),
+    "claude-haiku-3":    ModelPricing(input=0.25,  output=1.25,  cache_read=0.03, cache_creation=0.30),
+}
+
+DEFAULT_PRICING: ModelPricing = MODEL_PRICING["claude-sonnet-4-6"]
+
+
+def _get_pricing(model: str) -> ModelPricing:
+    """model ID → ModelPricing (longest-prefix match + Sonnet fallback)。
+
+    Anthropic は date-suffix 付き ID (`claude-haiku-4-5-20251001`) を返すことがあるため
+    完全一致だけでなく **token-boundary prefix match** も許容する。
+
+    Prefix collision の取り扱い: `claude-opus-4` と `claude-opus-4-5` のように
+    片方が他方の prefix になる場合は **longest match wins** ($15 と $5 が
+    別物なので取り違えると致命的)。
+    """
+    if model in MODEL_PRICING:
+        return MODEL_PRICING[model]
+    # 末尾に "-" を付けて prefix match することで、`claude-opus-4` が
+    # `claude-opus-4-5-20260101` の prefix として **同じ** に扱われない:
+    # `claude-opus-4-` と `claude-opus-4-5-` の両方が startswith で hit するため
+    # longest match を取れば 4-5 が勝つ。
+    matches = [p for p in MODEL_PRICING if model.startswith(p + "-")]
+    if matches:
+        return MODEL_PRICING[max(matches, key=len)]
+    return DEFAULT_PRICING
+
+
+def calculate_message_cost(
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    cache_read_tokens: int,
+    cache_creation_tokens: int,
+) -> float:
+    """1 assistant message の cost (USD) を 4 桁精度で返す純関数。
+
+    数式: `(tokens / 1_000_000) × per-1M-rate` を 4 dimension 合算。
+    丸め: USD 0.0001 = 1/100 セント精度 (cost-calculation-design.md §3 と同じ)。
+    """
+    p = _get_pricing(model)
+    cost = (
+        (input_tokens / 1_000_000) * p.input
+        + (output_tokens / 1_000_000) * p.output
+        + (cache_read_tokens / 1_000_000) * p.cache_read
+        + (cache_creation_tokens / 1_000_000) * p.cache_creation
+    )
+    return round(cost, 4)
+
+
+def calculate_session_cost(events_for_session: list[dict]) -> float:
+    """events list から `assistant_usage` event のみを取り出し session cost を合算。
+
+    cost-calculation-design.md §5 の「model 別集約 → reduce 合算」を踏襲: 各 event は
+    既に model 単位の (token, rate) ペアを持つので、per-event cost を sum するだけで
+    混在 sum の罠を踏まない (= `calculate_message_cost` 内で model 別 rate が当たる)。
+    """
+    total = 0.0
+    for ev in events_for_session:
+        if ev.get("event_type") != "assistant_usage":
+            continue
+        total += calculate_message_cost(
+            ev.get("model", ""),
+            int(ev.get("input_tokens") or 0),
+            int(ev.get("output_tokens") or 0),
+            int(ev.get("cache_read_tokens") or 0),
+            int(ev.get("cache_creation_tokens") or 0),
+        )
+    return round(total, 4)
+
+
+def _parse_iso(ts: str) -> datetime | None:
+    if not ts:
+        return None
+    try:
+        return datetime.fromisoformat(ts)
+    except ValueError:
+        return None
+
+
+def _build_session_row(
+    session_id: str,
+    session_evs: list[dict],
+    subagent_count: int,
+) -> dict | None:
+    """1 session 分の events から row dict を組み立てる。session_start を持たない
+    session (orphan) は None を返して caller 側で drop する。
+    """
+    starts = [e for e in session_evs if e.get("event_type") == "session_start"]
+    if not starts:
+        return None
+    ends = [e for e in session_evs if e.get("event_type") == "session_end"]
+    usage_evs = [e for e in session_evs if e.get("event_type") == "assistant_usage"]
+    skill_evs = [
+        e for e in session_evs
+        if e.get("event_type") in ("skill_tool", "user_slash_command")
+    ]
+
+    started_at = starts[0].get("timestamp", "") or ""
+    ended_at: str | None = ends[0].get("timestamp") if ends else None
+    duration_seconds: float | None = None
+    if started_at and ended_at:
+        s_dt = _parse_iso(started_at)
+        e_dt = _parse_iso(ended_at)
+        if s_dt is not None and e_dt is not None:
+            duration_seconds = (e_dt - s_dt).total_seconds()
+
+    project = starts[0].get("project") or ""
+
+    models: dict[str, int] = {}
+    tokens = {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0}
+    service_tier_breakdown: dict[str, int] = {}
+    cost_total = 0.0
+    for u in usage_evs:
+        m = u.get("model", "") or ""
+        models[m] = models.get(m, 0) + 1
+
+        in_t = int(u.get("input_tokens") or 0)
+        out_t = int(u.get("output_tokens") or 0)
+        cr_t = int(u.get("cache_read_tokens") or 0)
+        cc_t = int(u.get("cache_creation_tokens") or 0)
+        tokens["input"] += in_t
+        tokens["output"] += out_t
+        tokens["cache_read"] += cr_t
+        tokens["cache_creation"] += cc_t
+
+        # service_tier は欠損 / null を breakdown に出さない (real value のみ集計)
+        tier = u.get("service_tier")
+        if tier:
+            service_tier_breakdown[tier] = service_tier_breakdown.get(tier, 0) + 1
+
+        cost_total += calculate_message_cost(m, in_t, out_t, cr_t, cc_t)
+
+    return {
+        "session_id": session_id,
+        "project": project,
+        "started_at": started_at,
+        "ended_at": ended_at,
+        "duration_seconds": duration_seconds,
+        "models": models,
+        "tokens": tokens,
+        "estimated_cost_usd": round(cost_total, 4),
+        "service_tier_breakdown": service_tier_breakdown,
+        "skill_count": len(skill_evs),
+        "subagent_count": subagent_count,
+    }
+
+
+def aggregate_session_breakdown(
+    events: list[dict],
+    *,
+    now: datetime | None = None,
+    top_n: int = TOP_N_SESSIONS,
+) -> list[dict]:
+    """events から session 単位の summary list を組み立てて返す。
+
+    出力: `[{session_id, project, started_at, ended_at|null,
+            duration_seconds|null, models: {name: count},
+            tokens: {input, output, cache_read, cache_creation},
+            estimated_cost_usd, service_tier_breakdown: {tier: count},
+            skill_count, subagent_count}, ...]`
+
+    sort: `started_at` 降順 (最新 session が先頭)。
+    cap: `top_n` (default `TOP_N_SESSIONS = 20`)。
+
+    `now` は将来拡張用 (active session の age 表示等) の hook として受けるが、
+    本実装では使わない (= active session は `ended_at = null` / `duration_seconds = null`)。
+
+    入力 events は **未 filter** で渡してよい:
+      - 内部で `event_type == "assistant_usage"` の event のみ token / cost / tier 集計に使う
+      - `session_start` / `session_end` は session pool の境界
+      - `skill_tool` / `user_slash_command` は `skill_count` の入力
+      - subagent invocation 件数は `session_subagent_counts(events)` の dedup 経由
+    """
+    del now  # 将来拡張用 hook、本実装では未使用
+
+    sessions_evs: dict[str, list[dict]] = {}
+    for ev in events:
+        sid = ev.get("session_id", "")
+        if not sid:
+            continue
+        sessions_evs.setdefault(sid, []).append(ev)
+
+    subagent_counts = session_subagent_counts(events)
+
+    rows: list[dict] = []
+    for sid, evs in sessions_evs.items():
+        row = _build_session_row(sid, evs, subagent_counts.get(sid, 0))
+        if row is not None:
+            rows.append(row)
+
+    rows.sort(key=lambda r: r["started_at"] or "", reverse=True)
+    return rows[:top_n]
