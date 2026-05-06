@@ -272,6 +272,27 @@ class TestModelDistRendererNode(unittest.TestCase):
         self.assertNotIn(">MSGS<", out)
         self.assertNotIn(">COST<", out)
 
+    def test_buildLegendHtml_header_has_4_cells_aligned_with_body(self):
+        # codex review round 2 / P3 + ユーザー指摘: header と body の grid 列数が
+        # 揃っていないと msgs/cost ラベルが family-name 列の上に出てしまう。
+        # CSS は 4 列 grid (dot/family/msgs/cost) なので header も 4 cell 必要。
+        out = _node_eval("""
+            const families = [
+                {family: 'opus', messages: 6, messages_pct: 0.6, cost_usd: 1.0, cost_pct: 0.6},
+                {family: 'sonnet', messages: 3, messages_pct: 0.3, cost_usd: 0.5, cost_pct: 0.3},
+                {family: 'haiku', messages: 1, messages_pct: 0.1, cost_usd: 0.1, cost_pct: 0.1},
+            ];
+            console.log(window.__modelDist.buildLegendHtml(families));
+        """)
+        # header に dot 用の lh-dot cell が出ている
+        self.assertIn("lh-dot", out)
+        # 4 種類の cell class が header に揃っている
+        for cls in ["lh-dot", "lh-fam", "lh-msgs", "lh-cost"]:
+            self.assertIn(cls, out)
+        # body の leg-row も 4 cell (dot / family / msgs / cost)
+        for cls in ["leg-dot", "leg-fam", "leg-msgs", "leg-cost"]:
+            self.assertIn(cls, out)
+
     def test_buildLegendHtml_uses_canonical_order(self):
         out = _node_eval("""
             const families = [

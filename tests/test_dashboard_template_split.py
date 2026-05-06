@@ -25,7 +25,7 @@ _DASHBOARD_PATH = Path(__file__).parent.parent / "dashboard" / "server.py"
 # 改行の取り扱いを含めた byte 等価性を保証する。
 #
 # 意図的な template 変更時は新 hash に更新する (docstring 参照)。
-EXPECTED_TEMPLATE_SHA256 = "55880ceefced69faf6cce98ce6b1b41c76bd7148802a712fcf00271bf2f30e14"
+EXPECTED_TEMPLATE_SHA256 = "f1b713282d8441df9b28260c505aab62aa7134dc5a9d1a2814749ad73ad86507"
 
 
 def _load_dashboard_module(tmp_path: Path):

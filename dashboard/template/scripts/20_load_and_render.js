@@ -403,7 +403,10 @@
         return (families || []).find(function(r){ return r && r.family === fam; })
           || { family: fam, messages: 0, cost_usd: 0 };
       });
+      // grid 4 列 (dot / family / msgs / cost) に揃えるため header も 4 cell 出す
+      // (codex review round 2 / P3 + ユーザー目視指摘)。
       const head = '<div class="model-legend-head">' +
+        '<span class="lh-dot"></span>' +
         '<span class="lh-fam"></span>' +
         '<span class="lh-msgs">msgs</span>' +
         '<span class="lh-cost">cost</span>' +
