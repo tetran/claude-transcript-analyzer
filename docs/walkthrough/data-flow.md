@@ -57,6 +57,7 @@ _lock.py
 hooks.json
 launch_archive.py
 launch_dashboard.py
+record_assistant_usage.py
 record_session.py
 record_skill.py
 record_subagent.py
@@ -75,6 +76,7 @@ summary.py
 | `hooks/record_skill.py` | Skill ツール実行 / スラッシュコマンド入力を `usage.jsonl` に記録 |
 | `hooks/record_subagent.py` | Task / Agent ツール実行と SubagentStart/Stop を記録 |
 | `hooks/record_session.py` | セッション開始/終了, PreCompact, 通知などを記録 |
+| `hooks/record_assistant_usage.py` | Stop hook で transcript から `(model, 4 種 token, message_id)` を抽出して `assistant_usage` event を記録 (詳しい流れは `cost-calculation.md`) |
 | `hooks/_append.py` | ファイルロック付きで append-only 書き込み |
 | `hooks/verify_session.py` | Stop hook で transcript と usage.jsonl を突き合わせて整合性チェック |
 | `hooks/launch_dashboard.py` | ダッシュボードを fork-and-detach でべき等に起動 |
