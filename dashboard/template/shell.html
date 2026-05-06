@@ -134,6 +134,52 @@ __INCLUDE_STYLES__
       </div>
     </div>
 
+    <!-- Issue #106: モデル分布 (opus / sonnet / haiku の messages × cost donut grid) -->
+    <div class="panel" id="model-dist-panel" style="margin-top: 14px;">
+      <div class="panel-head c-rose">
+        <div class="ttl-wrap">
+          <span class="ttl"><span class="dot"></span>モデル分布</span>
+          <span class="help-host">
+            <button class="help-btn" type="button" aria-label="説明を表示" aria-expanded="false" aria-describedby="hp-model-dist" data-help-id="hp-model-dist">?</button>
+            <span class="help-pop" id="hp-model-dist" role="tooltip" data-place="left">
+              <span class="pop-ttl">モデル分布の読み方</span>
+              <span class="pop-body"><code>assistant_usage</code> event ごとの <code>model</code> フィールドを family (opus / sonnet / haiku) にロールアップした、モデル別の負荷分担。メッセージ数では sonnet が workhorse、コストでは opus が支配的になりがち — 両軸を併置することで、message-count では見えないコスト偏りを発見できる。集計対象は <code>assistant_usage</code> event のみ (session_start / skill_tool / subagent invocation は除外)。未知 model は sonnet family に寄せて集計する。</span>
+            </span>
+          </span>
+        </div>
+        <span class="sub" id="modelDistSub"></span>
+      </div>
+      <div class="panel-body">
+        <div class="axis-pair">
+          <div class="axis-col" data-axis="messages">
+            <div class="axis-head">MESSAGES</div>
+            <div class="donut-wrap">
+              <svg class="donut" viewBox="0 0 120 120" preserveAspectRatio="xMidYMid meet" aria-hidden="true"></svg>
+              <div class="axis-center"></div>
+              <div class="donut-callouts"></div>
+            </div>
+          </div>
+          <div class="axis-col" data-axis="cost">
+            <div class="axis-head">COST</div>
+            <div class="donut-wrap">
+              <svg class="donut" viewBox="0 0 120 120" preserveAspectRatio="xMidYMid meet" aria-hidden="true"></svg>
+              <div class="axis-center"></div>
+              <div class="donut-callouts"></div>
+            </div>
+          </div>
+        </div>
+        <div class="model-legend">
+          <div class="model-legend-head">
+            <span class="lh-dot"></span>
+            <span class="lh-fam"></span>
+            <span class="lh-msgs">msgs</span>
+            <span class="lh-cost">cost</span>
+          </div>
+          <div class="model-legend-body"></div>
+        </div>
+      </div>
+    </div>
+
     </section><!-- /data-page="overview" -->
 
     <!-- Patterns ページ (Issue #58 で heatmap 実装。#59 で cross-skill / project×skill 追加予定) -->

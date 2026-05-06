@@ -149,6 +149,95 @@ def calculate_message_cost(
     return round(cost, 4)
 
 
+_FAMILY_CANONICAL_ORDER = ("opus", "sonnet", "haiku")
+
+
+def infer_model_family(model: str | None) -> str:
+    """raw model ID → 'opus' / 'sonnet' / 'haiku' family 文字列.
+
+    substring match (lowercase)。未知 model や空文字 / None は 'sonnet' fallback
+    (= `DEFAULT_PRICING` (sonnet-4-6) と意味論を一致させ、cost 推計と family
+    rollup の double standard を作らない、cost-calculation-design.md §10 整合)。
+
+    JS 側の `inferModelFamily` (45_renderers_sessions.js) と semantics を 1:1 に
+    保つことを load-bearing 規約とする。priority 順は opus → haiku → sonnet で、
+    両方を含む model 名 (例: "opus-foo-bar-haiku") は opus を勝者とする
+    (= prefix match の `_get_pricing` とは別の抽象階層、Issue #106 plan R7 /
+    Phase 1 `TestPricingHelperSemanticsContrast` で test レベルの drift guard 済)。
+    """
+    m = (model or "").lower()
+    if "opus" in m:
+        return "opus"
+    if "haiku" in m:
+        return "haiku"
+    if "sonnet" in m:
+        return "sonnet"
+    return "sonnet"
+
+
+def aggregate_model_distribution(events: list[dict]) -> dict:
+    """events から family rollup の messages / cost 分布を組み立てる純関数 (Issue #106).
+
+    出力形:
+        {
+            "families": [
+                {"family": "opus",   "messages": int, "messages_pct": float,
+                 "cost_usd": float, "cost_pct": float},
+                ... (sonnet, haiku 同形)
+            ],
+            "messages_total": int,
+            "cost_total": float,
+        }
+
+    contract 不変条件:
+    - `families` は **常に 3 行** (opus → sonnet → haiku, canonical 固定順)。
+      family 数が 0 / 1 / 2 でも未出現 family は messages=0 行で埋める
+    - 空 events / `messages_total == 0` のとき `messages_pct = 0.0` (NaN guard)
+    - `cost_total == 0` のとき `cost_pct = 0.0` (NaN guard)
+    - 未知 model は `infer_model_family` の sonnet fallback で sonnet 行に集計、
+      cost は `calculate_message_cost` の DEFAULT_PRICING (sonnet-4-6) で推計
+    - `cost_usd` / `cost_total` は 4 桁丸め (cost-calculation-design.md §3 慣習)
+    - `*_pct` は **server 側で丸めない**。AC 「合計 ±0.5%」を満たすため UI 側で丸める
+    """
+    messages: dict[str, int] = {f: 0 for f in _FAMILY_CANONICAL_ORDER}
+    cost: dict[str, float] = {f: 0.0 for f in _FAMILY_CANONICAL_ORDER}
+
+    for ev in events:
+        if ev.get("event_type") != "assistant_usage":
+            continue
+        model = ev.get("model", "") or ""
+        fam = infer_model_family(model)
+        messages[fam] += 1
+        cost[fam] += calculate_message_cost(
+            model,
+            int(ev.get("input_tokens") or 0),
+            int(ev.get("output_tokens") or 0),
+            int(ev.get("cache_read_tokens") or 0),
+            int(ev.get("cache_creation_tokens") or 0),
+        )
+
+    messages_total = sum(messages.values())
+    cost_total = round(sum(cost.values()), 4)
+
+    families = []
+    for fam in _FAMILY_CANONICAL_ORDER:
+        m = messages[fam]
+        c = round(cost[fam], 4)
+        families.append({
+            "family": fam,
+            "messages": m,
+            "messages_pct": (m / messages_total) if messages_total else 0.0,
+            "cost_usd": c,
+            "cost_pct": (c / cost_total) if cost_total else 0.0,
+        })
+
+    return {
+        "families": families,
+        "messages_total": messages_total,
+        "cost_total": cost_total,
+    }
+
+
 def calculate_session_cost(events_for_session: list[dict]) -> float:
     """events list から `assistant_usage` event のみを取り出し session cost を合算。
 

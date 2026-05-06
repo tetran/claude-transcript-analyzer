@@ -26,7 +26,7 @@ from subagent_metrics import (
     usage_invocation_intervals,
 )
 # Issue #99 / v0.8.0: session_breakdown for `/api/data` (cost / token / model 内訳)
-from cost_metrics import TOP_N_SESSIONS, aggregate_session_breakdown
+from cost_metrics import TOP_N_SESSIONS, aggregate_model_distribution, aggregate_session_breakdown
 # Issue #24 PR#31 codex P2: server.json の lock + compare-and-delete primitives は
 # `server_registry` に切り出して `hooks/launch_dashboard.py` の cleanup パスと
 # 共有する。本モジュール内では従来 API 名で再 export し、既存テスト
@@ -1118,6 +1118,9 @@ def build_dashboard_data(
             now=now,
             top_n=TOP_N_SESSIONS,
         ),
+        # Issue #106 / v0.8.0: Overview モデル分布パネル。period_events_raw 経由で
+        # session_breakdown と semantics を揃える (period 連動 / subagent assistant_usage 包含)。
+        "model_distribution": aggregate_model_distribution(period_events_raw),
         "period_applied": period if period in _PERIOD_DELTAS or period == "all" else "all",
     }
 
