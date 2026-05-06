@@ -25,6 +25,8 @@ from subagent_metrics import (
     usage_invocation_events,
     usage_invocation_intervals,
 )
+# Issue #99 / v0.8.0: session_breakdown for `/api/data` (cost / token / model 内訳)
+from cost_metrics import TOP_N_SESSIONS, aggregate_session_breakdown
 # Issue #24 PR#31 codex P2: server.json の lock + compare-and-delete primitives は
 # `server_registry` に切り出して `hooks/launch_dashboard.py` の cleanup パスと
 # 共有する。本モジュール内では従来 API 名で再 export し、既存テスト
@@ -1104,6 +1106,13 @@ def build_dashboard_data(
         "skill_invocation_breakdown": aggregate_skill_invocation_breakdown(events),
         "skill_lifecycle": aggregate_skill_lifecycle(events, now=now),
         "skill_hibernating": aggregate_skill_hibernating(events, now=now),
+        # Issue #99 / v0.8.0: session 単位の token / cost / model 内訳 / service_tier。
+        # period_events_raw 経由で集計 (assistant_usage は _filter_usage_events の対象外)。
+        # subagent invocation dedup は session_subagent_counts(period_events_raw) が
+        # 内部で _bucket_events / _build_invocations を使うため整合する。
+        "session_breakdown": aggregate_session_breakdown(
+            period_events_raw, now=now, top_n=TOP_N_SESSIONS,
+        ),
         "period_applied": period if period in _PERIOD_DELTAS or period == "all" else "all",
     }
 
