@@ -568,3 +568,130 @@ class TestSessionsRendererBehavior(unittest.TestCase):
         out = self._run_node(f"window.__sessions.computeKpi({sessions_js})")
         self.assertAlmostEqual(out['medianMultiple'], 1.0, places=4)
         self.assertAlmostEqual(out['topCostShare'], 0.4, places=4)
+
+
+# ============================================================
+#  TestSessionsSubLabel — Issue #109 Sessions ページ sub 行ラベル
+# ============================================================
+class TestSessionsSubLabel:
+    """Issue #109 / v0.8.0: Sessions ページ panel sub 行が
+    `有効セッション ${N} · ${projCount} projects` で render される。
+
+    aggregator (`aggregate_session_breakdown`) が empty session を除外した
+    後の cohort 数を表示することを UI 文言で明示する責務 (= help-pop 4-axis
+    verification: aggregator filter 条件 = UI label の意味)。
+    """
+
+    def test_renderers_sessions_js_uses_yuko_session_label(self):
+        """45_renderers_sessions.js に `有効セッション ` (verbatim) が登場する。"""
+        body = _RENDERERS_JS.read_text(encoding='utf-8')
+        assert '有効セッション ' in body, \
+            "45_renderers_sessions.js に '有効セッション ' verbatim が無い"
+
+    def test_renderers_sessions_js_does_not_emit_legacy_sessions_label(self):
+        """旧 sub 文字列 `${sessions.length} sessions · ` 形式 (= 旧正本) が
+        消滅していること。grep で「' sessions · '」が renderer 側に残っていない。
+        """
+        body = _RENDERERS_JS.read_text(encoding='utf-8')
+        assert "' sessions · '" not in body, \
+            "45_renderers_sessions.js に legacy sub label `' sessions · '` が残存"
+        assert '" sessions · "' not in body, \
+            "45_renderers_sessions.js に legacy sub label `\" sessions · \"` が残存"
+
+
+@unittest.skipUnless(_NODE, "node not installed; skipping behavior round-trip")
+class TestSessionsSubLabelRoundTrip(unittest.TestCase):
+    """`buildSessionsSubText(sessions)` を Node 経由で round-trip 検証。
+
+    `window.__sessions.buildSessionsSubText` として expose された helper を
+    直接呼び出し、return 文字列が新正本フォーマットと一致する pin。
+    """
+
+    @staticmethod
+    def _run_node(call_expr: str) -> object:
+        helpers_src = _HELPERS_JS.read_text(encoding='utf-8')
+        renderers_src = _RENDERERS_JS.read_text(encoding='utf-8')
+        shim = (
+            "const __doc_dataset = { activePage: '__none__' };\n"
+            "globalThis.document = { body: { dataset: __doc_dataset }, "
+            "querySelector: () => null, getElementById: () => null };\n"
+            "globalThis.window = globalThis;\n"
+        )
+        script = (
+            shim
+            + helpers_src
+            + "\n" + renderers_src
+            + "\nconst __out = " + call_expr + ";\n"
+            + "process.stdout.write(JSON.stringify(__out));\n"
+        )
+        env = os.environ.copy()
+        proc = subprocess.run(
+            [_NODE, "-e", script],
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+            timeout=10,
+        )
+        if proc.returncode != 0:
+            raise AssertionError(
+                f"node failed (returncode={proc.returncode}): stderr={proc.stderr}"
+            )
+        return json.loads(proc.stdout)
+
+    def test_render_sessions_sub_via_node_with_one_session(self):
+        """1 session (project='p') → '有効セッション 1 · 1 projects'。"""
+        sessions_js = "[{project:'p'}]"
+        out = self._run_node(
+            f"window.__sessions.buildSessionsSubText({sessions_js})"
+        )
+        self.assertEqual(out, "有効セッション 1 · 1 projects")
+
+    def test_render_sessions_sub_via_node_with_zero_sessions(self):
+        """空配列 → '有効セッション 0 · 0 projects' (空表示や — fallback ではない)。"""
+        out = self._run_node("window.__sessions.buildSessionsSubText([])")
+        self.assertEqual(out, "有効セッション 0 · 0 projects")
+
+
+# ============================================================
+#  TestSessionsHelpPopVerbatim — Issue #109 lede / hp-sessions 文言
+# ============================================================
+class TestSessionsHelpPopVerbatim:
+    """Issue #109: Sessions section の lede + hp-sessions help-pop body を
+    aggregator filter 条件と verbatim 整合させる (Help-pop 4-axis verification)。
+    """
+
+    def test_lede_uses_yuko_session_phrase(self):
+        """Sessions section の lede に '最新 20 件の有効セッション' verbatim が含まれる。"""
+        section = _extract_section(_load_template(), 'sessions')
+        assert '最新 20 件の有効セッション' in section, \
+            "Sessions lede に '最新 20 件の有効セッション' が無い"
+
+    def test_hp_sessions_body_mentions_assistant_usage_zero_exclusion(self):
+        """hp-sessions の pop-body に `assistant_usage` と '集計対象外' (verbatim)
+        が含まれる (= aggregator filter 条件と 1:1 対応)。
+        """
+        template = _load_template()
+        # hp-sessions pop body 範囲を抽出
+        idx = template.index('id="hp-sessions"')
+        end = template.index('</span>', template.index('pop-body', idx))
+        body = template[idx:end]
+        assert 'assistant_usage' in body, \
+            "hp-sessions body に 'assistant_usage' が無い"
+        assert '集計対象外' in body, \
+            "hp-sessions body に '集計対象外' が無い"
+
+    def test_hp_sessions_body_does_not_claim_all_session_starts_displayed(self):
+        """旧 body の「`session_start` イベントを起点に...20 件」だけが残ってはいけない。
+        集計対象外の note が同 body 内にも存在することを確認 (= 「全 session を表示」
+        claim が単独では立たない)。
+        """
+        template = _load_template()
+        idx = template.index('id="hp-sessions"')
+        end = template.index('</span>', template.index('pop-body', idx))
+        body = template[idx:end]
+        # session_start 起点 claim はそのまま残るが、必ず 集計対象外 と並列している
+        if 'session_start' in body:
+            assert '集計対象外' in body, \
+                "hp-sessions に session_start 起点 claim が残るが集計対象外 note が無い"
