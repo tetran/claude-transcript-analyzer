@@ -252,11 +252,15 @@ class TestSessionsRendererBehavior(unittest.TestCase):
             + "process.stdout.write(JSON.stringify(__out));\n"
         )
         env = os.environ.copy()
+        # Windows の subprocess は text=True 時に OS locale (cp932 / charmap) で
+        # decode してしまい、Node が UTF-8 で出力する日本語 (`進行中`) や em dash
+        # (`—`) が mojibake / UnicodeDecodeError で死ぬ。encoding を明示すること。
         proc = subprocess.run(
             [_NODE, "-e", script],
             env=env,
             capture_output=True,
             text=True,
+            encoding="utf-8",
             check=False,
             timeout=10,
         )
