@@ -1107,11 +1107,16 @@ def build_dashboard_data(
         "skill_lifecycle": aggregate_skill_lifecycle(events, now=now),
         "skill_hibernating": aggregate_skill_hibernating(events, now=now),
         # Issue #99 / v0.8.0: session 単位の token / cost / model 内訳 / service_tier。
-        # period_events_raw 経由で集計 (assistant_usage は _filter_usage_events の対象外)。
-        # subagent invocation dedup は session_subagent_counts(period_events_raw) が
-        # 内部で _bucket_events / _build_invocations を使うため整合する。
+        # boundary (session_start / session_end) は **全期間 events** から lookup、
+        # content (assistant_usage / skill_tool) は **period_events_raw** で in-period
+        # 限定。これで period 跨ぎ session (= session_start が pre-cutoff、in-period
+        # に assistant_usage がある) も in-period の cost / token を保ったまま render
+        # される (codex review Round 1 / cross-cutoff regression 対策)。
         "session_breakdown": aggregate_session_breakdown(
-            period_events_raw, now=now, top_n=TOP_N_SESSIONS,
+            events,
+            period_events=period_events_raw,
+            now=now,
+            top_n=TOP_N_SESSIONS,
         ),
         "period_applied": period if period in _PERIOD_DELTAS or period == "all" else "all",
     }

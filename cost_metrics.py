@@ -165,19 +165,31 @@ def _parse_iso(ts: str) -> datetime | None:
 
 def _build_session_row(
     session_id: str,
-    session_evs: list[dict],
+    boundary_evs: list[dict],
+    content_evs: list[dict],
     subagent_count: int,
 ) -> dict | None:
-    """1 session 分の events から row dict を組み立てる。session_start を持たない
-    session (orphan) は None を返して caller 側で drop する。
+    """1 session 分の events から row dict を組み立てる。
+
+    boundary_evs (= unfiltered full events): `session_start` / `session_end` の lookup 専用。
+    period 跨ぎ session で session_start が pre-cutoff にあっても、period content は
+    in-period 限定で count しつつ session 自体は render するために boundary だけ
+    全期間を見る (codex review Round 1 / period cross-cutoff regression 修正)。
+
+    content_evs (= period-filtered subset): `assistant_usage` / `skill_tool` /
+    `user_slash_command` の集計。tokens / cost / models / service_tier_breakdown /
+    skill_count はすべて in-period のみで count される。
+
+    boundary_evs に session_start を持たない session (orphan) は None を返して
+    caller 側で drop する。
     """
-    starts = [e for e in session_evs if e.get("event_type") == "session_start"]
+    starts = [e for e in boundary_evs if e.get("event_type") == "session_start"]
     if not starts:
         return None
-    ends = [e for e in session_evs if e.get("event_type") == "session_end"]
-    usage_evs = [e for e in session_evs if e.get("event_type") == "assistant_usage"]
+    ends = [e for e in boundary_evs if e.get("event_type") == "session_end"]
+    usage_evs = [e for e in content_evs if e.get("event_type") == "assistant_usage"]
     skill_evs = [
-        e for e in session_evs
+        e for e in content_evs
         if e.get("event_type") in ("skill_tool", "user_slash_command")
     ]
 
@@ -234,6 +246,7 @@ def _build_session_row(
 def aggregate_session_breakdown(
     events: list[dict],
     *,
+    period_events: list[dict] | None = None,
     now: datetime | None = None,
     top_n: int = TOP_N_SESSIONS,
 ) -> list[dict]:
@@ -251,26 +264,54 @@ def aggregate_session_breakdown(
     `now` は将来拡張用 (active session の age 表示等) の hook として受けるが、
     本実装では使わない (= active session は `ended_at = null` / `duration_seconds = null`)。
 
-    入力 events は **未 filter** で渡してよい:
-      - 内部で `event_type == "assistant_usage"` の event のみ token / cost / tier 集計に使う
-      - `session_start` / `session_end` は session pool の境界
-      - `skill_tool` / `user_slash_command` は `skill_count` の入力
-      - subagent invocation 件数は `session_subagent_counts(events)` の dedup 経由
+    引数の使い分け (codex review Round 1 / period cross-cutoff regression 対策):
+    - `events`: **全期間 unfiltered events**。`session_start` / `session_end` /
+      session pool の boundary 解決に使う。period 跨ぎで session_start が pre-cutoff
+      に居る場合でも boundary を見失わないようにここで全期間を保持する
+    - `period_events` (optional): **period-filtered subset**。`assistant_usage` /
+      `skill_tool` / `user_slash_command` の token / cost / models / service_tier /
+      skill_count を in-period 限定で count するための入力。`None` のときは
+      `events` を流用 (= period 適用なしと同じ振る舞い、後方互換)
+    - **session pool 定義**: `period_events` に **少なくとも 1 件** event がある
+      session のみ render 対象。session_start が pre-cutoff でも、in-period に
+      assistant_usage / skill / subagent event があれば cost/token は in-period
+      分だけ集計して render する (= period 跨ぎ visible)。
+
+    subagent_count は `period_events` 経由で計算 (= in-period invocation のみ count)。
+    cost / token と semantics を揃えて in-period 限定とする。
     """
     del now  # 将来拡張用 hook、本実装では未使用
 
-    sessions_evs: dict[str, list[dict]] = {}
+    if period_events is None:
+        period_events = events
+
+    # Group full events by session for boundary lookup
+    full_by_session: dict[str, list[dict]] = {}
     for ev in events:
         sid = ev.get("session_id", "")
         if not sid:
             continue
-        sessions_evs.setdefault(sid, []).append(ev)
+        full_by_session.setdefault(sid, []).append(ev)
 
-    subagent_counts = session_subagent_counts(events)
+    # Group period events by session for content lookup
+    # かつ session pool (= period 内に少なくとも 1 event ある session) を確定
+    period_by_session: dict[str, list[dict]] = {}
+    for ev in period_events:
+        sid = ev.get("session_id", "")
+        if not sid:
+            continue
+        period_by_session.setdefault(sid, []).append(ev)
+
+    # subagent_count は in-period 限定で計算 (cost/token と semantics を揃える)
+    subagent_counts = session_subagent_counts(period_events)
 
     rows: list[dict] = []
-    for sid, evs in sessions_evs.items():
-        row = _build_session_row(sid, evs, subagent_counts.get(sid, 0))
+    for sid in period_by_session:
+        boundary_evs = full_by_session.get(sid, [])
+        content_evs = period_by_session[sid]
+        row = _build_session_row(
+            sid, boundary_evs, content_evs, subagent_counts.get(sid, 0),
+        )
         if row is not None:
             rows.append(row)
 

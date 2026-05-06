@@ -187,6 +187,33 @@ class TestSessionBreakdown(unittest.TestCase):
         self.assertNotIn("s_old", recent_ids)
         self.assertIn("s_new", recent_ids)
 
+    def test_cross_cutoff_session_keeps_in_period_costs(self):
+        """codex review Round 1 P2 regression guard: long-running session が
+        period 跨ぎで session_start が pre-cutoff のとき、in-period assistant_usage
+        の cost / token が消えてはいけない。boundary lookup (session_start /
+        session_end) は全期間 events から、content (token / cost / skill) は
+        period_events_raw から、で session 自体は render される。
+        """
+        from server import build_dashboard_data
+        now = datetime(2026, 5, 10, tzinfo=timezone.utc)
+        events = [
+            # 10 日前に session 開始 (7d cutoff の外)
+            _session_start("s_long", "p", "2026-04-30T10:00:00+00:00"),
+            # 3 日前に assistant_usage (= in-period)
+            _au("s_long", "p", "2026-05-07T10:00:00+00:00",
+                in_t=1_000_000, out_t=0),
+        ]
+        result = build_dashboard_data(events, period="7d", now=now)
+        sb = result["session_breakdown"]
+        self.assertEqual(len(sb), 1)
+        row = sb[0]
+        self.assertEqual(row["session_id"], "s_long")
+        # boundary lookup は全期間 → started_at は pre-cutoff 値が出る
+        self.assertEqual(row["started_at"], "2026-04-30T10:00:00+00:00")
+        # content (cost) は in-period の 1M input × Sonnet $3/M = $3.0
+        self.assertEqual(row["estimated_cost_usd"], 3.0)
+        self.assertEqual(row["tokens"]["input"], 1_000_000)
+
 
 if __name__ == "__main__":
     unittest.main()
