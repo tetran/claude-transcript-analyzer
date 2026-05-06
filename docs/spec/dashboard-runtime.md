@@ -96,7 +96,7 @@ kill $(jq -r .pid ~/.claude/transcript-analyzer/server.json)
 
 | Path | data-page | 名前 | 主な目的 |
 |------|-----------|------|----------|
-| `#/` | `overview` | Overview | KPI / skill ranking / subagent ranking / project breakdown / daily trend / health alerts |
+| `#/` | `overview` | Overview | KPI / skill ranking / subagent ranking / project breakdown / daily trend / health alerts / モデル分布 (Issue #106) |
 | `#/patterns` | `patterns` | Patterns | 利用パターン (時間帯 / 共起 / project×skill) |
 | `#/quality` | `quality` | Quality | 実行品質と摩擦シグナル (permission / compact / percentile) |
 | `#/surface` | `surface` | Surface | スキル surface (発見性 / 想起性) |
