@@ -12,6 +12,7 @@
     '#/patterns': 'patterns',
     '#/quality': 'quality',
     '#/surface': 'surface',
+    '#/sessions': 'sessions',
   };
   function applyRoute(rawHash) {
     // 未知 hash (`#/foo`, `#bar`, percent-encoded など) は overview に倒す

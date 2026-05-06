@@ -222,6 +222,10 @@ def _node_eval_heartbeat(prelude: str, script: str) -> object:
     src = _HEARTBEAT_JS.read_text(encoding="utf-8")
     full = prelude + "\n" + src + "\n" + script
     env = os.environ.copy()
+    # Windows GitHub runner では Node の cold-start が 10 秒を超えるバラツキで
+    # subprocess.TimeoutExpired を出して flaky になる (Issue #103 PR で観測)。
+    # 30 秒まで猶予を持たせる: 同 test は通常 1〜2 秒で完了する想定なので、
+    # ここで延ばしても通常 CI 時間に影響なし、Windows tail-latency にだけ効く。
     proc = subprocess.run(
         [_NODE, "-e", full],
         env=env,
@@ -229,7 +233,7 @@ def _node_eval_heartbeat(prelude: str, script: str) -> object:
         text=True,
         encoding="utf-8",
         check=False,
-        timeout=10,
+        timeout=30,
     )
     if proc.returncode != 0:
         raise AssertionError(

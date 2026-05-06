@@ -46,16 +46,16 @@ def _extract_footer(template: str) -> str:
 #  TestRouterShellStructure (10 tests / proposal-1+4 反映)
 # ============================================================
 class TestRouterShellStructure:
-    def test_template_has_four_page_nav_links(self):
-        """nav は 4 タブ (Overview / Patterns / Quality / Surface)"""
+    def test_template_has_five_page_nav_links(self):
+        """nav は 5 タブ (Overview / Patterns / Quality / Surface / Sessions — Issue #103)"""
         template = _load_template()
-        for path in ['#/', '#/patterns', '#/quality', '#/surface']:
+        for path in ['#/', '#/patterns', '#/quality', '#/surface', '#/sessions']:
             assert f'href="{path}"' in template, f"nav link href={path} not found"
 
-    def test_template_has_four_page_sections(self):
-        """4 つの <section data-page="..."> が存在"""
+    def test_template_has_five_page_sections(self):
+        """5 つの <section data-page="..."> が存在 (Issue #103 で sessions 追加)"""
         template = _load_template()
-        for page in ['overview', 'patterns', 'quality', 'surface']:
+        for page in ['overview', 'patterns', 'quality', 'surface', 'sessions']:
             assert f'data-page="{page}"' in template, f"section data-page={page} not found"
 
     def test_overview_page_contains_existing_widgets(self):
