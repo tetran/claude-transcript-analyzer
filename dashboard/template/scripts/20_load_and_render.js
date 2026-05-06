@@ -492,8 +492,12 @@
       const sub = document.getElementById('modelDistSub');
       if (sub) {
         const t = Number(md.messages_total) || 0;
-        sub.textContent = (typeof __periodBadge !== 'undefined' ? __periodBadge : '') +
-          'Σ ' + _formatMessages(t) + ' messages';
+        // codex review round 1 / P3: __periodBadge は loadAndRender 関数内 const で
+        // 本 IIFE からは見えない (typeof で undefined fallback してしまい period prefix が
+        // 出ない)。data.period_applied から再計算して他 Overview sublabel と整合させる。
+        const periodApplied = (data && typeof data.period_applied === 'string') ? data.period_applied : 'all';
+        const periodBadge = (periodApplied !== 'all') ? (periodApplied + ' 集計 · ') : '';
+        sub.textContent = periodBadge + 'Σ ' + _formatMessages(t) + ' messages';
       }
 
       if (typeof placeAllPops === 'function') placeAllPops();

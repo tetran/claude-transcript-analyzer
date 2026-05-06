@@ -333,6 +333,78 @@ class TestModelDistRendererNode(unittest.TestCase):
         # USD / $ も後置しない (cost 軸でも eyebrow + value のみ)
         self.assertNotIn("USD", out)
 
+    def test_render_emits_period_badge_when_period_applied(self):
+        # codex review round 1 / P3: __periodBadge が IIFE scope で見えない bug の guard.
+        # data.period_applied="7d" を渡したら sub に "7d 集計 · " prefix が出ること。
+        out = _node_eval("""
+            globalThis.document.body.dataset.activePage = 'overview';
+            let _modelDistSubText = '';
+            const __subEl = { textContent: '' };
+            Object.defineProperty(__subEl, 'textContent', {
+              set(v) { _modelDistSubText = v; },
+              get() { return _modelDistSubText; },
+            });
+            const __panelEl = {
+              querySelectorAll: () => [],
+              querySelector: () => null,
+            };
+            globalThis.document.getElementById = (id) => {
+              if (id === 'model-dist-panel') return __panelEl;
+              if (id === 'modelDistSub') return __subEl;
+              return null;
+            };
+            window.__modelDist.renderModelDistribution({
+              period_applied: '7d',
+              model_distribution: {
+                families: [
+                  {family:'opus', messages:10, messages_pct:1.0, cost_usd:1.0, cost_pct:1.0},
+                  {family:'sonnet', messages:0, messages_pct:0, cost_usd:0, cost_pct:0},
+                  {family:'haiku', messages:0, messages_pct:0, cost_usd:0, cost_pct:0},
+                ],
+                messages_total: 10,
+                cost_total: 1.0,
+              },
+            });
+            console.log(_modelDistSubText);
+        """)
+        self.assertIn("7d 集計 · ", out)
+
+    def test_render_omits_period_badge_when_period_is_all(self):
+        out = _node_eval("""
+            globalThis.document.body.dataset.activePage = 'overview';
+            let _modelDistSubText = '';
+            const __subEl = { textContent: '' };
+            Object.defineProperty(__subEl, 'textContent', {
+              set(v) { _modelDistSubText = v; },
+              get() { return _modelDistSubText; },
+            });
+            const __panelEl = {
+              querySelectorAll: () => [],
+              querySelector: () => null,
+            };
+            globalThis.document.getElementById = (id) => {
+              if (id === 'model-dist-panel') return __panelEl;
+              if (id === 'modelDistSub') return __subEl;
+              return null;
+            };
+            window.__modelDist.renderModelDistribution({
+              period_applied: 'all',
+              model_distribution: {
+                families: [
+                  {family:'opus', messages:10, messages_pct:1.0, cost_usd:1.0, cost_pct:1.0},
+                  {family:'sonnet', messages:0, messages_pct:0, cost_usd:0, cost_pct:0},
+                  {family:'haiku', messages:0, messages_pct:0, cost_usd:0, cost_pct:0},
+                ],
+                messages_total: 10,
+                cost_total: 1.0,
+              },
+            });
+            console.log(_modelDistSubText);
+        """)
+        # all のときは prefix なし
+        self.assertNotIn("集計 · ", out)
+        self.assertIn("Σ", out)
+
     def test_single_family_renders_full_circle(self):
         out = _node_eval("""
             const families = [
