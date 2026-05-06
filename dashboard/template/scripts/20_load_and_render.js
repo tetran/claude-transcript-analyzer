@@ -288,6 +288,12 @@
     window.__sessions.renderSessions(data);
   }
 
+  // ---- Overview model distribution (Issue #106) ----
+  // window.__modelDist は本ファイル末尾の IIFE で expose 済 (concat 順 20 内 self-contained)。
+  if (typeof window !== 'undefined' && window.__modelDist && typeof window.__modelDist.renderModelDistribution === 'function') {
+    window.__modelDist.renderModelDistribution(data);
+  }
+
   // dynamic re-render 後の help-pop 再配置 (Issue #41)。kpiRow を含む全 popup を
   // walk して、右端 KPI tooltip の viewport overflow を防ぐ。
   placeAllPops();
@@ -307,3 +313,199 @@
     commitLiveSnapshot(__liveNext);
   }
   } // end loadAndRender
+
+  // ============================================================
+  //  Overview "モデル分布" panel (Issue #106)
+  //  ※ 新ファイル禁止のため 20_load_and_render.js 末尾に同居
+  //     (Issue 本文「Overview KPI / spark / project stack を担当している箇所と同居」)
+  //  ============================================================
+  //  pure helpers: buildDonutSvg / buildLegendHtml / buildCalloutHtml /
+  //  buildCenterLabel — Node round-trip テストから個別 callable。
+  //  canonical 順 ['opus', 'sonnet', 'haiku'] は server (cost_metrics.py) と
+  //  3 軸同期 (slice 並び / legend 行順 / API 配列順) で hard-code pin。
+  //  ============================================================
+  (function(){
+    const FAMILIES = ['opus', 'sonnet', 'haiku'];
+    const CALLOUT_THRESHOLD = 0.05;
+    // donut geometry: viewBox 0 0 120 120, center (60,60), r=42, stroke-width=16
+    // → 外径 50 / 内径 34、外接バウンディング (10,10)-(110,110) で 5px の余白
+    const DONUT_CX = 60;
+    const DONUT_CY = 60;
+    const DONUT_R = 42;
+    const DONUT_STROKE = 16;
+    const DONUT_C = 2 * Math.PI * DONUT_R;
+    const CALLOUT_R = DONUT_R + DONUT_STROKE * 0.85;  // ラベルは外径少し外側
+
+    function _pctOf(row, axis) {
+      if (axis === 'cost') return Number(row.cost_pct) || 0;
+      return Number(row.messages_pct) || 0;
+    }
+
+    function buildDonutSvg(families, axis) {
+      const rows = FAMILIES.map(function(fam){
+        return (families || []).find(function(r){ return r && r.family === fam; })
+          || { family: fam, messages_pct: 0, cost_pct: 0 };
+      });
+      const total = rows.reduce(function(s, r){ return s + _pctOf(r, axis); }, 0);
+      if (!isFinite(total) || total <= 0) {
+        return '<circle class="donut-empty" cx="' + DONUT_CX + '" cy="' + DONUT_CY +
+               '" r="' + DONUT_R + '" fill="none" stroke-width="' + DONUT_STROKE + '" />';
+      }
+      let acc = 0;
+      const slices = rows.map(function(r){
+        const pct = _pctOf(r, axis);
+        if (pct <= 0) return '';
+        const dashLen = pct * DONUT_C;
+        const gapLen = DONUT_C - dashLen;
+        const offset = -acc * DONUT_C;
+        acc += pct;
+        return '<circle class="donut-slice s-' + r.family + '"' +
+          ' cx="' + DONUT_CX + '" cy="' + DONUT_CY + '"' +
+          ' r="' + DONUT_R + '" fill="none"' +
+          ' stroke-width="' + DONUT_STROKE + '"' +
+          ' stroke-dasharray="' + dashLen.toFixed(3) + ' ' + gapLen.toFixed(3) + '"' +
+          ' stroke-dashoffset="' + offset.toFixed(3) + '"' +
+          ' transform="rotate(-90 ' + DONUT_CX + ' ' + DONUT_CY + ')" />';
+      });
+      return slices.join('');
+    }
+
+    function buildCalloutHtml(families, axis) {
+      const rows = FAMILIES.map(function(fam){
+        return (families || []).find(function(r){ return r && r.family === fam; })
+          || { family: fam, messages_pct: 0, cost_pct: 0 };
+      });
+      let acc = 0;
+      const items = rows.map(function(r){
+        const pct = _pctOf(r, axis);
+        const start = acc;
+        acc += pct;
+        if (pct < CALLOUT_THRESHOLD) return '';
+        // 円弧中心角 (12 時起点 = -90deg を radian で)、時計回り
+        const mid = start + pct / 2;
+        const theta = -Math.PI / 2 + mid * 2 * Math.PI;
+        const x = DONUT_CX + CALLOUT_R * Math.cos(theta);
+        const y = DONUT_CY + CALLOUT_R * Math.sin(theta);
+        // viewBox 0..120 を 100% としたパーセント座標で配置 (CSS 側で position: absolute)
+        const leftPct = (x / 120 * 100).toFixed(2);
+        const topPct = (y / 120 * 100).toFixed(2);
+        const pctLabel = Math.round(pct * 100) + '%';
+        return '<div class="donut-callout c-' + r.family + '" data-family="' + r.family + '"' +
+          ' style="left:' + leftPct + '%;top:' + topPct + '%">' +
+          '<span class="cl-fam">' + r.family + '</span>' +
+          '<span class="cl-pct">' + pctLabel + '</span></div>';
+      });
+      return items.join('');
+    }
+
+    function buildLegendHtml(families) {
+      const rows = FAMILIES.map(function(fam){
+        return (families || []).find(function(r){ return r && r.family === fam; })
+          || { family: fam, messages: 0, cost_usd: 0 };
+      });
+      const head = '<div class="model-legend-head">' +
+        '<span class="lh-fam"></span>' +
+        '<span class="lh-msgs">msgs</span>' +
+        '<span class="lh-cost">cost</span>' +
+        '</div>';
+      const body = rows.map(function(r){
+        const cost = (typeof r.cost_usd === 'number')
+          ? '$' + r.cost_usd.toFixed(2)
+          : '$0.00';
+        return '<div class="leg-row leg-' + r.family + '">' +
+          '<span class="leg-dot"></span>' +
+          '<span class="leg-fam">' + r.family + '</span>' +
+          '<span class="leg-msgs">' + (Number(r.messages) || 0) + '</span>' +
+          '<span class="leg-cost">' + cost + '</span>' +
+          '</div>';
+      }).join('');
+      return head + body;
+    }
+
+    function buildCenterLabel(opts) {
+      const o = opts || {};
+      const eyebrow = String(o.eyebrow || '');
+      let val;
+      if (typeof o.value === 'number' && isFinite(o.value)) {
+        // cost (= float with decimals) は $X.XX、messages (= int) はそのまま
+        val = (Math.abs(o.value) > 0 && Math.abs(o.value) < 1000 && o.value % 1 !== 0)
+          ? '$' + o.value.toFixed(2)
+          : (typeof o.formatted === 'string' ? o.formatted : String(o.value));
+      } else {
+        val = '0';
+      }
+      return '<div class="ax-eyebrow">' + eyebrow + '</div>' +
+             '<div class="ax-num">' + val + '</div>';
+    }
+
+    function _formatMessages(n) {
+      const v = Number(n) || 0;
+      if (v >= 1000000) return (v / 1000000).toFixed(1) + 'M';
+      if (v >= 1000) return (v / 1000).toFixed(1) + 'k';
+      return String(Math.round(v));
+    }
+
+    function _formatCost(v) {
+      const n = Number(v) || 0;
+      return '$' + n.toFixed(2);
+    }
+
+    function renderModelDistribution(data) {
+      if (typeof document === 'undefined') return;
+      if (document.body && document.body.dataset.activePage !== 'overview') return;
+
+      const md = (data && data.model_distribution) || { families: [], messages_total: 0, cost_total: 0 };
+      const families = Array.isArray(md.families) ? md.families : [];
+      const panel = document.getElementById('model-dist-panel');
+      if (!panel) return;
+
+      const axes = panel.querySelectorAll('[data-axis]');
+      for (let i = 0; i < axes.length; i++) {
+        const node = axes[i];
+        const axis = node.getAttribute('data-axis');
+        const svg = node.querySelector('svg.donut');
+        const center = node.querySelector('.axis-center');
+        const callouts = node.querySelector('.donut-callouts');
+        if (svg) svg.innerHTML = buildDonutSvg(families, axis);
+        if (callouts) callouts.innerHTML = buildCalloutHtml(families, axis);
+        if (center) {
+          if (axis === 'cost') {
+            center.innerHTML = buildCenterLabel({
+              eyebrow: 'COST',
+              value: Number(md.cost_total) || 0,
+              formatted: _formatCost(md.cost_total),
+            });
+          } else {
+            const total = Number(md.messages_total) || 0;
+            center.innerHTML = buildCenterLabel({
+              eyebrow: 'MESSAGES',
+              value: total,
+              formatted: _formatMessages(total),
+            });
+          }
+        }
+      }
+
+      const legendBody = panel.querySelector('.model-legend');
+      if (legendBody) legendBody.innerHTML = buildLegendHtml(families);
+
+      const sub = document.getElementById('modelDistSub');
+      if (sub) {
+        const t = Number(md.messages_total) || 0;
+        sub.textContent = (typeof __periodBadge !== 'undefined' ? __periodBadge : '') +
+          'Σ ' + _formatMessages(t) + ' messages';
+      }
+
+      if (typeof placeAllPops === 'function') placeAllPops();
+    }
+
+    if (typeof window !== 'undefined') {
+      window.__modelDist = {
+        renderModelDistribution: renderModelDistribution,
+        buildDonutSvg: buildDonutSvg,
+        buildLegendHtml: buildLegendHtml,
+        buildCalloutHtml: buildCalloutHtml,
+        buildCenterLabel: buildCenterLabel,
+      };
+    }
+  })();

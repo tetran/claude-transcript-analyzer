@@ -411,3 +411,171 @@
     .toast.fading { opacity: 0; }
   }
 
+  /* ============================================================
+     Overview "モデル分布" panel (Issue #106 / donut grid + 共有 legend)
+     Issue 本文「10_components.css 内の既存 .stack-legend の隣に minor extension」
+     ============================================================ */
+
+  /* panel-head dot — `--rose` token を panel-head 系に新規導入。
+     既存使用は .rank-row .meta .fail のみ。00_base.css:22 で定義済。 */
+  .panel-head.c-rose .ttl .dot { background: var(--rose); }
+
+  /* axis-pair: messages × cost の 2 軸 grid。中央 hairline で視覚的に分離。 */
+  .axis-pair {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    align-items: start;
+    margin-bottom: 14px;
+  }
+  @media (max-width: 720px) {
+    .axis-pair { grid-template-columns: 1fr; }
+  }
+  .axis-pair .axis-col + .axis-col {
+    border-left: 1px solid var(--line);
+    padding-left: 16px;
+  }
+  @media (max-width: 720px) {
+    .axis-pair .axis-col + .axis-col {
+      border-left: none;
+      border-top: 1px solid var(--line);
+      padding-left: 0;
+      padding-top: 12px;
+    }
+  }
+
+  /* axis-head: 'MESSAGES' / 'COST' eyebrow */
+  .axis-head {
+    font-size: 10.5px;
+    color: var(--ink-faint);
+    font-family: var(--ff-mono);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    text-align: center;
+    margin-bottom: 8px;
+  }
+
+  /* donut SVG container — 中央 label を absolute 配置できるよう relative 親 */
+  .donut-wrap {
+    position: relative;
+    width: 168px;
+    margin: 0 auto;
+  }
+  .donut {
+    width: 100%;
+    height: auto;
+    display: block;
+  }
+  .donut-slice.s-opus   { stroke: var(--coral); }
+  .donut-slice.s-sonnet { stroke: var(--mint); }
+  .donut-slice.s-haiku  { stroke: var(--peach); }
+  .donut-empty {
+    stroke: var(--ink-faint);
+    stroke-opacity: 0.3;
+  }
+
+  /* center label: eyebrow + numeric の縦積み (単位 suffix 行なし、Q5) */
+  .axis-center {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    text-align: center;
+    pointer-events: none;
+  }
+  .axis-center .ax-eyebrow {
+    font-size: 9px;
+    color: var(--ink-faint);
+    font-family: var(--ff-mono);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 2px;
+  }
+  .axis-center .ax-num {
+    font-size: 18px;
+    color: var(--ink);
+    font-weight: 600;
+    font-family: var(--ff-mono);
+  }
+
+  /* callout: pct >= 5% の slice にラベルを leader 線端点風に配置 */
+  .donut-callouts {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+  .donut-callout {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    font-family: var(--ff-mono);
+    font-size: 10px;
+    line-height: 1.2;
+    color: var(--ink);
+    background: var(--bg-panel);
+    padding: 1px 5px;
+    border-radius: var(--r-sm);
+    border: 1px solid var(--line);
+    white-space: nowrap;
+  }
+  .donut-callout.c-opus   { border-color: var(--coral); }
+  .donut-callout.c-sonnet { border-color: var(--mint); }
+  .donut-callout.c-haiku  { border-color: var(--peach); }
+  .donut-callout .cl-fam {
+    color: var(--ink-soft);
+    margin-right: 4px;
+  }
+  .donut-callout .cl-pct {
+    font-weight: 600;
+  }
+
+  /* 共有 legend: 1 row = family、4 cells: dot / family / msgs / cost */
+  .model-legend {
+    display: grid;
+    gap: 0;
+    border-top: 1px solid var(--line);
+    padding-top: 10px;
+  }
+  .model-legend-head,
+  .model-legend .leg-row {
+    display: grid;
+    grid-template-columns: 14px 1fr 64px 80px;
+    gap: 10px;
+    align-items: center;
+    padding: 6px 0;
+    font-size: 12px;
+    font-family: var(--ff-mono);
+  }
+  .model-legend-head {
+    border-bottom: 1px solid var(--line);
+    padding: 4px 0 6px;
+    color: var(--ink-faint);
+    font-size: 9.5px;
+    text-transform: none;
+    letter-spacing: 0.04em;
+  }
+  .model-legend-head .lh-msgs,
+  .model-legend-head .lh-cost {
+    text-align: right;
+  }
+  .model-legend .leg-row {
+    border-bottom: 1px solid var(--line);
+  }
+  .model-legend .leg-row:last-child { border-bottom: none; }
+  .model-legend .leg-dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    background: var(--ink-faint);
+  }
+  .model-legend .leg-fam {
+    color: var(--ink);
+  }
+  .model-legend .leg-msgs,
+  .model-legend .leg-cost {
+    color: var(--ink);
+    text-align: right;
+    font-weight: 500;
+  }
+  .model-legend .leg-opus   .leg-dot { background: var(--coral); }
+  .model-legend .leg-sonnet .leg-dot { background: var(--mint); }
+  .model-legend .leg-haiku  .leg-dot { background: var(--peach); }
+
