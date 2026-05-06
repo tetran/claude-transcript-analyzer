@@ -215,10 +215,15 @@
         '</em> · 最小 <em>' + formatCostUsd(kpi.minCost) + '</em>';
 
       // 3 枚目 (平均) の sub: 中央値倍率 + 上位 1 件寄与率 (whale 偏りの可視化)。
-      // median = 0 のとき (中央値が 0 USD) は倍率が無限大になるので非表示。
-      const avgSubText = (kpi.medianCost > 0 && kpi.totalCost > 0)
-        ? '中央値の <em>' + (kpi.medianMultiple).toFixed(1) +
-          '×</em> · 上位 1 件で <em>' + Math.round((kpi.topCostShare || 0) * 100) + '%</em> 寄与'
+      // totalCost > 0 ならば必ず sub を出す。median = 0 (= cost=0 session が半数以上)
+      // の degenerate case では倍率が定義不可なので「—×」で dash fallback、上位 1 件
+      // 比率は totalCost で常に計算可能なので並べて表示する。
+      const avgMultText = (kpi.medianMultiple > 0)
+        ? kpi.medianMultiple.toFixed(1) + '×'
+        : '—';
+      const avgSubText = (kpi.totalCost > 0)
+        ? '中央値の <em>' + avgMultText + '</em> · 上位 1 件で <em>' +
+          Math.round((kpi.topCostShare || 0) * 100) + '%</em> 寄与'
         : '';
 
       // 4 枚目 (Cache 効率) の sub: cache_read と入力合計の内訳

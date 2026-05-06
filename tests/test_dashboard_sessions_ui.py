@@ -505,6 +505,48 @@ class TestSessionsRendererBehavior(unittest.TestCase):
         self.assertAlmostEqual(out['opusCost'], 2.0, places=4)
         self.assertAlmostEqual(out['opusShare'], 0.2, places=4)
 
+    def test_compute_kpi_median_multiple_zero_when_median_is_zero(self):
+        """median = 0 (cost=0 session が半数以上) の degenerate case では
+        medianMultiple = 0 (= 倍率定義不可)。renderer 側は dash fallback で「—×」表示。
+
+        topCostShare は totalCost > 0 ならば常に計算可能なので、
+        sub 全体を消すのではなく倍率だけ dash に倒す方針 (ユーザー指摘 #103)。
+        """
+        # 4 件 (sorted=[0, 0, 0, 4]): total=4, median=0, avg=1, topCost=4
+        sessions_js = (
+            "[{estimated_cost_usd:0.0, tokens:{input:0,output:0,cache_read:0,cache_creation:0}},"
+            "{estimated_cost_usd:0.0, tokens:{input:0,output:0,cache_read:0,cache_creation:0}},"
+            "{estimated_cost_usd:0.0, tokens:{input:0,output:0,cache_read:0,cache_creation:0}},"
+            "{estimated_cost_usd:4.0, tokens:{input:0,output:0,cache_read:0,cache_creation:0}}]"
+        )
+        out = self._run_node(f"window.__sessions.computeKpi({sessions_js})")
+        self.assertEqual(out['medianCost'], 0)
+        self.assertEqual(out['medianMultiple'], 0)
+        self.assertAlmostEqual(out['topCostShare'], 1.0, places=4)
+
+    def test_build_kpi_html_avg_sub_dash_fallback_when_median_is_zero(self):
+        """buildKpiHTML(kpi) の 3 枚目 (kpi-sess-avg) が median=0 でも sub を出す。
+
+        倍率は「—×」(dash) で fallback、上位 1 件 % は通常通り計算する。
+        ユーザー指摘 (#103): 以前は median=0 で sub 全体を空にしていたが、
+        empty card を生むだけで UX 上ノイズになる。
+        """
+        kpi_js = (
+            "{totalCost: 4, medianCost: 0, avgCost: 1, cacheEfficiency: 0, "
+            "topCost: 4, minCost: 0, sessionCount: 4, "
+            "totalInputTokens: 0, totalCacheReadTokens: 0, "
+            "opusCost: 0, opusShare: 0, "
+            "medianMultiple: 0, topCostShare: 1.0}"
+        )
+        html = self._run_node(f"window.__sessions.buildKpiHTML({kpi_js})")
+        # kpi-sess-avg card に「上位 1 件で 100% 寄与」が含まれる
+        self.assertIn('id="kpi-sess-avg"', html)
+        # avg sub が空 (= '&nbsp;') ではなく、寄与率を含む
+        self.assertIn('上位 1 件で', html)
+        self.assertIn('100%', html)
+        # 倍率は dash fallback
+        self.assertIn('中央値の <em>—</em>', html)
+
     def test_compute_kpi_median_multiple_and_top_cost_share(self):
         """3 枚目 KPI sub「中央値の N× · 上位 1 件で M% 寄与」用メトリクス。
 
