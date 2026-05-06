@@ -307,13 +307,17 @@ class TestAggregateSessionBreakdown(unittest.TestCase):
         self.assertIsNone(result[0]["duration_seconds"])
 
     def test_sort_by_started_at_desc(self):
+        # Issue #109: session_breakdown は assistant_usage 1 件以上を持つ session のみ
         events = [
             {"event_type": "session_start", "session_id": "s_old", "project": "p",
              "timestamp": "2026-05-01T10:00:00+00:00"},
+            _au("s_old", "p", "2026-05-01T10:05:00+00:00", "claude-sonnet-4-6", 100, 50),
             {"event_type": "session_start", "session_id": "s_new", "project": "p",
              "timestamp": "2026-05-02T10:00:00+00:00"},
+            _au("s_new", "p", "2026-05-02T10:05:00+00:00", "claude-sonnet-4-6", 100, 50),
             {"event_type": "session_start", "session_id": "s_mid", "project": "p",
              "timestamp": "2026-05-01T15:00:00+00:00"},
+            _au("s_mid", "p", "2026-05-01T15:05:00+00:00", "claude-sonnet-4-6", 100, 50),
         ]
         result = aggregate_session_breakdown(events)
         self.assertEqual(
@@ -322,6 +326,7 @@ class TestAggregateSessionBreakdown(unittest.TestCase):
         )
 
     def test_top_n_cap(self):
+        # Issue #109: 各 session に assistant_usage を 1 件付けて render 対象にする
         events = []
         for i in range(25):
             events.append({
@@ -330,6 +335,9 @@ class TestAggregateSessionBreakdown(unittest.TestCase):
                 "project": "p",
                 "timestamp": f"2026-05-{i+1:02d}T10:00:00+00:00",
             })
+            events.append(_au(f"s{i:02d}", "p",
+                              f"2026-05-{i+1:02d}T10:05:00+00:00",
+                              "claude-sonnet-4-6", 100, 50))
         result = aggregate_session_breakdown(events, top_n=20)
         self.assertEqual(len(result), 20)
 
@@ -354,10 +362,12 @@ class TestAggregateSessionBreakdown(unittest.TestCase):
 
     def test_session_subagent_count_matches_metrics(self):
         # subagent 1 件 (PostToolUse 単独 invocation) の session を集計し、
-        # session_subagent_counts と aggregate_subagent_metrics の合計が一致する drift guard
+        # session_subagent_counts と aggregate_subagent_metrics の合計が一致する drift guard。
+        # Issue #109: session_breakdown render 対象にするため assistant_usage を 1 件追加
         events = [
             {"event_type": "session_start", "session_id": "s1", "project": "p",
              "timestamp": "2026-05-01T10:00:00+00:00"},
+            _au("s1", "p", "2026-05-01T10:04:00+00:00", "claude-sonnet-4-6", 100, 50),
             {"event_type": "subagent_start", "session_id": "s1", "subagent_type": "Explore",
              "timestamp": "2026-05-01T10:05:00+00:00", "tool_use_id": "toolu_1",
              "duration_ms": 1200, "permission_mode": "default"},
