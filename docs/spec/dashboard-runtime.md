@@ -100,7 +100,7 @@ kill $(jq -r .pid ~/.claude/transcript-analyzer/server.json)
 | `#/patterns` | `patterns` | Patterns | 利用パターン (時間帯 / 共起 / project×skill) |
 | `#/quality` | `quality` | Quality | 実行品質と摩擦シグナル (permission / compact / percentile) |
 | `#/surface` | `surface` | Surface | スキル surface (発見性 / 想起性) |
-| `#/sessions` | `sessions` | Sessions | session 単位の token / 推計コスト / model 内訳 / service_tier (Issue #103) |
+| `#/sessions` | `sessions` | Sessions | session 単位の token / 推計コスト / model 内訳 / service_tier (Issue #103)。`assistant_usage` event を 1 件も持たない session は除外 (Issue #109、panel sub は「有効セッション」表記) |
 
 ### 共通 chrome と Overview 専用 chrome の分離
 
