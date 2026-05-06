@@ -345,6 +345,35 @@ class TestModelDistRendererNode(unittest.TestCase):
         # 5% sonnet は包括 (>= 0.05) — callout 出る
         self.assertIn("donut-callout", out_5)
 
+    def test_buildLegendHtml_cost_uses_4_decimal_precision(self):
+        # codex review round 3 / P2: $0.005 未満の non-zero cost が 2-decimal で
+        # $0.00 に化ける問題の guard。Sessions UI の formatCostUsd 規約 ($X.XXXX) と整合。
+        out = _node_eval("""
+            const families = [
+                {family: 'opus', messages: 1, messages_pct: 0.5, cost_usd: 0.0042, cost_pct: 0.5},
+                {family: 'sonnet', messages: 0, messages_pct: 0, cost_usd: 0, cost_pct: 0},
+                {family: 'haiku', messages: 1, messages_pct: 0.5, cost_usd: 0.0001, cost_pct: 0.0001},
+            ];
+            console.log(window.__modelDist.buildLegendHtml(families));
+        """)
+        # non-zero sub-cent cost が visible (= $0.00 ではなく $0.0042)
+        self.assertIn("$0.0042", out)
+        # haiku の極小 cost も round-down で消えない
+        self.assertIn("$0.0001", out)
+        # 旧 2-decimal $0.00 は出ない
+        self.assertNotIn(">$0.00<", out)
+
+    def test_buildCenterLabel_cost_axis_uses_4_decimal_via_formatted(self):
+        out = _node_eval("""
+            console.log(window.__modelDist.buildCenterLabel({
+                eyebrow: 'COST',
+                value: 0.0042,
+                formatted: '$0.0042',
+            }));
+        """)
+        self.assertIn("$0.0042", out)
+        self.assertNotIn("$0.00<", out)
+
     def test_center_label_has_no_unit_suffix(self):
         out = _node_eval("""
             console.log(window.__modelDist.buildCenterLabel({eyebrow: 'MESSAGES', value: 5432}));

@@ -412,9 +412,12 @@
         '<span class="lh-cost">cost</span>' +
         '</div>';
       const body = rows.map(function(r){
-        const cost = (typeof r.cost_usd === 'number')
-          ? '$' + r.cost_usd.toFixed(2)
-          : '$0.00';
+        // codex review round 3 / P2: 2-decimal だと $0.005 未満が $0.00 になり
+        // API の 4-decimal precision が消える。Sessions UI の formatCostUsd 規約
+        // (`$X.XXXX`) と整合させて non-zero cost が必ず可視化されるようにする。
+        const cost = (typeof r.cost_usd === 'number' && isFinite(r.cost_usd))
+          ? '$' + r.cost_usd.toFixed(4)
+          : '$0.0000';
         return '<div class="leg-row leg-' + r.family + '">' +
           '<span class="leg-dot"></span>' +
           '<span class="leg-fam">' + r.family + '</span>' +
@@ -428,12 +431,17 @@
     function buildCenterLabel(opts) {
       const o = opts || {};
       const eyebrow = String(o.eyebrow || '');
+      // formatted があればそれを優先 (caller が _formatMessages / _formatCost で
+      // 軸別の表示形を決める)。fallback で value を整数 / 4-decimal $ の二択。
+      // codex review round 3 / P2: 2-decimal 丸めだと $0.005 未満が $0.00 に化けて
+      // API の 4-decimal precision が消える。Sessions UI の formatCostUsd 規約と整合。
       let val;
-      if (typeof o.value === 'number' && isFinite(o.value)) {
-        // cost (= float with decimals) は $X.XX、messages (= int) はそのまま
-        val = (Math.abs(o.value) > 0 && Math.abs(o.value) < 1000 && o.value % 1 !== 0)
-          ? '$' + o.value.toFixed(2)
-          : (typeof o.formatted === 'string' ? o.formatted : String(o.value));
+      if (typeof o.formatted === 'string') {
+        val = o.formatted;
+      } else if (typeof o.value === 'number' && isFinite(o.value)) {
+        val = (o.value % 1 !== 0)
+          ? '$' + o.value.toFixed(4)
+          : String(o.value);
       } else {
         val = '0';
       }
@@ -449,8 +457,9 @@
     }
 
     function _formatCost(v) {
+      // 4-decimal で Sessions UI / cost API の precision に揃える (codex round 3 / P2)
       const n = Number(v) || 0;
-      return '$' + n.toFixed(2);
+      return '$' + n.toFixed(4);
     }
 
     function renderModelDistribution(data) {
