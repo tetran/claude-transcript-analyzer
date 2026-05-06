@@ -25,11 +25,12 @@
   pairing semantics を尊重し、`failure_rate` / `avg_duration_ms` / pXX duration が
   period boundary 跨ぎで silent drift しないことを保証するため。
 
-### Period 適用 scope (11 field)
+### Period 適用 scope (12 field)
 
 - KPI counter: `total_events` / `skill_kinds_total` / `subagent_kinds_total` / `project_total`
 - Overview: `skill_ranking` / `subagent_ranking` / `daily_trend` / `project_breakdown`
 - Patterns: `hourly_heatmap` / `skill_cooccurrence` / `project_skill_matrix`
+- Sessions: `session_breakdown` (Issue #99 / v0.8.0〜)
 
 ### 全期間 (period 不変) scope (8 field)
 
@@ -73,6 +74,7 @@
   "skill_invocation_breakdown":  [...],
   "skill_lifecycle":             [...],
   "skill_hibernating":           { ... },
+  "session_breakdown":           [...],
   "period_applied":          "all" | "7d" | "30d" | "90d"
 }
 ```
@@ -800,3 +802,88 @@ Surface ページ「Hibernating skills」panel が消費する。
 
 aggregator は `now: datetime | None = None` キーワード引数を受け、`None` 時
 `datetime.now(timezone.utc)` 既定。
+
+## `session_breakdown` (Issue #99 / v0.8.0〜)
+
+session 単位の token / cost / model 内訳 / service_tier / skill 件数 /
+subagent 件数を 1 行 = 1 session の row 配列で返す。Sessions ページ
+(Issue #103) が消費する。
+
+### 形
+
+```json
+{
+  "session_breakdown": [
+    {
+      "session_id": "abc-123-def",
+      "project": "chirper",
+      "started_at": "2026-05-01T10:00:00+00:00",
+      "ended_at":   "2026-05-01T11:00:00+00:00",
+      "duration_seconds": 3600.0,
+      "models": {"claude-opus-4-7": 3, "claude-haiku-4-5": 12},
+      "tokens": {
+        "input": 12345, "output": 6789,
+        "cache_read": 89000, "cache_creation": 1200
+      },
+      "estimated_cost_usd": 0.4567,
+      "service_tier_breakdown": {"priority": 5, "standard": 10},
+      "skill_count": 4,
+      "subagent_count": 2
+    }
+  ]
+}
+```
+
+### 集計仕様
+
+- 入力 source: `assistant_usage` event (Issue #99 / `usage-jsonl-events.md`) +
+  `session_start` / `session_end` / `skill_tool` / `user_slash_command` +
+  `subagent_*` event (subagent_count 算出用)。`build_dashboard_data` は
+  **`period_events_raw` 経由**で渡す (= `assistant_usage` は
+  `_filter_usage_events` の対象外)
+- `started_at`: `session_start.timestamp` (ISO 8601 UTC `+00:00`)。`session_start`
+  を持たない orphan session は配列に含めない
+- `ended_at` / `duration_seconds`: `session_end` 不在の active session では
+  両方とも `null` (= UI 側「進行中」pill の trigger)
+- `models`: `{model_name: assistant_usage event 数}`。1 session 内の `/model`
+  切替も per-message 単位で正しく count される
+- `tokens`: 4 dimension の session 内合計 (`int`)
+- `estimated_cost_usd`: model 別 rate 適用 → reduce 合算 (=
+  `cost_metrics.calculate_session_cost()`)。**実測 token × 価格表掛け算による
+  参考値** で、価格改定で過去値も動く (`docs/reference/cost-calculation-design.md`
+  §4)。4 桁丸め (USD 0.0001 = 1/100 セント)
+- `service_tier_breakdown`: `{tier_name: assistant_usage event 数}`。
+  `service_tier` 欠損 / null の event は **breakdown に出さない** (real value
+  のみ集計、real-world data quirks をそのまま見せる)
+- `skill_count`: session 内 `skill_tool` + `user_slash_command` event 数
+- `subagent_count`: `subagent_metrics.session_subagent_counts(events)` 経由
+  (= invocation 単位 dedup 後の count)。`aggregate_subagent_metrics` の
+  type 軸合計と session 軸合計が一致する drift guard あり
+
+### sort / top-N
+
+- sort key: `started_at` 降順 (= 最新 session が先頭)
+- top-N: `TOP_N_SESSIONS = 20` (`cost_metrics.py` 定数)
+- `TOP_N` (`dashboard/server.py`、ranking 系の 10) とは別の独立定数
+
+### 価格表 / 未知 model fallback
+
+- 価格表 (per-1M-token rate) は `cost_metrics.MODEL_PRICING` に pin
+  (出典は同 module docstring 参照 — 2026-05-06 時点
+  `https://platform.claude.com/docs/en/about-claude/pricing` から verbatim)
+- 未知 model は **Sonnet 4.6 fallback** で計算 (silent、UI を毒さない)
+- date-suffix 付き ID (`claude-haiku-4-5-20251001` 等) は token-boundary prefix
+  match で base price 解決 (`claude-opus-4` $15 と `claude-opus-4-5` $5 の 3x
+  差を longest-match で取り違えない)
+
+### period 連動 (Issue #85)
+
+- period="7d" / "30d" / "90d" / "all" に応じて **rolling window で切られた
+  events から集計**。cutoff 外の `session_start` を持つ session は
+  `session_breakdown` から消える
+- drift guard: `tests/test_dashboard_sessions_api.py::TestSessionBreakdown::test_session_breakdown_period_split`
+
+### Active session の disposition
+
+`session_end` 不在 = "進行中"。`ended_at = null` / `duration_seconds = null` で
+返す。timeout (X 時間経過で自動 close 扱い等) は本仕様 scope 外、将来 issue。
