@@ -76,6 +76,70 @@ class TestCalculateMessageCost(unittest.TestCase):
             5.0,
         )
 
+    # ───── Claude 3.x official IDs (codex Round 2 / P2 修正) ─────
+    # 3.x naming は `claude-{version}-{model}-{date}` で 4.x と逆順。
+    # date-suffix 付きで Anthropic API から実際に返ってくる ID を pin。
+
+    def test_claude_3_5_haiku_official_id(self):
+        # claude-3-5-haiku: input $0.80 / MTok
+        self.assertEqual(
+            calculate_message_cost("claude-3-5-haiku-20241022", 1_000_000, 0, 0, 0),
+            0.80,
+        )
+
+    def test_claude_3_haiku_official_id(self):
+        # claude-3-haiku: input $0.25 / MTok (deprecated)
+        self.assertEqual(
+            calculate_message_cost("claude-3-haiku-20240307", 1_000_000, 0, 0, 0),
+            0.25,
+        )
+
+    def test_claude_3_5_sonnet_official_id(self):
+        # claude-3-5-sonnet: input $3 / MTok (Sonnet 3.5 retired)
+        self.assertEqual(
+            calculate_message_cost("claude-3-5-sonnet-20241022", 1_000_000, 0, 0, 0),
+            3.0,
+        )
+
+    def test_claude_3_7_sonnet_official_id(self):
+        # claude-3-7-sonnet: input $3 / MTok (deprecated)
+        self.assertEqual(
+            calculate_message_cost("claude-3-7-sonnet-20250219", 1_000_000, 0, 0, 0),
+            3.0,
+        )
+
+    def test_claude_3_opus_official_id(self):
+        # claude-3-opus: input $15 / MTok (deprecated)
+        self.assertEqual(
+            calculate_message_cost("claude-3-opus-20240229", 1_000_000, 0, 0, 0),
+            15.0,
+        )
+
+    def test_3x_haiku_does_not_fallback_to_sonnet(self):
+        """codex Round 2 P2 regression guard: claude-3-5-haiku-* が
+        Sonnet fallback ($3) ではなく Haiku rate ($0.80) で計算される。
+        """
+        haiku_cost = calculate_message_cost(
+            "claude-3-5-haiku-20241022", 1_000_000, 0, 0, 0,
+        )
+        sonnet_fallback = calculate_message_cost(
+            "claude-future-99-x", 1_000_000, 0, 0, 0,
+        )
+        self.assertEqual(haiku_cost, 0.80)
+        self.assertEqual(sonnet_fallback, 3.0)
+        self.assertNotEqual(haiku_cost, sonnet_fallback)
+
+    def test_3x_5_haiku_distinct_from_3_haiku(self):
+        # 3-5 vs 3 で取り違えないこと (longest-prefix collision 防御)
+        self.assertEqual(
+            calculate_message_cost("claude-3-5-haiku-20241022", 1_000_000, 0, 0, 0),
+            0.80,
+        )
+        self.assertEqual(
+            calculate_message_cost("claude-3-haiku-20240307", 1_000_000, 0, 0, 0),
+            0.25,
+        )
+
     def test_four_decimal_rounding(self):
         # 1 token × $3 / 1M = $0.000003 → 4 桁丸めで $0.0
         self.assertEqual(

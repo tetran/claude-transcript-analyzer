@@ -13,20 +13,28 @@ Issue #99 / v0.8.0〜。`docs/reference/cost-calculation-design.md` §9-§10 で
 「Model pricing」table の値を **per-1M-token USD** で転記。本表記は cost を
 USD per 1M token で揃える AgenticSec / cost-calculation-design.md §2 の慣習に従う。
 
-| Model              | input | output | cache_read | 5m cache_creation |
-|--------------------|-------|--------|------------|-------------------|
-| Claude Opus 4.7      | $5    | $25    | $0.50      | $6.25             |
-| Claude Opus 4.6      | $5    | $25    | $0.50      | $6.25             |
-| Claude Opus 4.5    | $5    | $25    | $0.50      | $6.25             |
-| Claude Opus 4.1    | $15   | $75    | $1.50      | $18.75            |
-| Claude Opus 4      | $15   | $75    | $1.50      | $18.75            |
-| Claude Sonnet 4.6    | $3    | $15    | $0.30      | $3.75             |
-| Claude Sonnet 4.5    | $3    | $15    | $0.30      | $3.75             |
-| Claude Sonnet 4    | $3    | $15    | $0.30      | $3.75             |
-| Claude Sonnet 3.7  | $3    | $15    | $0.30      | $3.75             |
-| Claude Haiku 4.5   | $1    | $5     | $0.10      | $1.25             |
-| Claude Haiku 3.5   | $0.80 | $4     | $0.08      | $1                |
-| Claude Haiku 3     | $0.25 | $1.25  | $0.03      | $0.30             |
+| Model              | 公式 model ID prefix     | input | output | cache_read | 5m cache_creation |
+|--------------------|--------------------------|-------|--------|------------|-------------------|
+| Claude Opus 4.7    | `claude-opus-4-7`        | $5    | $25    | $0.50      | $6.25             |
+| Claude Opus 4.6    | `claude-opus-4-6`        | $5    | $25    | $0.50      | $6.25             |
+| Claude Opus 4.5    | `claude-opus-4-5`        | $5    | $25    | $0.50      | $6.25             |
+| Claude Opus 4.1    | `claude-opus-4-1`        | $15   | $75    | $1.50      | $18.75            |
+| Claude Opus 4      | `claude-opus-4`          | $15   | $75    | $1.50      | $18.75            |
+| Claude Sonnet 4.6  | `claude-sonnet-4-6`      | $3    | $15    | $0.30      | $3.75             |
+| Claude Sonnet 4.5  | `claude-sonnet-4-5`      | $3    | $15    | $0.30      | $3.75             |
+| Claude Sonnet 4    | `claude-sonnet-4`        | $3    | $15    | $0.30      | $3.75             |
+| Claude Haiku 4.5   | `claude-haiku-4-5`       | $1    | $5     | $0.10      | $1.25             |
+| Claude Sonnet 3.7  | `claude-3-7-sonnet`      | $3    | $15    | $0.30      | $3.75             |
+| Claude Sonnet 3.5  | `claude-3-5-sonnet`      | $3    | $15    | $0.30      | $3.75             |
+| Claude Haiku 3.5   | `claude-3-5-haiku`       | $0.80 | $4     | $0.08      | $1                |
+| Claude Haiku 3     | `claude-3-haiku`         | $0.25 | $1.25  | $0.03      | $0.30             |
+| Claude Opus 3      | `claude-3-opus`          | $15   | $75    | $1.50      | $18.75            |
+
+**Naming convention 注意**: Claude 4.x は `claude-{model}-{version}` (例:
+`claude-haiku-4-5-20251001`)、Claude 3.x は `claude-{version}-{model}-{date}`
+(例: `claude-3-5-haiku-20241022`) と order が逆。token-boundary prefix match は
+両方の convention をそのまま受ける (`_get_pricing` の longest-prefix logic で
+正しい model に hit する)。codex review Round 2 / P2 で指摘されたため pin。
 
 ## 既知 limitation (cost-calculation-design.md §10 / 設計判断)
 
@@ -70,8 +78,12 @@ class ModelPricing(NamedTuple):
     cache_creation: float
 
 
-# 公式値 verbatim pin (2026-05-06、出典 module docstring)
+# 公式値 verbatim pin (2026-05-06、出典 module docstring)。
+# key は **公式 model ID prefix** (date suffix なし)。`_get_pricing` の
+# longest-prefix match が `claude-haiku-4-5-20251001` (4.x) も
+# `claude-3-5-haiku-20241022` (3.x) も正しい model に解決する。
 MODEL_PRICING: dict[str, ModelPricing] = {
+    # Claude 4.x: naming convention は `claude-{model}-{version}-{date?}`
     "claude-opus-4-7":   ModelPricing(input=5.00,  output=25.00, cache_read=0.50, cache_creation=6.25),
     "claude-opus-4-6":   ModelPricing(input=5.00,  output=25.00, cache_read=0.50, cache_creation=6.25),
     "claude-opus-4-5":   ModelPricing(input=5.00,  output=25.00, cache_read=0.50, cache_creation=6.25),
@@ -80,10 +92,14 @@ MODEL_PRICING: dict[str, ModelPricing] = {
     "claude-sonnet-4-6": ModelPricing(input=3.00,  output=15.00, cache_read=0.30, cache_creation=3.75),
     "claude-sonnet-4-5": ModelPricing(input=3.00,  output=15.00, cache_read=0.30, cache_creation=3.75),
     "claude-sonnet-4":   ModelPricing(input=3.00,  output=15.00, cache_read=0.30, cache_creation=3.75),
-    "claude-sonnet-3-7": ModelPricing(input=3.00,  output=15.00, cache_read=0.30, cache_creation=3.75),
     "claude-haiku-4-5":  ModelPricing(input=1.00,  output=5.00,  cache_read=0.10, cache_creation=1.25),
-    "claude-haiku-3-5":  ModelPricing(input=0.80,  output=4.00,  cache_read=0.08, cache_creation=1.00),
-    "claude-haiku-3":    ModelPricing(input=0.25,  output=1.25,  cache_read=0.03, cache_creation=0.30),
+    # Claude 3.x: naming convention は `claude-{version}-{model}-{date}` で 4.x と逆順 (codex review Round 2 / P2)。
+    # 古い transcript / archive backfill (Issue #104) で当たる可能性があるため明示 pin。
+    "claude-3-7-sonnet": ModelPricing(input=3.00,  output=15.00, cache_read=0.30, cache_creation=3.75),
+    "claude-3-5-sonnet": ModelPricing(input=3.00,  output=15.00, cache_read=0.30, cache_creation=3.75),
+    "claude-3-5-haiku":  ModelPricing(input=0.80,  output=4.00,  cache_read=0.08, cache_creation=1.00),
+    "claude-3-haiku":    ModelPricing(input=0.25,  output=1.25,  cache_read=0.03, cache_creation=0.30),
+    "claude-3-opus":     ModelPricing(input=15.00, output=75.00, cache_read=1.50, cache_creation=18.75),
 }
 
 DEFAULT_PRICING: ModelPricing = MODEL_PRICING["claude-sonnet-4-6"]
