@@ -1158,6 +1158,7 @@ _CSS_FILES = (
     "30_pages.css",         # multipage shell (Issue #57)
     "40_patterns.css",      # hourly heatmap + skill cooccurrence + project×skill (Issue #58/59)
     "50_quality.css",       # subagent percentile/failure + permission breakdown + compact density (Issue #60/61)
+    "55_sessions.css",      # Sessions table + KPI 4 枚 + cost meter / model chip / tier chip (Issue #103)
     "60_surface.css",       # Surface 3 panel + tooltip border colors (Issue #74)
 )
 _MAIN_JS_FILES = (
@@ -1168,6 +1169,7 @@ _MAIN_JS_FILES = (
     "25_live_diff.js",            # live mode 差分 highlight + toast (Issue #69)
     "30_renderers_patterns.js",   # heatmap / cooccurrence / project×skill matrix renderers
     "40_renderers_quality.js",    # subagent percentile / failure / permission / compact renderers
+    "45_renderers_sessions.js",   # Sessions table renderer + KPI 4 cards (Issue #103)
     "50_renderers_surface.js",    # Surface invocation / lifecycle / hibernating + fmtDur
     "60_hashchange_listener.js",  # hashchange → loadAndRender 再実行 (Issue #58 Q2)
     "70_init_eventsource.js",     # 初回描画 + EventSource (live refresh)

@@ -281,6 +281,13 @@
   renderSkillLifecycle(data.skill_lifecycle);
   renderSkillHibernating(data.skill_hibernating);
 
+  // ---- Sessions page (Issue #103) ----
+  // window.__sessions に IIFE が expose した renderSessions を call-time lookup する。
+  // 45_renderers_sessions.js は concat 順 45 で評価済 → 本 call 時には常に存在。
+  if (typeof window !== 'undefined' && window.__sessions && typeof window.__sessions.renderSessions === 'function') {
+    window.__sessions.renderSessions(data);
+  }
+
   // dynamic re-render 後の help-pop 再配置 (Issue #41)。kpiRow を含む全 popup を
   // walk して、右端 KPI tooltip の viewport overflow を防ぐ。
   placeAllPops();

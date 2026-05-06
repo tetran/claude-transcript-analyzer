@@ -25,7 +25,7 @@ _DASHBOARD_PATH = Path(__file__).parent.parent / "dashboard" / "server.py"
 # 改行の取り扱いを含めた byte 等価性を保証する。
 #
 # 意図的な template 変更時は新 hash に更新する (docstring 参照)。
-EXPECTED_TEMPLATE_SHA256 = "9663caf7546cc60ded10fb74d6cab913606f8db5de8603b4d4b4c98e4243fa42"
+EXPECTED_TEMPLATE_SHA256 = "cfa2fa37f641fb70b2bd4fd25308e7a18fc1463a260bbfe39555239fc8454849"
 
 
 def _load_dashboard_module(tmp_path: Path):
@@ -69,8 +69,8 @@ def test_html_template_contains_critical_dom_anchors(tmp_path):
     mod = _load_dashboard_module(tmp_path)
     html = mod._HTML_TEMPLATE  # pylint: disable=protected-access
 
-    # 4 ページ section
-    for page in ("overview", "patterns", "quality", "surface"):
+    # 5 ページ section (Issue #103 で sessions 追加)
+    for page in ("overview", "patterns", "quality", "surface", "sessions"):
         assert f'data-page="{page}"' in html, f"page section '{page}' が消えている"
 
     # JS の getElementById / querySelector が参照する主要 ID

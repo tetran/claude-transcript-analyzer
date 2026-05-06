@@ -1,0 +1,215 @@
+  /* ========================================================================
+     Sessions ページ (Issue #103) — 12 列テーブル + KPI 4 枚 + cost meter bar.
+     既存の .surface-table grammar (mono / 12px / hover-row) を踏襲しつつ
+     sessions-* namespace で slot in。color tokens は :root の既存 palette
+     (mint / peach / coral / peri) を再利用してデザインの一貫性を保つ。
+     ======================================================================== */
+  .sessions-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+    font-family: var(--ff-mono);
+    table-layout: fixed;
+  }
+
+  .sessions-table thead .data-row th {
+    text-align: left;
+    color: var(--ink-faint);
+    font-weight: 500;
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--line);
+    white-space: nowrap;
+    position: relative;
+  }
+  .sessions-table thead .data-row th.num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  .sessions-table thead .data-row th .help-host { vertical-align: -2px; margin-left: 4px; }
+
+  /* Tokens super-group row: 4 token 列 (Input/Output/Cache R/Cache C) を
+     1 ラベルにまとめる。peri tint で「カラム束」感を出す。 */
+  .sessions-table thead .group-row th {
+    padding: 4px 8px 5px;
+    border-bottom: 1px solid var(--line);
+    color: var(--peri);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    text-align: center;
+    background: rgba(138, 166, 255, 0.05);
+  }
+  .sessions-table thead .group-row th.empty {
+    background: transparent;
+    border-bottom: 1px solid transparent;
+  }
+  .sessions-table thead .group-row th .help-host { vertical-align: -1px; margin-left: 4px; }
+
+  .sessions-table tbody tr {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  }
+  .sessions-table tbody tr:hover {
+    background: rgba(255, 255, 255, 0.025);
+  }
+  .sessions-table tbody tr.is-active {
+    background: rgba(111, 227, 200, 0.04);
+  }
+  .sessions-table tbody tr.is-active:hover {
+    background: rgba(111, 227, 200, 0.07);
+  }
+  .sessions-table tbody tr.is-whale {
+    box-shadow: inset 3px 0 0 var(--peach);
+  }
+  .sessions-table tbody tr:focus-visible {
+    outline: 2px solid var(--peri);
+    outline-offset: -1px;
+  }
+  .sessions-table td {
+    padding: 8px 8px;
+    color: var(--ink);
+    vertical-align: middle;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .sessions-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .sessions-table td.dim { color: var(--ink-faint); }
+
+  /* Specific column widths — table-layout: fixed で load-bearing。
+     cost 列は $X.XXXX + 64px bar が収まる幅、Models / Tier は 2 chip 折り返し可。 */
+  .sessions-table col.col-start   { width: 88px; }
+  .sessions-table col.col-dur     { width: 84px; }
+  .sessions-table col.col-project { width: 246px; }
+  .sessions-table col.col-models  { width: 140px; }
+  .sessions-table col.col-tok-in  { width: 60px; }
+  .sessions-table col.col-tok-out { width: 60px; }
+  .sessions-table col.col-tok-cr  { width: 60px; }
+  .sessions-table col.col-tok-cc  { width: 60px; }
+  .sessions-table col.col-cost    { width: 88px; }
+  .sessions-table col.col-tier    { width: 134px; }
+  .sessions-table col.col-skills  { width: 52px; }
+  .sessions-table col.col-sub     { width: 56px; }
+
+  .sess-proj { color: var(--ink); }
+  .sess-time { color: var(--ink-soft); }
+  .sess-dur  { color: var(--ink-soft); }
+  .sess-tok-cache { color: var(--ink-faint); }
+
+  /* ---- Models chips (extends .mode-chip vocabulary) ---- */
+  .model-chips {
+    display: flex; flex-wrap: wrap; gap: 3px;
+  }
+  .model-chip {
+    display: inline-flex; align-items: baseline;
+    gap: 4px;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 10px;
+    letter-spacing: 0.02em;
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--ink-faint);
+  }
+  .model-chip .ct {
+    font-weight: 600;
+    color: var(--ink);
+    font-size: 10px;
+  }
+  /* color per family — sonnet=mint(workhorse) / opus=coral(premium) / haiku=peach(cheap) */
+  .model-chip.m-sonnet { background: rgba(111, 227, 200, 0.10); color: var(--mint); }
+  .model-chip.m-opus   { background: rgba(255, 138, 118, 0.10); color: var(--coral); }
+  .model-chip.m-haiku  { background: rgba(255, 201, 122, 0.10); color: var(--peach); }
+
+  /* ---- Service tier chips ---- */
+  .tier-chips { display: flex; flex-wrap: wrap; gap: 3px; }
+  .tier-chip {
+    display: inline-flex; align-items: baseline; gap: 4px;
+    padding: 1px 6px; border-radius: 3px;
+    font-size: 10px; letter-spacing: 0.02em;
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--ink-faint);
+  }
+  .tier-chip .ct { font-weight: 600; color: var(--ink); font-size: 10px; }
+  .tier-chip.t-priority { background: rgba(138, 166, 255, 0.10); color: var(--peri); }
+  .tier-chip.t-standard { background: rgba(255, 255, 255, 0.04); color: var(--ink-soft); }
+  .tier-chip.t-batch    { background: rgba(255, 201, 122, 0.10); color: var(--peach); }
+
+  /* ---- 進行中 pill — conn-pulse keyframes 流用 ---- */
+  .live-pill {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 1px 7px;
+    border-radius: var(--r-pill);
+    background: rgba(111, 227, 200, 0.10);
+    color: var(--mint);
+    font-size: 10px;
+    font-weight: 500;
+    border: 1px solid var(--mint-soft);
+  }
+  .live-pill::before {
+    content: "";
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: currentColor;
+    animation: conn-pulse 1.6s ease-out infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .live-pill::before { animation: none; }
+  }
+
+  /* ---- Cost cell — value + 64px magnitude bar (--cost-pct で行ごとにスケール) ---- */
+  .cost-cell {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 5px;
+    padding: 4px 8px;
+  }
+  .cost-cell .cost-val {
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    color: var(--ink);
+    letter-spacing: -0.01em;
+    line-height: 1.1;
+  }
+  .cost-cell .cost-bar {
+    position: relative;
+    width: 64px;
+    height: 4px;
+    background: rgba(255, 255, 255, 0.04);
+    border-radius: var(--r-pill);
+    overflow: hidden;
+  }
+  .cost-cell .cost-bar::after {
+    content: "";
+    position: absolute;
+    top: 0; bottom: 0; left: 0;
+    width: var(--cost-pct, 0%);
+    background: linear-gradient(90deg, var(--mint-soft) 0%, var(--peach) 60%, var(--coral) 100%);
+    border-radius: var(--r-pill);
+  }
+  /* whale row: cost-val takes a faint peach tint */
+  .sessions-table tr.is-whale .cost-cell .cost-val { color: var(--peach); }
+
+  /* ---- Skills / subagents counts — 0 は dim、>0 は強調 ---- */
+  .sessions-table .count-zero { color: var(--ink-faint); }
+  .sessions-table .count-pos { color: var(--ink); font-weight: 600; }
+
+  /* Help-pop reset for sessions-table headers:
+     <th nowrap | text-align:right | text-align:center> 親からの継承を popup 側で
+     解除しないと、推計コスト / Tokens super-group の help-pop が 1 行に圧縮される。 */
+  .sessions-table th .help-pop {
+    white-space: normal;
+    text-align: left;
+    max-width: 420px;
+  }
+  .sessions-table th .help-pop .pop-body { display: block; }
+
+  /* Responsive — 狭いビューポートでは cache 系列を hide (full numbers は API 側に残る) */
+  @media (max-width: 1280px) {
+    .sessions-table col.col-tok-cr,
+    .sessions-table col.col-tok-cc,
+    .sessions-table th.tok-cr, .sessions-table td.tok-cr,
+    .sessions-table th.tok-cc, .sessions-table td.tok-cc {
+      display: none;
+    }
+  }

@@ -13,12 +13,13 @@ __INCLUDE_STYLES__
 </head>
 <body>
   <div class="app">
-    <!-- 共通: 4 ページ切替 nav (Issue #57) -->
+    <!-- 共通: 5 ページ切替 nav (Issue #57 / #103 で Sessions 追加) -->
     <nav class="page-nav" role="navigation" aria-label="ダッシュボードページ">
       <a href="#/" data-page-link="overview" tabindex="0">Overview</a>
       <a href="#/patterns" data-page-link="patterns" tabindex="0">Patterns</a>
       <a href="#/quality" data-page-link="quality" tabindex="0">Quality</a>
       <a href="#/surface" data-page-link="surface" tabindex="0">Surface</a>
+      <a href="#/sessions" data-page-link="sessions" tabindex="0">Sessions</a>
       <!-- Issue #83: live heartbeat sparkline。
            default `hidden` で static export 経路では非表示、live 経路で
            startHeartbeat() が hidden を解除する。 -->
@@ -475,6 +476,105 @@ __INCLUDE_STYLES__
                 <th>更新日時</th>
                 <th>最終呼び出し</th>
                 <th class="num">経過</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- Sessions ページ (Issue #103): session 単位の token / cost / model / service_tier 内訳 -->
+    <section data-page="sessions" class="page" aria-labelledby="page-sessions-title" hidden>
+      <header class="header">
+        <div>
+          <h1 id="page-sessions-title"><span class="accent">Sessions</span></h1>
+          <p class="lede">
+            最新 20 セッションのトークン消費・推計コスト・モデル構成を一覧。
+            実測トークン × モデル別公開価格表の掛け算による参考値。
+          </p>
+        </div>
+      </header>
+
+      <!-- KPI 行 (4 枚): 合計コスト / 中央値 / 平均 / Cache 効率 -->
+      <div class="kpi-row" id="sessionsKpi"></div>
+
+      <div class="panel" id="sessions-table-panel">
+        <div class="panel-head c-mint">
+          <div class="ttl-wrap">
+            <span class="ttl"><span class="dot"></span>セッション一覧 (直近 20 件)</span>
+            <span class="help-host">
+              <button class="help-btn" type="button" aria-label="説明を表示" aria-expanded="false" aria-describedby="hp-sessions" data-help-id="hp-sessions">?</button>
+              <span class="help-pop" id="hp-sessions" role="tooltip" data-place="right">
+                <span class="pop-ttl">セッション一覧</span>
+                <span class="pop-body"><code>session_start</code> イベントを起点に、同 <code>session_id</code> 内の <code>assistant_usage</code> から model 別 token 数 / service_tier を集計。開始時刻降順で 20 件。<code>ended_at</code> が未観測のものは「進行中」として表示する。</span>
+              </span>
+            </span>
+          </div>
+          <span class="sub" id="sessionsSub"></span>
+        </div>
+        <div class="panel-body" style="padding: 0 12px 4px;">
+          <table class="sessions-table" id="sessionsTable">
+            <colgroup>
+              <col class="col-start">
+              <col class="col-dur">
+              <col class="col-project">
+              <col class="col-models">
+              <col class="col-tok-in">
+              <col class="col-tok-out">
+              <col class="col-tok-cr">
+              <col class="col-tok-cc">
+              <col class="col-cost">
+              <col class="col-tier">
+              <col class="col-skills">
+              <col class="col-sub">
+            </colgroup>
+            <thead>
+              <tr class="group-row">
+                <th class="empty" colspan="4"></th>
+                <th colspan="4">
+                  Tokens
+                  <span class="help-host">
+                    <button class="help-btn" type="button" aria-label="トークン種別の説明" aria-expanded="false" aria-describedby="hp-tokens" data-help-id="hp-tokens">?</button>
+                    <span class="help-pop" id="hp-tokens" role="tooltip" data-place="bottom">
+                      <span class="pop-ttl">トークン種別</span>
+                      <span class="pop-body"><code>Input</code>: ユーザープロンプト + システムプロンプト + tool 結果 (cache 経由を除く)。<code>Output</code>: assistant 生成 (一番高い単価)。<code>Cache R</code>: prompt cache から読み出した token (input の 1/10 程度の単価)。<code>Cache C</code>: prompt cache に書き込まれた token (input の 1.25 倍の単価)。</span>
+                    </span>
+                  </span>
+                </th>
+                <th class="empty" colspan="4"></th>
+              </tr>
+              <tr class="data-row">
+                <th>開始時刻</th>
+                <th>期間</th>
+                <th>プロジェクト</th>
+                <th>Models</th>
+                <th class="num">Input</th>
+                <th class="num">Output</th>
+                <th class="num tok-cr">Cache R</th>
+                <th class="num tok-cc">Cache C</th>
+                <th class="num">
+                  推計コスト
+                  <span class="help-host">
+                    <button class="help-btn" type="button" aria-label="コストの説明" aria-expanded="false" aria-describedby="hp-cost" data-help-id="hp-cost">?</button>
+                    <span class="help-pop" id="hp-cost" role="tooltip" data-place="left">
+                      <span class="pop-ttl">推計コスト</span>
+                      <span class="pop-body">実測 token × モデル別公開価格表の掛け算による<strong>参考値</strong>。Anthropic が価格改定すると過去値も再計算で動く。cache create / read / input / output で単価が異なるため、token 4 種を分けて積算している。</span>
+                    </span>
+                  </span>
+                </th>
+                <th>
+                  Service tier
+                  <span class="help-host">
+                    <button class="help-btn" type="button" aria-label="Service tier の説明" aria-expanded="false" aria-describedby="hp-tier" data-help-id="hp-tier">?</button>
+                    <span class="help-pop" id="hp-tier" role="tooltip" data-place="left">
+                      <span class="pop-ttl">Service tier</span>
+                      <span class="pop-body"><code>priority</code> / <code>standard</code> / <code>batch</code> は Anthropic API 側で記録される料金ティア。<code>priority</code>: 優先度確約枠 (割増)。<code>standard</code>: 通常 (Claude Code デフォルト)。<code>batch</code>: Batch API (50% 割引)。1 session 内で混在し得る。</span>
+                    </span>
+                  </span>
+                </th>
+                <th class="num">Skills</th>
+                <th class="num">Subagents</th>
               </tr>
             </thead>
             <tbody></tbody>
