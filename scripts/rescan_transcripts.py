@@ -171,6 +171,31 @@ def _find_transcript_files(transcripts_dir: Path) -> list[Path]:
     return result
 
 
+def _derive_session_metadata(path: Path) -> tuple[str, str]:
+    """transcript file の最初の有効行から (cwd, timestamp) を返す。
+
+    cwd は _project_from_cwd() に渡してプロジェクト名を正確に導出するために使う。
+    encoded path の replace("-", "/") による誤変換 (my-app → app 等) を回避する。
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return "", ""
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        cwd = row.get("cwd", "") or ""
+        ts = row.get("timestamp", "") or ""
+        if cwd and ts:
+            return cwd, ts
+    return "", ""
+
+
 # NOTE: live-hook (record_assistant_usage._scan_existing_state) derives valid_agent_ids
 # from `subagent_stop` events in usage.jsonl, not from main-transcript Task block .id.
 # For transcripts predating reliable tool_use_id population, rescan may undercount
@@ -263,10 +288,16 @@ def scan_all(transcripts_dir: Path) -> list[dict]:
     for f in files:
         print(f"Scanning {f} ...", file=sys.stderr)
         all_events.extend(_scan_transcript_file(f))
-        # session_id = stem (filename without .jsonl suffix), project = parent dir basename
         session_id = f.stem
-        cwd_encoded = f.parent.name
-        project = cwd_encoded.lstrip("-").replace("-", "/").split("/")[-1] if cwd_encoded else ""
+        cwd, first_ts = _derive_session_metadata(f)
+        project = _project_from_cwd(cwd) if cwd else ""
+        if first_ts:
+            all_events.append({
+                "event_type": "session_start",
+                "session_id": session_id,
+                "project": project,
+                "timestamp": _parse_timestamp(first_ts),
+            })
         all_events.extend(
             scan_assistant_usage_for_session(f, session_id=session_id, project=project)
         )

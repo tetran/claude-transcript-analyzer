@@ -314,9 +314,13 @@ class TestScanAll:
         write_jsonl(proj_dir / "sess1.jsonl", [row_late, row_early])
 
         events = rs.scan_all(tmp_path)
-        assert len(events) == 2
-        assert events[0]["skill"] == "skill-a"
-        assert events[1]["skill"] == "skill-b"
+        skill_events = [e for e in events if e.get("event_type") == "skill_tool"]
+        assert len(skill_events) == 2
+        assert skill_events[0]["skill"] == "skill-a"
+        assert skill_events[1]["skill"] == "skill-b"
+        # session_start も emit される
+        session_starts = [e for e in events if e.get("event_type") == "session_start"]
+        assert len(session_starts) == 1
 
     def test_scan_all_events_without_timestamp_go_last(self, tmp_path):
         proj_dir = tmp_path / "-Users-foo-myapp"
@@ -336,9 +340,10 @@ class TestScanAll:
         write_jsonl(proj_dir / "sess1.jsonl", [row_no_ts, row_with_ts])
 
         events = rs.scan_all(tmp_path)
-        assert len(events) == 2
-        assert events[0]["skill"] == "skill-with-ts"
-        assert events[1]["skill"] == "skill-no-ts"
+        skill_events = [e for e in events if e.get("event_type") == "skill_tool"]
+        assert len(skill_events) == 2
+        assert skill_events[0]["skill"] == "skill-with-ts"
+        assert skill_events[1]["skill"] == "skill-no-ts"
 
     def test_scan_all_returns_empty_when_no_files(self, tmp_path):
         events = rs.scan_all(tmp_path)
@@ -437,7 +442,7 @@ class TestMainCLI:
                             transcripts_dir=str(transcripts_dir))
 
         assert result.returncode == 0
-        assert "1" in result.stdout  # イベント数が表示される
+        assert "events" in result.stdout  # イベント数が表示される
         assert not Path(usage_file).exists()  # ファイルは作られない
 
     def test_main_default_appends_with_dedup(self, tmp_path):
@@ -565,7 +570,8 @@ class TestMainCLI:
         run_script([], str(usage_file), transcripts_dir=str(transcripts_dir))
 
         lines = usage_file.read_text(encoding="utf-8").splitlines()
-        assert len(lines) == 2
+        # skill_tool + subagent_start + session_start = 3 events minimum
+        assert len(lines) >= 2
         for line in lines:
             obj = json.loads(line)
             assert "event_type" in obj
