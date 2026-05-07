@@ -123,22 +123,18 @@ def _extract_assistant_usage(
         yield ev
 
 
-def _scan_existing_state(data_file: Path, session_id: str) -> tuple[set, set]:
-    """既存 `usage.jsonl` を 1 pass scan して dedup set + valid agent_ids を作る。
+def scan_dedup_keys(data_file: Path) -> set:
+    """全期間の `(session_id, message_id)` dedup set を返す (rescan / live 共用)。
 
-    - existing_keys: `(session_id, message_id)` の set。assistant_usage event 全期間。
-    - valid_agent_ids: 当該 session 内で `subagent_type != ""` の subagent_stop に
-      紐づく agent_id 集合。Issue #93 filter rule を per-subagent transcript の
-      対象絞り込みに使う。
+    session 引数を取らない: rescan は全 session 横断で dedup する必要があるため。
     """
     existing_keys: set = set()
-    valid_agent_ids: set = set()
     if not data_file.exists():
-        return existing_keys, valid_agent_ids
+        return existing_keys
     try:
         text = data_file.read_text(encoding="utf-8")
     except OSError:
-        return existing_keys, valid_agent_ids
+        return existing_keys
     for line in text.splitlines():
         line = line.strip()
         if not line:
@@ -147,20 +143,53 @@ def _scan_existing_state(data_file: Path, session_id: str) -> tuple[set, set]:
             ev = json.loads(line)
         except (json.JSONDecodeError, ValueError):
             continue
-        et = ev.get("event_type")
-        if et == "assistant_usage":
+        if ev.get("event_type") == "assistant_usage":
             sid = ev.get("session_id", "") or ""
             mid = ev.get("message_id", "") or ""
             if sid and mid:
                 existing_keys.add((sid, mid))
-        elif et == "subagent_stop":
+    return existing_keys
+
+
+def _scan_valid_agent_ids(data_file: Path, session_id: str) -> set:
+    """当該 session の valid_agent_ids を返す (live hook 専用)。
+
+    Issue #93 filter rule: subagent_type != "" の subagent_stop に紐づく agent_id のみ。
+    """
+    valid_agent_ids: set = set()
+    if not data_file.exists():
+        return valid_agent_ids
+    try:
+        text = data_file.read_text(encoding="utf-8")
+    except OSError:
+        return valid_agent_ids
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            ev = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if ev.get("event_type") == "subagent_stop":
             if ev.get("session_id", "") != session_id:
                 continue
             agent_id = ev.get("subagent_id", "") or ""
             sub_type = ev.get("subagent_type", "") or ""
             if agent_id and sub_type:
                 valid_agent_ids.add(agent_id)
-    return existing_keys, valid_agent_ids
+    return valid_agent_ids
+
+
+def _scan_existing_state(data_file: Path, session_id: str) -> tuple[set, set]:
+    """既存 `usage.jsonl` を 1 pass scan して dedup set + valid agent_ids を作る。
+
+    live hook 振る舞い不変の wrapper。内部で scan_dedup_keys + _scan_valid_agent_ids に dispatch。
+    """
+    return scan_dedup_keys(data_file), _scan_valid_agent_ids(data_file, session_id)
+
+
+extract_assistant_usage = _extract_assistant_usage
 
 
 def _subagent_dir(transcript_path: Path) -> Path:
@@ -174,6 +203,9 @@ def _agent_id_from_filename(file_path: Path) -> str:
     if stem.startswith("agent-"):
         return stem[len("agent-"):]
     return ""
+
+
+agent_id_from_filename = _agent_id_from_filename
 
 
 def handle_stop(payload: dict, *, data_file: Path | None = None) -> None:

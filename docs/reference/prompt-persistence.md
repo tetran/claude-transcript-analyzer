@@ -70,8 +70,11 @@ crash した、archive lock contention で `health_alerts.jsonl` に
 **遡及補完** できる。
 
 ```bash
-# 全 transcripts を rescan して usage.jsonl に追記
-python3 scripts/rescan_transcripts.py --append
+# 全 transcripts を rescan して usage.jsonl に追記 (v0.8.0 からデフォルト動作)
+python3 scripts/rescan_transcripts.py
+
+# 確定的にクリーンな再生成が要る場合 (全 event 種で重複なし)
+python3 scripts/rescan_transcripts.py --overwrite
 
 # その後、180 日超を archive に移して hot tier を整理
 python3 scripts/archive_usage.py
@@ -79,8 +82,10 @@ python3 scripts/archive_usage.py
 /usage-archive
 ```
 
-`rescan_transcripts.py` は **idempotent** (同じ transcript を 2 回流しても
-重複追記しない fingerprint dedup)。
+`rescan_transcripts.py` は **`assistant_usage` event について idempotent**
+(`(session_id, message_id)` first-wins、v0.8.0 から)。`skill_tool` /
+`subagent_start` / `user_slash_command` 等は dedup されないため、確定的に
+クリーンな再生成が要るときは `--overwrite` flag を使う。
 
 ---
 

@@ -36,6 +36,7 @@ dispatch table) も `docs/transcript-format.md` に集約。
  "project": "chirper", "session_id": "...", "timestamp": "2026-02-28T10:05:00+00:00"}
 
 // Subagent 起動（PostToolUse(Task|Agent) のみが count に入る正規観測点）
+// `tool_use_id` は live hook / rescan 共通 schema。
 {"event_type": "subagent_start", "subagent_type": "Explore",
  "project": "chirper", "session_id": "...", "timestamp": "2026-02-28T10:06:00+00:00",
  "duration_ms": 90000, "permission_mode": "default", "tool_use_id": "toolu_..."}
@@ -104,8 +105,9 @@ dispatch table) も `docs/transcript-format.md` に集約。
 
 - **dedup key**: `(session_id, message_id)` の pair で **first wins**。rescan 二重実行 /
   hook 再発火 / main + subagent 経路で同 `message_id` を二重観測しても 1 件に
-  集約する idempotent 保証。`hooks/record_assistant_usage.py` は既存
-  `usage.jsonl` を line 単位で scan して set 化してから新規分のみ append する。
+  集約する idempotent 保証。live hook (`hooks/record_assistant_usage.py`) と
+  rescan (`scripts/rescan_transcripts.py`) の両経路で同 schema / 同 dedup key を
+  使う。既存 `usage.jsonl` を line 単位で scan して set 化してから新規分のみ append する。
 - **transcript ↔ event field の key 名マッピング** (intentional な改名):
 
   | transcript の `message.usage.*` | event field |

@@ -346,5 +346,55 @@ class TestNaiveTimestampHandled(_BaseFixture):
         self.assertEqual([e["message_id"] for e in au], ["m_ok"])
 
 
+class TestModuleLevelExports(_BaseFixture):
+    def test_extract_assistant_usage_is_module_public(self):
+        from record_assistant_usage import extract_assistant_usage
+        self.assertTrue(callable(extract_assistant_usage))
+
+    def test_scan_dedup_keys_returns_session_message_id_set(self):
+        from record_assistant_usage import scan_dedup_keys
+        _write_jsonl(self.usage_file, [
+            {"event_type": "assistant_usage", "session_id": "s1",
+             "message_id": "m1", "timestamp": "2026-05-01T10:00:00+00:00"},
+            {"event_type": "assistant_usage", "session_id": "s2",
+             "message_id": "m2", "timestamp": "2026-05-01T10:00:01+00:00"},
+            {"event_type": "skill_tool", "session_id": "s1",
+             "timestamp": "2026-05-01T10:00:02+00:00"},
+        ])
+        keys = scan_dedup_keys(self.usage_file)
+        self.assertIsInstance(keys, set)
+        self.assertIn(("s1", "m1"), keys)
+        self.assertIn(("s2", "m2"), keys)
+        self.assertEqual(len(keys), 2)
+
+    def test_scan_dedup_keys_empty_when_no_file(self):
+        from record_assistant_usage import scan_dedup_keys
+        keys = scan_dedup_keys(self.tmpdir / "nonexistent.jsonl")
+        self.assertEqual(keys, set())
+
+    def test_agent_id_from_filename_is_module_public(self):
+        from record_assistant_usage import agent_id_from_filename
+        self.assertEqual(agent_id_from_filename(Path("agent-foo123.jsonl")), "foo123")
+        self.assertEqual(agent_id_from_filename(Path("other-foo.jsonl")), "")
+
+
+class TestExistingScanExistingStateUnchanged(_BaseFixture):
+    def test_scan_existing_state_still_returns_two_sets(self):
+        from record_assistant_usage import _scan_existing_state
+        _write_jsonl(self.usage_file, [
+            {"event_type": "assistant_usage", "session_id": "s1",
+             "message_id": "m1", "timestamp": "2026-05-01T10:00:00+00:00"},
+            {"event_type": "subagent_stop", "session_id": "s1",
+             "subagent_id": "agent1", "subagent_type": "Explore",
+             "timestamp": "2026-05-01T10:00:01+00:00"},
+        ])
+        result = _scan_existing_state(self.usage_file, "s1")
+        self.assertIsInstance(result, tuple)
+        self.assertEqual(len(result), 2)
+        existing_keys, valid_agent_ids = result
+        self.assertIn(("s1", "m1"), existing_keys)
+        self.assertIn("agent1", valid_agent_ids)
+
+
 if __name__ == "__main__":
     unittest.main()

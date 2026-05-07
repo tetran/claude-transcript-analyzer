@@ -12,7 +12,7 @@ twice produces the same archive and hot-tier state.
 
 By default the archive job runs automatically on `SessionStart` via
 `hooks/launch_archive.py`, so manual invocation is only needed for forced
-runs (e.g. after `scripts/rescan_transcripts.py --append` reintroduces old
+runs (e.g. after `scripts/rescan_transcripts.py` reintroduces old
 events) or for verification.
 
 Override the retention window for testing:
