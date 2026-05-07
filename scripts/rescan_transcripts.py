@@ -74,13 +74,17 @@ def _extract_events_from_row(row: dict) -> list[dict]:
                         "timestamp": ts,
                     })
                 elif name in SUBAGENT_TOOL_NAMES:
-                    events.append({
+                    ev: dict = {
                         "event_type": "subagent_start",
                         "subagent_type": inp.get("subagent_type", ""),
                         "project": project,
                         "session_id": session_id,
                         "timestamp": ts,
-                    })
+                    }
+                    tool_use_id = block.get("id")
+                    if tool_use_id:
+                        ev["tool_use_id"] = tool_use_id
+                    events.append(ev)
 
     elif row_type == "user":
         content = row.get("message", {}).get("content", "")

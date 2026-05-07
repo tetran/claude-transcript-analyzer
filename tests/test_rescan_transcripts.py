@@ -36,12 +36,16 @@ def make_skill_block(skill: str, args=None) -> dict:
     return {"type": "tool_use", "name": "Skill", "input": inp}
 
 
-def make_task_block(subagent_type: str, tool_name: str = "Task") -> dict:
-    return {
+def make_task_block(subagent_type: str, tool_name: str = "Task",
+                    tool_use_id: str | None = None) -> dict:
+    block: dict = {
         "type": "tool_use",
         "name": tool_name,
         "input": {"subagent_type": subagent_type, "description": "..."},
     }
+    if tool_use_id is not None:
+        block["id"] = tool_use_id
+    return block
 
 
 def write_jsonl(path: Path, rows: list[dict]) -> None:
@@ -182,6 +186,21 @@ class TestExtractEventsFromRow:
     def test_unknown_row_type_returns_empty_list(self):
         row = {"type": "file-history-snapshot", "snapshot": {}}
         assert rs._extract_events_from_row(row) == []
+
+    def test_subagent_start_emits_tool_use_id(self):
+        row = self._make_assistant_row([
+            make_task_block("Explore", "Task", tool_use_id="toolu_xyz")
+        ])
+        events = rs._extract_events_from_row(row)
+        assert len(events) == 1
+        assert events[0]["event_type"] == "subagent_start"
+        assert events[0].get("tool_use_id") == "toolu_xyz"
+
+    def test_subagent_start_omits_tool_use_id_when_missing(self):
+        row = self._make_assistant_row([make_task_block("Explore", "Task")])
+        events = rs._extract_events_from_row(row)
+        assert len(events) == 1
+        assert "tool_use_id" not in events[0]
 
     def test_multiple_tool_uses_in_one_row(self):
         # 1行に Skill + Task が混在 → 2イベント
