@@ -440,24 +440,8 @@ class TestMainCLI:
         assert "1" in result.stdout  # イベント数が表示される
         assert not Path(usage_file).exists()  # ファイルは作られない
 
-    def test_main_default_overwrites_output_file(self, tmp_path):
-        transcripts_dir = tmp_path / "transcripts"
-        self._write_transcript(transcripts_dir, "-p-myapp", "sess1",
-                               [self._skill_row("new-skill")])
-        usage_file = tmp_path / "usage.jsonl"
-        # 既存の内容を書いておく
-        usage_file.write_text(
-            json.dumps({"event_type": "skill_tool", "skill": "old-skill"}) + "\n"
-        )
-
-        run_script([], str(usage_file), transcripts_dir=str(transcripts_dir))
-
-        events = read_events(usage_file)
-        skills = [e["skill"] for e in events if "skill" in e]
-        assert "old-skill" not in skills
-        assert "new-skill" in skills
-
-    def test_main_append_flag_preserves_existing_events(self, tmp_path):
+    def test_main_default_appends_with_dedup(self, tmp_path):
+        """default 動作: 既存 events を保持し、新 events のみ追記 (dedup あり)。"""
         transcripts_dir = tmp_path / "transcripts"
         self._write_transcript(transcripts_dir, "-p-myapp", "sess1",
                                [self._skill_row("new-skill")])
@@ -467,13 +451,92 @@ class TestMainCLI:
                      "timestamp": "2025-01-01T00:00:00+00:00"}
         usage_file.write_text(json.dumps(old_event) + "\n", encoding="utf-8")
 
-        run_script(["--append"], str(usage_file),
-                   transcripts_dir=str(transcripts_dir))
+        run_script([], str(usage_file), transcripts_dir=str(transcripts_dir))
 
         events = read_events(usage_file)
         skills = [e["skill"] for e in events if "skill" in e]
-        assert "old-skill" in skills
+        assert "old-skill" in skills   # 既存 event が保持される
         assert "new-skill" in skills
+
+    def test_main_overwrite_flag_replaces_existing_file(self, tmp_path):
+        """--overwrite: 全消し再生成 (旧 default 挙動)。"""
+        transcripts_dir = tmp_path / "transcripts"
+        self._write_transcript(transcripts_dir, "-p-myapp", "sess1",
+                               [self._skill_row("new-skill")])
+        usage_file = tmp_path / "usage.jsonl"
+        usage_file.write_text(
+            json.dumps({"event_type": "skill_tool", "skill": "old-skill"}) + "\n"
+        )
+
+        run_script(["--overwrite"], str(usage_file), transcripts_dir=str(transcripts_dir))
+
+        events = read_events(usage_file)
+        skills = [e["skill"] for e in events if "skill" in e]
+        assert "old-skill" not in skills
+        assert "new-skill" in skills
+
+    def test_main_append_flag_now_dedups_assistant_usage(self, tmp_path):
+        """--append を明示した場合の意味論シフトを pin。
+
+        (a) 既存 events は破壊されない (旧 --append semantics 維持)
+        (b) 同 transcript の repeat で assistant_usage が増えない (dedup 適用)
+        """
+        transcripts_dir = tmp_path / "transcripts"
+        assistant_row = {
+            "timestamp": "2026-05-01T10:00:00.000Z",
+            "message": {
+                "role": "assistant",
+                "id": "msg1",
+                "model": "claude-sonnet-4-6",
+                "usage": {"input_tokens": 100, "output_tokens": 50},
+                "content": [],
+            },
+        }
+        self._write_transcript(transcripts_dir, "-p-myapp", "sess1",
+                               [self._skill_row("new-skill"), assistant_row])
+        usage_file = tmp_path / "usage.jsonl"
+        old_event = {"event_type": "skill_tool", "skill": "old-skill",
+                     "args": "", "project": "myapp", "session_id": "s0",
+                     "timestamp": "2025-01-01T00:00:00+00:00"}
+        usage_file.write_text(json.dumps(old_event) + "\n", encoding="utf-8")
+
+        run_script(["--append"], str(usage_file), transcripts_dir=str(transcripts_dir))
+        au_after_first = [e for e in read_events(usage_file)
+                          if e.get("event_type") == "assistant_usage"]
+        # (a) 既存 skill_tool event が保持される
+        skills = [e["skill"] for e in read_events(usage_file) if "skill" in e]
+        assert "old-skill" in skills
+
+        run_script(["--append"], str(usage_file), transcripts_dir=str(transcripts_dir))
+        au_after_second = [e for e in read_events(usage_file)
+                           if e.get("event_type") == "assistant_usage"]
+        # (b) 2 回目で assistant_usage 数が増えない
+        assert len(au_after_second) == len(au_after_first)
+
+    def test_main_default_dedups_assistant_usage_by_session_message_id(self, tmp_path):
+        """default mode: 既存 jsonl に同 (session_id, message_id) があれば重複しない。"""
+        transcripts_dir = tmp_path / "transcripts"
+        assistant_row = {
+            "timestamp": "2026-05-01T10:00:00.000Z",
+            "message": {
+                "role": "assistant",
+                "id": "msg1",
+                "model": "claude-sonnet-4-6",
+                "usage": {"input_tokens": 100, "output_tokens": 50},
+                "content": [],
+            },
+        }
+        self._write_transcript(transcripts_dir, "-p-myapp", "sess1", [assistant_row])
+        usage_file = tmp_path / "usage.jsonl"
+
+        run_script([], str(usage_file), transcripts_dir=str(transcripts_dir))
+        au_first = [e for e in read_events(usage_file)
+                    if e.get("event_type") == "assistant_usage"]
+        run_script([], str(usage_file), transcripts_dir=str(transcripts_dir))
+        au_second = [e for e in read_events(usage_file)
+                     if e.get("event_type") == "assistant_usage"]
+
+        assert len(au_second) == len(au_first)
 
     def test_main_custom_transcripts_dir(self, tmp_path):
         custom_dir = tmp_path / "custom_transcripts"

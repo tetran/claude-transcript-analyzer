@@ -21,7 +21,32 @@ if str(_HOOKS_DIR) not in sys.path:
 from record_assistant_usage import (  # noqa: E402
     extract_assistant_usage,
     agent_id_from_filename,
+    scan_dedup_keys,
 )
+
+
+def write_events_with_dedup(
+    events: list[dict],
+    output_path: Path,
+    existing_keys: set | None = None,
+) -> None:
+    """assistant_usage のみ (session_id, message_id) dedup して output_path に追記。
+
+    その他 event (skill_tool / subagent_start 等) は dedup せず append する。
+    existing_keys が None のとき output_path から自動取得する。
+    """
+    if existing_keys is None:
+        existing_keys = scan_dedup_keys(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("a", encoding="utf-8", newline="\n") as f:
+        seen: set = set(existing_keys)
+        for ev in events:
+            if ev.get("event_type") == "assistant_usage":
+                key = (ev.get("session_id", ""), ev.get("message_id", ""))
+                if key in seen:
+                    continue
+                seen.add(key)
+            f.write(json.dumps(ev, ensure_ascii=False) + "\n")
 
 _DEFAULT_DATA_FILE = Path.home() / ".claude" / "transcript-analyzer" / "usage.jsonl"
 DATA_FILE = Path(os.environ.get("USAGE_JSONL", str(_DEFAULT_DATA_FILE)))
@@ -274,7 +299,12 @@ def main() -> None:
     parser.add_argument(
         "--append",
         action="store_true",
-        help="Append to existing usage.jsonl instead of overwriting",
+        help="(deprecated since v0.8.0: now the default behavior)",
+    )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Overwrite existing usage.jsonl instead of appending (BC break escape hatch)",
     )
     parser.add_argument(
         "--dry-run",
@@ -299,7 +329,10 @@ def main() -> None:
         print(f"Found {len(events)} events (dry-run, not writing)")
         return
 
-    write_events(events, DATA_FILE, append=args.append)
+    if args.overwrite:
+        write_events(events, DATA_FILE, append=False)
+    else:
+        write_events_with_dedup(events, DATA_FILE)
     print(f"Wrote {len(events)} events to {DATA_FILE}")
 
 
