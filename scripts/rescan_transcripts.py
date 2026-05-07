@@ -13,6 +13,15 @@ import re
 import sys
 from datetime import datetime
 from pathlib import Path
+# hooks/ を sys.path に追加して record_assistant_usage からエクスポート関数を import
+_HOOKS_DIR = Path(__file__).resolve().parent.parent / "hooks"
+if str(_HOOKS_DIR) not in sys.path:
+    sys.path.insert(0, str(_HOOKS_DIR))
+
+from record_assistant_usage import (  # noqa: E402
+    extract_assistant_usage,
+    agent_id_from_filename,
+)
 
 _DEFAULT_DATA_FILE = Path.home() / ".claude" / "transcript-analyzer" / "usage.jsonl"
 DATA_FILE = Path(os.environ.get("USAGE_JSONL", str(_DEFAULT_DATA_FILE)))
@@ -137,12 +146,105 @@ def _find_transcript_files(transcripts_dir: Path) -> list[Path]:
     return result
 
 
+# NOTE: live-hook (record_assistant_usage._scan_existing_state) derives valid_agent_ids
+# from `subagent_stop` events in usage.jsonl, not from main-transcript Task block .id.
+# For transcripts predating reliable tool_use_id population, rescan may undercount
+# per-subagent files that live-hook would have collected. This is Option A strict
+# adherence — see docs/plans/104-rescan-cost.md §5 R2.
+def derive_valid_agent_ids_from_transcript(main_transcript_path: Path) -> set[str]:
+    """main transcript の Task/Agent block から valid_agent_ids を構築する。
+
+    Issue #93 filter: subagent_type != "" の block の id のみ収集。
+    """
+    valid_ids: set[str] = set()
+    if not main_transcript_path.exists():
+        return valid_ids
+    try:
+        text = main_transcript_path.read_text(encoding="utf-8")
+    except OSError:
+        return valid_ids
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if row.get("type") != "assistant":
+            continue
+        content = row.get("message", {}).get("content", [])
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") != "tool_use":
+                continue
+            if block.get("name") not in SUBAGENT_TOOL_NAMES:
+                continue
+            subagent_type = (block.get("input") or {}).get("subagent_type", "")
+            if not subagent_type:
+                continue  # Issue #93 filter
+            agent_id = block.get("id", "")
+            if agent_id:
+                valid_ids.add(agent_id)
+    return valid_ids
+
+
+def scan_assistant_usage_for_session(
+    main_transcript_path: Path,
+    session_id: str,
+    project: str,
+) -> list[dict]:
+    """main + per-subagent transcript から assistant_usage event を yield する。
+
+    - main transcript → source="main"
+    - per-subagent transcript (Issue #93 filter 適用) → source="subagent"
+    """
+    events: list[dict] = []
+
+    # main transcript
+    for ev in extract_assistant_usage(
+        main_transcript_path,
+        session_id=session_id,
+        project=project,
+        source="main",
+    ):
+        events.append(ev)
+
+    # per-subagent transcripts
+    valid_agent_ids = derive_valid_agent_ids_from_transcript(main_transcript_path)
+    sa_dir = main_transcript_path.with_suffix("") / "subagents"
+    if sa_dir.is_dir():
+        for sa_file in sorted(sa_dir.glob("agent-*.jsonl")):
+            agent_id = agent_id_from_filename(sa_file)
+            if not agent_id or agent_id not in valid_agent_ids:
+                continue
+            for ev in extract_assistant_usage(
+                sa_file,
+                session_id=session_id,
+                project=project,
+                source="subagent",
+            ):
+                events.append(ev)
+
+    return events
+
+
 def scan_all(transcripts_dir: Path) -> list[dict]:
     files = _find_transcript_files(transcripts_dir)
     all_events = []
     for f in files:
         print(f"Scanning {f} ...", file=sys.stderr)
         all_events.extend(_scan_transcript_file(f))
+        # session_id = stem (filename without .jsonl suffix), project = parent dir basename
+        session_id = f.stem
+        cwd_encoded = f.parent.name
+        project = cwd_encoded.lstrip("-").replace("-", "/").split("/")[-1] if cwd_encoded else ""
+        all_events.extend(
+            scan_assistant_usage_for_session(f, session_id=session_id, project=project)
+        )
 
     def sort_key(ev: dict) -> str:
         ts = ev.get("timestamp", "")
