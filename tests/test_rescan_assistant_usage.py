@@ -264,10 +264,11 @@ class TestRescanIdempotent:
     def test_rescan_twice_keeps_assistant_usage_count_stable_but_doubles_skill_tool_count(
         self, tmp_path
     ):
-        """AC scope is `assistant_usage` idempotency only.
+        """assistant_usage and session_start are deduped; skill_tool intentionally not.
 
-        Other event types intentionally not deduped — use `--overwrite` for
-        clean reset (see docs/reference/prompt-persistence.md v0.8.0).
+        AC scope is `assistant_usage` + `session_start` idempotency only.
+        skill_tool / subagent_start / user_slash_command are intentionally not deduped —
+        use `--overwrite` for clean reset (see docs/reference/prompt-persistence.md v0.8.0).
         """
         transcripts_dir = tmp_path / "projects"
         session_file = transcripts_dir / "-p-proj" / "sess1.jsonl"
@@ -281,6 +282,9 @@ class TestRescanIdempotent:
             ]},
         }
         _write_jsonl(session_file, [
+            {"type": "user", "sessionId": "sess1", "cwd": "/p/proj",
+             "timestamp": "2026-05-01T09:59:00.000Z",
+             "message": {"role": "user", "content": "hi"}},
             skill_row,
             _assistant_rec("m1", "2026-05-01T10:00:01.000Z"),
         ])
@@ -291,15 +295,22 @@ class TestRescanIdempotent:
         skill_after_1 = sum(
             1 for e in _read_events(usage_file) if e.get("event_type") == "skill_tool"
         )
+        session_start_after_1 = sum(
+            1 for e in _read_events(usage_file) if e.get("event_type") == "session_start"
+        )
 
         _run_rescan(transcripts_dir, usage_file)
         au_after_2 = len(_au_events(usage_file))
         skill_after_2 = sum(
             1 for e in _read_events(usage_file) if e.get("event_type") == "skill_tool"
         )
+        session_start_after_2 = sum(
+            1 for e in _read_events(usage_file) if e.get("event_type") == "session_start"
+        )
 
-        assert au_after_2 == au_after_1        # (a) assistant_usage は増えない
-        assert skill_after_2 == skill_after_1 * 2  # (b) skill_tool は意図的に 2 倍
+        assert au_after_2 == au_after_1             # (a) assistant_usage は増えない
+        assert session_start_after_2 == session_start_after_1  # (b) session_start も増えない
+        assert skill_after_2 == skill_after_1 * 2  # (c) skill_tool は意図的に 2 倍
 
 
 # ---------------------------------------------------------------------------

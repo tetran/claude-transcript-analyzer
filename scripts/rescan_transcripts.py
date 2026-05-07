@@ -25,27 +25,61 @@ from record_assistant_usage import (  # noqa: E402
 )
 
 
+def _scan_existing_session_ids(data_file: Path) -> set[str]:
+    """既存 usage.jsonl の session_start session_id 集合を返す。"""
+    ids: set[str] = set()
+    if not data_file.exists():
+        return ids
+    try:
+        text = data_file.read_text(encoding="utf-8")
+    except OSError:
+        return ids
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            ev = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if ev.get("event_type") == "session_start":
+            sid = ev.get("session_id", "") or ""
+            if sid:
+                ids.add(sid)
+    return ids
+
+
 def write_events_with_dedup(
     events: list[dict],
     output_path: Path,
     existing_keys: set | None = None,
 ) -> None:
-    """assistant_usage のみ (session_id, message_id) dedup して output_path に追記。
+    """assistant_usage / session_start を dedup して output_path に追記。
 
-    その他 event (skill_tool / subagent_start 等) は dedup せず append する。
+    - assistant_usage: (session_id, message_id) first-wins
+    - session_start: session_id first-wins (rescan 2 回目 / live hook 共存で重複しない)
+    - その他 event (skill_tool / subagent_start 等): dedup せず append
     existing_keys が None のとき output_path から自動取得する。
     """
     if existing_keys is None:
         existing_keys = scan_dedup_keys(output_path)
+    existing_session_ids = _scan_existing_session_ids(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("a", encoding="utf-8", newline="\n") as f:
-        seen: set = set(existing_keys)
+        seen_keys: set = set(existing_keys)
+        seen_sessions: set = set(existing_session_ids)
         for ev in events:
-            if ev.get("event_type") == "assistant_usage":
+            et = ev.get("event_type")
+            if et == "assistant_usage":
                 key = (ev.get("session_id", ""), ev.get("message_id", ""))
-                if key in seen:
+                if key in seen_keys:
                     continue
-                seen.add(key)
+                seen_keys.add(key)
+            elif et == "session_start":
+                sid = ev.get("session_id", "") or ""
+                if sid in seen_sessions:
+                    continue
+                seen_sessions.add(sid)
             f.write(json.dumps(ev, ensure_ascii=False) + "\n")
 
 _DEFAULT_DATA_FILE = Path.home() / ".claude" / "transcript-analyzer" / "usage.jsonl"
