@@ -611,7 +611,7 @@ class TestBuildDashboardDataWithPeriod:
             "permission_prompt_skill_breakdown",
             "permission_prompt_subagent_breakdown",
             "compact_density",
-            "session_stats",
+            # session_stats は Issue #114 で Period-applied 群へ移動
             "skill_invocation_breakdown",
             "skill_lifecycle",
             "skill_hibernating",
@@ -1459,3 +1459,117 @@ class TestSessionStatsPeriodApplied:
         assert data_all["session_stats"]["total_sessions"] == 3
         assert data_7d["session_stats"]["total_sessions"] == 1, \
             "Issue #114: session_stats.total_sessions が period=7d で shrink しない (= period 連動になっていない)"
+
+    def test_session_stats_resume_rate_uses_period_internal_ratio(self, tmp_path):
+        """resume_rate = period 内 resume_count / period 内 total_sessions (Q2: period 内 ratio semantics)."""
+        mod = self._mod(tmp_path)
+        events = [
+            # period 内 (= 7d 以内): startup 1, resume 1 → ratio = 1/2 = 0.5
+            {"event_type": "session_start", "source": "startup", "session_id": "s_in_1",
+             "timestamp": _ts(_FIXED_NOW, days=1)},
+            {"event_type": "session_start", "source": "resume", "session_id": "s_in_2",
+             "timestamp": _ts(_FIXED_NOW, days=2)},
+            # period 外: resume 5 件
+            {"event_type": "session_start", "source": "resume", "session_id": "s_out_1",
+             "timestamp": _ts(_FIXED_NOW, days=10)},
+            {"event_type": "session_start", "source": "resume", "session_id": "s_out_2",
+             "timestamp": _ts(_FIXED_NOW, days=11)},
+            {"event_type": "session_start", "source": "resume", "session_id": "s_out_3",
+             "timestamp": _ts(_FIXED_NOW, days=12)},
+            {"event_type": "session_start", "source": "resume", "session_id": "s_out_4",
+             "timestamp": _ts(_FIXED_NOW, days=13)},
+            {"event_type": "session_start", "source": "resume", "session_id": "s_out_5",
+             "timestamp": _ts(_FIXED_NOW, days=14)},
+        ]
+        data_7d = mod.build_dashboard_data(events, period="7d", now=_FIXED_NOW)
+        assert data_7d["session_stats"]["total_sessions"] == 2
+        assert data_7d["session_stats"]["resume_rate"] == 0.5, \
+            "Issue #114 Q2: resume_rate は period 内 ratio (= 1/2 = 0.5)"
+
+    def test_session_stats_compact_count_period_applied(self, tmp_path):
+        """compact_count が period 連動になる."""
+        mod = self._mod(tmp_path)
+        events = [
+            # period 内 1 件
+            {"event_type": "compact_start", "trigger": "auto", "session_id": "s_in",
+             "timestamp": _ts(_FIXED_NOW, days=1)},
+            # period 外 3 件
+            {"event_type": "compact_start", "trigger": "auto", "session_id": "s_out1",
+             "timestamp": _ts(_FIXED_NOW, days=8)},
+            {"event_type": "compact_start", "trigger": "manual", "session_id": "s_out2",
+             "timestamp": _ts(_FIXED_NOW, days=15)},
+            {"event_type": "compact_start", "trigger": "auto", "session_id": "s_out3",
+             "timestamp": _ts(_FIXED_NOW, days=30)},
+        ]
+        data_7d = mod.build_dashboard_data(events, period="7d", now=_FIXED_NOW)
+        data_all = mod.build_dashboard_data(events, period="all", now=_FIXED_NOW)
+        assert data_7d["session_stats"]["compact_count"] == 1
+        assert data_all["session_stats"]["compact_count"] == 4
+
+    def test_session_stats_permission_prompt_count_period_applied(self, tmp_path):
+        """permission_prompt_count が period 連動になる."""
+        mod = self._mod(tmp_path)
+        events = [
+            # period 内 1 件
+            {"event_type": "notification", "notification_type": "permission_prompt",
+             "session_id": "s_in", "timestamp": _ts(_FIXED_NOW, days=1)},
+            # period 外 2 件
+            {"event_type": "notification", "notification_type": "permission",
+             "session_id": "s_out1", "timestamp": _ts(_FIXED_NOW, days=8)},
+            {"event_type": "notification", "notification_type": "permission_prompt",
+             "session_id": "s_out2", "timestamp": _ts(_FIXED_NOW, days=20)},
+        ]
+        data_7d = mod.build_dashboard_data(events, period="7d", now=_FIXED_NOW)
+        data_all = mod.build_dashboard_data(events, period="all", now=_FIXED_NOW)
+        assert data_7d["session_stats"]["permission_prompt_count"] == 1
+        assert data_all["session_stats"]["permission_prompt_count"] == 3
+
+    def test_session_stats_period_all_unchanged_from_pre_change(self, tmp_path):
+        """period=all 経路では aggregate_session_stats(events) を直接呼んだ結果と一致する (後方互換性 pin)."""
+        mod = self._mod(tmp_path)
+        events = _make_event_set_for_period_test(_FIXED_NOW)
+        data_all = mod.build_dashboard_data(events, period="all", now=_FIXED_NOW)
+        direct = mod.aggregate_session_stats(events)
+        assert data_all["session_stats"] == direct, \
+            "period=all のとき session_stats は events 直接渡しと完全一致しなければならない"
+
+    def test_session_stats_session_start_at_period_boundary_kept(self, tmp_path):
+        """session_start.timestamp == now - 7d (cutoff 包含境界) は period=7d で kept される."""
+        mod = self._mod(tmp_path)
+        events = [
+            {"event_type": "session_start", "source": "startup", "session_id": "s_boundary",
+             "timestamp": _ts(_FIXED_NOW, days=7)},
+        ]
+        data_7d = mod.build_dashboard_data(events, period="7d", now=_FIXED_NOW)
+        assert data_7d["session_stats"]["total_sessions"] == 1, \
+            "cutoff 包含境界 (cutoff <= ts <= now) を session_start も継承しなければならない"
+
+    def test_session_stats_session_start_just_outside_period_dropped(self, tmp_path):
+        """session_start.timestamp == now - (7d + 1s) は period=7d で drop される."""
+        mod = self._mod(tmp_path)
+        events = [
+            {"event_type": "session_start", "source": "startup", "session_id": "s_outside",
+             "timestamp": _ts(_FIXED_NOW, days=7, seconds=1)},
+        ]
+        data_7d = mod.build_dashboard_data(events, period="7d", now=_FIXED_NOW)
+        assert data_7d["session_stats"]["total_sessions"] == 0, \
+            "cutoff より 1 秒過去の session_start は drop されなければならない"
+
+    def test_session_stats_no_pair_straddling_for_session_start(self, tmp_path):
+        """session_start は subagent_type key を持たないので _filter_events_by_period の第二段
+        (subagent invocation pair-straddling) で pull-back されない (構造的 pin)。"""
+        mod = self._mod(tmp_path)
+        events = [
+            # period 外 session_start (timestamp 第一段で drop されるべき、第二段で復活してはいけない)
+            {"event_type": "session_start", "source": "resume", "session_id": "s_old",
+             "timestamp": _ts(_FIXED_NOW, days=10)},
+            # period 内 subagent invocation (関係ないが、第二段 logic を起動するために)
+            {"event_type": "subagent_start", "subagent_type": "Helper", "session_id": "s_in",
+             "tool_use_id": "t1", "timestamp": _ts(_FIXED_NOW, days=1, seconds=-1),
+             "duration_ms": 1000, "success": True},
+            {"event_type": "subagent_stop", "subagent_type": "Helper", "session_id": "s_in",
+             "timestamp": _ts(_FIXED_NOW, days=1)},
+        ]
+        data_7d = mod.build_dashboard_data(events, period="7d", now=_FIXED_NOW)
+        assert data_7d["session_stats"]["total_sessions"] == 0, \
+            "period 外 session_start が第二段 pair-straddling で誤って復活してはいけない"

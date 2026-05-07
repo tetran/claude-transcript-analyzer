@@ -1101,7 +1101,7 @@ def build_dashboard_data(
         "permission_prompt_skill_breakdown": permission_breakdowns["skill"],
         "permission_prompt_subagent_breakdown": permission_breakdowns["subagent"],
         "compact_density": aggregate_compact_density(events),
-        "session_stats": aggregate_session_stats(events),
+        "session_stats": aggregate_session_stats(period_events_raw),
         "health_alerts": load_health_alerts(),
         "skill_invocation_breakdown": aggregate_skill_invocation_breakdown(events),
         "skill_lifecycle": aggregate_skill_lifecycle(events, now=now),
