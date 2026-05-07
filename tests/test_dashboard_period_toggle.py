@@ -1555,6 +1555,25 @@ class TestSessionStatsPeriodApplied:
         assert data_7d["session_stats"]["total_sessions"] == 0, \
             "cutoff より 1 秒過去の session_start は drop されなければならない"
 
+    def test_kpi_help_body_period_neutral_wording_post_114(self, tmp_path):
+        """Issue #114: kpi-sess / -resume / -compact / -perm の helpBody に period 不変前提
+        wording (`lifetime` / `期間不変` / `全期間`) が混入しないことを assert (= future drift catcher)."""
+        js_path = Path(__file__).parent.parent / "dashboard" / "template" / "scripts" / "20_load_and_render.js"
+        js = js_path.read_text(encoding="utf-8")
+        forbidden = ["lifetime", "期間不変", "全期間"]
+        # 4 tile 各々の `id: 'kpi-XXX'` 行から次の `},` (KPI literal の終端) までの substring を抽出
+        for tile_id in ("kpi-sess", "kpi-resume", "kpi-compact", "kpi-perm"):
+            anchor = f"id: '{tile_id}'"
+            start = js.find(anchor)
+            assert start != -1, f"KPI tile {tile_id} の literal 開始 anchor が見つからない"
+            # KPI 配列要素は `{ id: 'kpi-XXX', ... },` の形なので次の "},\n" を終端とする
+            end = js.find("},\n", start)
+            assert end != -1, f"KPI tile {tile_id} の literal 終端が見つからない"
+            block = js[start:end]
+            for word in forbidden:
+                assert word not in block, \
+                    f"{tile_id} helpBody contains forbidden period-invariant wording '{word}' (Issue #114)"
+
     def test_session_stats_no_pair_straddling_for_session_start(self, tmp_path):
         """session_start は subagent_type key を持たないので _filter_events_by_period の第二段
         (subagent invocation pair-straddling) で pull-back されない (構造的 pin)。"""

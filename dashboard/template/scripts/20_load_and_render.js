@@ -22,8 +22,6 @@
 
   // header (Issue #65: local TZ 表記に統一)
   document.getElementById('lastRx').textContent = formatLocalTimestamp(data.last_updated);
-  // footer の `<span class="k">sessions</span>` (Issue #89) と重複しないよう数字単独で書き出す。
-  document.getElementById('sessVal').textContent = ss.total_sessions || 0;
 
   // Issue #65: daily 系 KPI / sparkline は data.daily_trend (= server UTC bucket) ではなく
   // hourly_heatmap.buckets を local TZ で再集計した localDays を使う。
