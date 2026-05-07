@@ -1078,6 +1078,109 @@ console.log(JSON.stringify({ initial }));
         out = _json.loads(result.stdout.strip().splitlines()[-1])
         assert out["initial"] == "all", f"getCurrentPeriod() の初期値が 'all' でない: {out}"
 
+    def test_sessions_header_has_empty_period_slot(self, tmp_path):
+        """Sessions header に `data-period-slot="sessions"` の空 slot が居る (move 先)。
+        かつ Sessions section 内 (<section data-page="sessions"> と </section><!-- /data-page="sessions" -->) に居る。
+        """
+        mod = self._mod(tmp_path)
+        template = mod._build_html_template()
+        assert 'data-period-slot="sessions"' in template, \
+            "Sessions header に data-period-slot=sessions slot が無い"
+        sessions_section_start = template.find('<section data-page="sessions"')
+        sessions_section_end = template.find('</section><!-- /data-page="sessions"')
+        slot_pos = template.find('data-period-slot="sessions"')
+        assert sessions_section_start != -1, "Sessions section (<section data-page=\"sessions\">) が無い"
+        assert sessions_section_end != -1, "Sessions section 終端コメント (<!-- /data-page=\"sessions\" -->) が無い"
+        assert sessions_section_start < slot_pos < sessions_section_end, \
+            "data-period-slot=sessions が Sessions section の外にある"
+
+    def test_sessions_slot_inside_sessions_header(self, tmp_path):
+        """Sessions section 内の <header class="header"> 〜 </header> の間に slot が居る。"""
+        mod = self._mod(tmp_path)
+        template = mod._build_html_template()
+        sessions_start = template.find('<section data-page="sessions"')
+        assert sessions_start != -1, "Sessions section が無い"
+        sessions_fragment = template[sessions_start:]
+        header_start = sessions_fragment.find('<header class="header">')
+        header_end = sessions_fragment.find('</header>', header_start)
+        assert header_start != -1, "Sessions section 内に <header class=\"header\"> が無い"
+        assert header_end != -1, "Sessions section 内に </header> が無い"
+        slot_pos = sessions_fragment.find('data-period-slot="sessions"')
+        assert header_start < slot_pos < header_end, \
+            "data-period-slot=sessions が Sessions section の header 外にある (panel-body 等に紛れ込んでいる)"
+
+    def test_period_toggle_moves_to_sessions_slot_via_hashchange(self, tmp_path):
+        """Node round-trip: activePage=sessions で movePeriodToggleToActivePage() を呼ぶと
+        Sessions slot の appendChild が呼ばれる (allow-list に sessions が含まれている証跡)。
+        """
+        import subprocess
+        import shutil
+        node = shutil.which("node")
+        if node is None:
+            import pytest as _pytest
+            _pytest.skip("node not available")
+        mod = self._mod(tmp_path)
+        bundle = mod._concat_main_js()
+        script = r"""
+const appendChildCalls = [];
+const sessionSlot = {
+  appendChild: function(el) { appendChildCalls.push(el); },
+};
+const toggleEl = { parentNode: null };
+
+// dataset は空で初期化 (bundle eval 中の movePeriodToggleToActivePage() は "overview" 経路)
+globalThis.window = { addEventListener: () => {}, removeEventListener: () => {}, location: { hash: "" } };
+globalThis.document = {
+  body: { dataset: {}, classList: { add: () => {}, remove: () => {}, contains: () => false } },
+  getElementById: (id) => id === "periodToggle" ? toggleEl : null,
+  querySelectorAll: (sel) => {
+    if (typeof sel === "string" && sel.indexOf("data-period") !== -1) {
+      return [{ addEventListener: () => {}, dataset: { period: "7d" }, setAttribute: () => {}, getAttribute: () => null }];
+    }
+    return [];
+  },
+  querySelector: (sel) => {
+    if (sel === '[data-period-slot="sessions"]') return sessionSlot;
+    return null;
+  },
+  addEventListener: () => {},
+};
+globalThis.fetch = async () => ({ ok: true, json: async () => ({}) });
+globalThis.EventSource = undefined;
+process.on("unhandledRejection", () => {});
+try { eval("(async function(){" + process.env.BUNDLE + "})();"); } catch (e) {}
+
+if (typeof window.__period === "undefined") {
+  console.log(JSON.stringify({ error: "no_period_namespace" }));
+  process.exit(0);
+}
+
+// bundle eval 後に sessions に切り替えて move を手動トリガー
+document.body.dataset.activePage = "sessions";
+// toggle の parentNode を null にリセット (bundle eval 中に overview slot に移った可能性をクリア)
+toggleEl.parentNode = null;
+window.__period.movePeriodToggleToActivePage();
+console.log(JSON.stringify({ appendChildCalls: appendChildCalls.length }));
+"""
+        result = subprocess.run(
+            [node, "-e", script],
+            env={**os.environ, "BUNDLE": bundle},
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+        )
+        assert result.returncode == 0, f"node failed: stderr={result.stderr}"
+        import json as _json
+        lines = [ln for ln in result.stdout.strip().splitlines() if ln.strip()]
+        assert lines, f"no JSON output: stdout={result.stdout!r} stderr={result.stderr!r}"
+        out = _json.loads(lines[-1])
+        assert "error" not in out, f"node script error: {out}"
+        assert out["appendChildCalls"] == 1, \
+            f"Sessions slot に toggle が move されなかった (appendChildCalls={out['appendChildCalls']}): " \
+            "allow-list に 'sessions' が含まれていない可能性"
+
 
 class TestPeriodAwareFetch:
     """Step 5: fetch 経路で period query を載せる."""

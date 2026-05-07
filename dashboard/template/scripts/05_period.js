@@ -74,7 +74,7 @@
     const activePage = (document.body && document.body.dataset)
       ? (document.body.dataset.activePage || "overview")
       : "overview";
-    if (activePage !== "overview" && activePage !== "patterns") return;
+    if (activePage !== "overview" && activePage !== "patterns" && activePage !== "sessions") return;
     const slot = document.querySelector('[data-period-slot="' + activePage + '"]');
     if (slot && toggle.parentNode !== slot) {
       slot.appendChild(toggle);
