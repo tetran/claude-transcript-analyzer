@@ -1429,3 +1429,33 @@ class TestPeriodSentinelDocstring:
         source = (Path(__file__).parent.parent / "dashboard" / "server.py").read_text(encoding="utf-8")
         assert "Issue #85: daily_trend stays in period-applied set" in source, \
             "Issue #85 sentinel comment が dashboard/server.py から消えている"
+
+
+class TestSessionStatsPeriodApplied:
+    """Issue #114: session_stats の 4 KPI sub-field を period 連動にする drift guard.
+
+    Phase 1 RED → GREEN は最初に test_session_stats_total_sessions_shrinks_with_7d 1 件のみ
+    pin、GREEN 確認後に triangulation 7 件を additive で追加する (plan §Phase 1)。
+    """
+
+    def _mod(self, tmp_path):
+        return load_dashboard_module(tmp_path / "nonexistent.jsonl")
+
+    def test_session_stats_total_sessions_shrinks_with_7d(self, tmp_path):
+        """period=7d で session_stats.total_sessions が period=all より小さくなる (Issue #114 AC2)."""
+        mod = self._mod(tmp_path)
+        events = [
+            # period 内 (1 件)
+            {"event_type": "session_start", "source": "startup", "session_id": "s1",
+             "timestamp": _ts(_FIXED_NOW, days=1)},
+            # period 外 (2 件、cutoff 7d より過去)
+            {"event_type": "session_start", "source": "startup", "session_id": "s2",
+             "timestamp": _ts(_FIXED_NOW, days=10)},
+            {"event_type": "session_start", "source": "resume", "session_id": "s3",
+             "timestamp": _ts(_FIXED_NOW, days=20)},
+        ]
+        data_all = mod.build_dashboard_data(events, period="all", now=_FIXED_NOW)
+        data_7d = mod.build_dashboard_data(events, period="7d", now=_FIXED_NOW)
+        assert data_all["session_stats"]["total_sessions"] == 3
+        assert data_7d["session_stats"]["total_sessions"] == 1, \
+            "Issue #114: session_stats.total_sessions が period=7d で shrink しない (= period 連動になっていない)"
