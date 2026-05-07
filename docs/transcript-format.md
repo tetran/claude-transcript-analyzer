@@ -362,9 +362,20 @@ tier 3 sha1 fallback の常時計算コストを避けられる。dispatch table
 
 ### `scripts/rescan_transcripts.py` との運用注意
 
-`rescan_transcripts.py --append` で 180 日超の event を再 append すると、
-次回 archive job 実行時にまた archive へ移される (idempotent / immutability で
-重複登録は起きない)。**rescan 直後に手動で `/usage-archive` を実行すると
-hot tier がすぐ整理される** が、自動連動は意図的にしていない (rescan は
-手動運用ツールという位置付け)。
+`rescan_transcripts.py` (v0.8.0 からデフォルトが append+dedup) で 180 日超の
+event を再 append すると、次回 archive job 実行時にまた archive へ移される。
+`assistant_usage` は `(session_id, message_id)` first-wins dedup で重複しない。
+その他 event (skill_tool / subagent_start 等) を確定的にクリーンにしたい場合は
+`--overwrite` flag を使う。
+
+```bash
+# デフォルト (append + assistant_usage dedup)
+python3 scripts/rescan_transcripts.py
+
+# 全消し再生成 (旧 default / 確定的クリーン)
+python3 scripts/rescan_transcripts.py --overwrite
+```
+
+**rescan 直後に手動で `/usage-archive` を実行すると hot tier がすぐ整理される**
+が、自動連動は意図的にしていない (rescan は手動運用ツールという位置付け)。
 
