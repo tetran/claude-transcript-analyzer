@@ -146,12 +146,12 @@ hashchange listener を 1 本持つ。router IIFE は先に登録されている
   hashchange listener で active page slot に DOM を `appendChild` で move する
   (1 DOM 維持 / state sync 不要)。router IIFE (`00_router.js`) の hashchange listener
   で `body.dataset.activePage` が先に更新されてから本 listener が走る (登録順 = 発火順)。
-- **可視範囲**: Overview / Patterns 表示時のみ可視。Quality / Surface / Sessions には slot が
-  存在しないので move 先が無く、`body[data-active-page="quality"|"surface"|"sessions"] #periodToggle { display: none }`
-  の page-scoped CSS rule で隠す (toggle DOM は前 page の slot に残る)。Sessions ページの
-  `session_breakdown` 自体は Overview/Patterns で設定した period が継続適用される
-  (`aggregate_session_breakdown` が `period_events_raw` を経由して in-period content を集計)
-  が、Sessions ページから period を切り替える UI は持たない (Issue #103)。
+- **可視範囲**: Overview / Patterns / Sessions 表示時に可視。Quality / Surface には slot が
+  存在しないので move 先が無く、`body[data-active-page="quality"|"surface"] #periodToggle { display: none }`
+  の page-scoped CSS rule で隠す (toggle DOM は前 page の slot に残る)。Sessions ページには
+  `<div class="period-toggle-slot" data-period-slot="sessions">` が header 右端に配置されており
+  (Issue #115)、`session_breakdown` が `period_events_raw` 経由で period 連動済みであるため
+  Sessions タブからも period を直接切り替えられる。
 - **State**: `05_period.js` の closure-private `__periodCurrent` で持ち、
   `window.__period.{getCurrentPeriod, setCurrentPeriod, wirePeriodToggle}` を expose。
   click handler で `aria-pressed` 付け替え + `setCurrentPeriod(p)` + 再 fetch を呼ぶ。
