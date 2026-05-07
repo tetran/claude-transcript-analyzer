@@ -525,7 +525,7 @@ def _make_event_set_for_period_test(now: datetime) -> list[dict]:
 
 
 class TestBuildDashboardDataWithPeriod:
-    """Step 2: build_dashboard_data(period=...) — 11 field period 適用 / 8 field 不変 / period_applied echo."""
+    """Step 2: build_dashboard_data(period=...) — 12 field period 適用 / 7 field 不変 / period_applied echo."""
 
     def _mod(self, tmp_path):
         return load_dashboard_module(tmp_path / "nonexistent.jsonl")
@@ -545,7 +545,7 @@ class TestBuildDashboardDataWithPeriod:
         assert legacy == explicit_all
 
     def test_period_7d_shrinks_period_applied_fields(self, tmp_path):
-        """period=7d で period 適用 11 field 全てから 8 日前 event が消える."""
+        """period=7d で period 適用 12 field のうちこの test がカバーする 11 field (session_stats は別 test class) 全てから 8 日前 event が消える."""
         mod = self._mod(tmp_path)
         events = _make_event_set_for_period_test(_FIXED_NOW)
         data_all = mod.build_dashboard_data(events, period="all", now=_FIXED_NOW)
@@ -600,7 +600,7 @@ class TestBuildDashboardDataWithPeriod:
             assert "p2" not in projects_in_matrix
 
     def test_full_period_fields_unchanged_across_periods(self, tmp_path):
-        """全期間 8 field は period に関わらず同一 (drift guard)."""
+        """全期間 7 field は period に関わらず同一 (drift guard / Issue #114 で session_stats を除外)."""
         mod = self._mod(tmp_path)
         events = _make_event_set_for_period_test(_FIXED_NOW)
         data_all = mod.build_dashboard_data(events, period="all", now=_FIXED_NOW)
@@ -1340,13 +1340,13 @@ setImmediate(() => {
 
 
 class TestPeriodDriftGuardAndStaticExport:
-    """Step 7: drift guard (period 適用 11 field と全期間 8 field の boundary) + static export 不在 pin."""
+    """Step 7: drift guard (period 適用 12 field と全期間 7 field の boundary) + static export 不在 pin."""
 
     def _mod(self, tmp_path):
         return load_dashboard_module(tmp_path / "nonexistent.jsonl")
 
     def test_period_change_observably_shrinks_period_applied_set(self, tmp_path):
-        """period 切り替えで period 適用 11 field 側に差分が観測される (drift 観測点)."""
+        """period 切り替えで period 適用 12 field 側に差分が観測される (drift 観測点)."""
         mod = self._mod(tmp_path)
         events = _make_event_set_for_period_test(_FIXED_NOW)
         data_all = mod.build_dashboard_data(events, period="all", now=_FIXED_NOW)

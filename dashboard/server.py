@@ -117,8 +117,8 @@ def _filter_events_by_period(
 
     使い分け契約 (Quality / Surface 系の filtering を防ぐため、build_dashboard_data の call site で
     本 helper を呼ばないことで対応する。本 helper は誤用防止のため call site でのみ使う):
-      - period 適用 11 field (KPI 4 + Overview 4 + Patterns 3) には本 view を渡す
-      - 全期間 8 field (Quality 4 + Surface 3 + session_stats) には未 filter events を渡す
+      - period 適用 12 field (KPI 4 + Overview 4 + Patterns 3 + session_stats 1) には本 view を渡す
+      - 全期間 7 field (Quality 4 + Surface 3) には未 filter events を渡す
 
     `period` が allow-list (`7d` / `30d` / `90d` / `all`) 以外、または `all` のときは
     events を index 同値で返す (parse 不能 timestamp も保持)。
@@ -1038,8 +1038,8 @@ def build_dashboard_data(
     """ダッシュボード API レスポンスを生成する (Issue #85: period toggle 対応).
 
     period: "7d" / "30d" / "90d" / "all" (それ以外は "all" 相当)。
-      Overview / Patterns / KPI counter の 11 field は period 適用後の events で集計する。
-      Quality / Surface / session_stats の 8 field は **常に全期間** で集計する (period 不変)。
+      Overview / Patterns / KPI counter / session_stats の 12 field は period 適用後の events で集計する。
+      Quality / Surface の 7 field は **常に全期間** で集計する (period 不変)。
     now: test 注入用。指定時は last_updated もこの値で override する (drift guard test 用途)。
     """
     # period 適用 view と未 filter view の二経路で aggregator に渡す。
