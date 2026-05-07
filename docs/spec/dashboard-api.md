@@ -25,11 +25,13 @@
   pairing semantics を尊重し、`failure_rate` / `avg_duration_ms` / pXX duration が
   period boundary 跨ぎで silent drift しないことを保証するため。
 
-### Period 適用 scope (11 field)
+### Period 適用 scope (12 field)
 
 - KPI counter: `total_events` / `skill_kinds_total` / `subagent_kinds_total` / `project_total`
 - Overview: `skill_ranking` / `subagent_ranking` / `daily_trend` / `project_breakdown`
 - Patterns: `hourly_heatmap` / `skill_cooccurrence` / `project_skill_matrix`
+- Sessions: `session_breakdown` (Issue #99 / v0.8.0〜)
+- Overview: `model_distribution` (Issue #106 / v0.8.0〜)
 
 ### 全期間 (period 不変) scope (8 field)
 
@@ -73,6 +75,8 @@
   "skill_invocation_breakdown":  [...],
   "skill_lifecycle":             [...],
   "skill_hibernating":           { ... },
+  "session_breakdown":           [...],
+  "model_distribution":          { ... },
   "period_applied":          "all" | "7d" | "30d" | "90d"
 }
 ```
@@ -800,3 +804,193 @@ Surface ページ「Hibernating skills」panel が消費する。
 
 aggregator は `now: datetime | None = None` キーワード引数を受け、`None` 時
 `datetime.now(timezone.utc)` 既定。
+
+## `session_breakdown` (Issue #99 / v0.8.0〜)
+
+session 単位の token / cost / model 内訳 / service_tier / skill 件数 /
+subagent 件数を 1 行 = 1 session の row 配列で返す。Sessions ページ
+(Issue #103) が消費する。
+
+### 形
+
+```json
+{
+  "session_breakdown": [
+    {
+      "session_id": "abc-123-def",
+      "project": "chirper",
+      "started_at": "2026-05-01T10:00:00+00:00",
+      "ended_at":   "2026-05-01T11:00:00+00:00",
+      "duration_seconds": 3600.0,
+      "models": {"claude-opus-4-7": 3, "claude-haiku-4-5": 12},
+      "tokens": {
+        "input": 12345, "output": 6789,
+        "cache_read": 89000, "cache_creation": 1200
+      },
+      "estimated_cost_usd": 0.4567,
+      "service_tier_breakdown": {"priority": 5, "standard": 10},
+      "skill_count": 4,
+      "subagent_count": 2
+    }
+  ]
+}
+```
+
+### 集計仕様
+
+- 入力 source: `assistant_usage` event (Issue #99 / `usage-jsonl-events.md`) +
+  `session_start` / `session_end` / `skill_tool` / `user_slash_command` +
+  `subagent_*` event (subagent_count 算出用)。`build_dashboard_data` は
+  **`period_events_raw` 経由**で渡す (= `assistant_usage` は
+  `_filter_usage_events` の対象外)
+- `started_at`: `session_start.timestamp` (ISO 8601 UTC `+00:00`)。`session_start`
+  を持たない orphan session は配列に含めない
+- `ended_at` / `duration_seconds`: `session_end` 不在の active session では
+  両方とも `null` (= UI 側「進行中」pill の trigger)
+- `models`: `{model_name: assistant_usage event 数}`。1 session 内の `/model`
+  切替も per-message 単位で正しく count される
+- `tokens`: 4 dimension の session 内合計 (`int`)
+- `estimated_cost_usd`: model 別 rate 適用 → reduce 合算 (=
+  `cost_metrics.calculate_session_cost()`)。**実測 token × 価格表掛け算による
+  参考値** で、価格改定で過去値も動く (`docs/reference/cost-calculation-design.md`
+  §4)。4 桁丸め (USD 0.0001 = 1/100 セント)
+- `service_tier_breakdown`: `{tier_name: assistant_usage event 数}`。
+  `service_tier` 欠損 / null の event は **breakdown に出さない** (real value
+  のみ集計、real-world data quirks をそのまま見せる)
+- `skill_count`: session 内 `skill_tool` + `user_slash_command` event 数
+- `subagent_count`: `subagent_metrics.session_subagent_counts(events)` 経由
+  (= invocation 単位 dedup 後の count)。`aggregate_subagent_metrics` の
+  type 軸合計と session 軸合計が一致する drift guard あり
+
+### sort / top-N
+
+- sort key: `started_at` 降順 (= 最新 session が先頭)
+- top-N: `TOP_N_SESSIONS = 20` (`cost_metrics.py` 定数)
+- `TOP_N` (`dashboard/server.py`、ranking 系の 10) とは別の独立定数
+
+### 価格表 / 未知 model fallback
+
+- 価格表 (per-1M-token rate) は `cost_metrics.MODEL_PRICING` に pin
+  (出典は同 module docstring 参照 — 2026-05-06 時点
+  `https://platform.claude.com/docs/en/about-claude/pricing` から verbatim)
+- 未知 model は **Sonnet 4.6 fallback** で計算 (silent、UI を毒さない)
+- date-suffix 付き ID (`claude-haiku-4-5-20251001` 等) は token-boundary prefix
+  match で base price 解決 (`claude-opus-4` $15 と `claude-opus-4-5` $5 の 3x
+  差を longest-match で取り違えない)
+
+### period 連動 (Issue #85)
+
+- period="7d" / "30d" / "90d" / "all" に応じて **rolling window で切られた
+  events から集計**。cutoff 外の `session_start` を持つ session は
+  `session_breakdown` から消える
+- drift guard: `tests/test_dashboard_sessions_api.py::TestSessionBreakdown::test_session_breakdown_period_split`
+
+### Active session の disposition
+
+`session_end` 不在 = "進行中"。`ended_at = null` / `duration_seconds = null` で
+返す。timeout (X 時間経過で自動 close 扱い等) は本仕様 scope 外、将来 issue。
+
+### empty session の除外 (Issue #109 / v0.8.0〜)
+
+- `assistant_usage` event を 1 件も持たない session (= 起動直後 `/exit` /
+  builtin command のみで終了 / session_start 直後の abort) は
+  **session_breakdown 配列から除外** する
+- 除外は `aggregate_session_breakdown` 内で row pool 構築時に行うので、
+  `/api/data` / `export_html` / live SSE / `build_demo_fixture.py` /
+  `build_surface_fixture.py` の **すべての消費者に透過に効く**
+- footer / header の `total_sessions` (= `session_stats.total_sessions`) は
+  **unfilter 観測総数** であり empty session も含む。これは別経路 (raw
+  events から `session_start` event を直接 count) で、本除外の影響を
+  受けない
+- period 適用との合成: period filter 後の `period_events` 上で
+  `assistant_usage` 0 件なら除外される (= 「period 内の意味あるアクティ
+  ビティ」が exclusion の単位)。session_start が pre-cutoff、in-period に
+  `assistant_usage` 1 件 → 残る (`test_cross_cutoff_session_with_in_period_assistant_usage_kept`)
+- drift guard: `tests/test_dashboard_sessions_api.py::TestSessionBreakdownExcludesEmpty`
+  + `TestSessionBreakdownEmptyExcludeIntegration::test_session_stats_total_sessions_includes_empty`
+
+## `model_distribution` (Issue #106 / v0.8.0〜)
+
+Overview ページの「モデル分布」パネル用に、`assistant_usage` event の `model`
+フィールドを **family rollup (opus / sonnet / haiku)** で集計した messages × cost
+の二軸 distribution を返す。
+
+### 形
+
+```json
+{
+  "model_distribution": {
+    "families": [
+      { "family": "opus",   "messages": 312, "messages_pct": 0.61, "cost_usd": 48.5012, "cost_pct": 0.74 },
+      { "family": "sonnet", "messages": 175, "messages_pct": 0.34, "cost_usd": 14.0123, "cost_pct": 0.21 },
+      { "family": "haiku",  "messages": 25,  "messages_pct": 0.05, "cost_usd": 3.4321,  "cost_pct": 0.05 }
+    ],
+    "messages_total": 512,
+    "cost_total": 65.9456
+  }
+}
+```
+
+### 集計仕様
+
+- 入力: `period_events_raw` (= `session_breakdown` と同じ period 適用済 events)
+- filter: `event_type == "assistant_usage"` のみ。`session_start` / `skill_tool` /
+  `subagent_start` 等は除外
+- family rollup: 各 event の `model` を `cost_metrics.infer_model_family()` で
+  family 文字列に解決 (substring match `opus` → `haiku` → `sonnet` の優先順、
+  未知 model は sonnet fallback)。client 側の `inferModelFamily`
+  (`45_renderers_sessions.js`) と semantics を 1:1 一致
+- per-event cost: `cost_metrics.calculate_message_cost(model, in, out, cr, cc)`
+  と同じ rate 表 (= 価格表 drift しない)
+- 各 family の `messages` / `cost_usd` を sum、`messages_pct` / `cost_pct` は
+  total に対する比率 (server 側で **丸めない**、UI 側で `Math.round(pct*100)`)
+- `cost_usd` / `cost_total` は 4 桁丸め (`session_breakdown.estimated_cost_usd`
+  と同じ regime)
+
+### Canonical 順 (load-bearing)
+
+`families` 配列の順は **常に `opus → sonnet → haiku` の固定順**。cost 降順や
+出現順ではない。理由:
+
+- donut chart の slice 並び (12 時起点で時計回り) を決定論化
+- 共有 legend の行順 / callout 配置 / 視覚 snapshot を決定論化
+- API consumer 側が family 別 lookup を index ではなく `find(r => r.family === 'opus')`
+  で書ける (= 並び順に依存しない契約)
+
+3 軸 (server 配列順 / client donut slice 順 / legend 行順) を同期させることで
+random 順による flaky snapshot を防ぐ。
+
+### 常に 3 行 / NaN guard
+
+family 数が 0 / 1 / 2 でも `families` は **必ず 3 行** (未出現 family は
+`messages=0` / `cost_usd=0` のゼロ行で埋める)。完全空 events のときも 3 行
+全 zero で返す。
+
+`messages_total == 0` のとき `messages_pct = 0.0`、`cost_total == 0` のとき
+`cost_pct = 0.0` を server 側で塞ぐ (frontend に NaN を渡さない契約)。
+
+### 未知 model の扱い
+
+raw model 名は output に出さない (= family のみ rollup 出力)。未知 model は
+`infer_model_family` の最後の `return "sonnet"` で sonnet 行に集計、cost は
+`calculate_message_cost` の `DEFAULT_PRICING` (sonnet-4-6) で推計。
+
+### Period 連動
+
+`period_events_raw` 経由なので period toggle (Issue #85) で Overview ページ全体と
+連動 (`session_breakdown` と同じ判断)。`session_breakdown.estimated_cost_usd` の
+sum と `model_distribution.cost_total` は **同じ events を別軸で集計** している
+ので 4 桁内一致 (drift guard: `tests/test_model_distribution.py::TestBuildDashboardDataModelDistribution::test_session_breakdown_total_matches_model_distribution_total`)。
+
+ただし `session_breakdown` は `top_n=20` cap、`model_distribution` は cap なし
+→ 21 session 以上では `Σ row.estimated_cost_usd < model_distribution.cost_total`
+で発散する。これは cap 仕様の自然な帰結 (drift guard:
+`test_session_breakdown_total_diverges_from_model_distribution_above_cap`)。
+
+### Subagent assistant_usage の包含
+
+`source = "subagent"` の `assistant_usage` event も `model` field を持つので
+集計対象に含める。subagent invocation の入れ子を別軸で集計しないという意味で
+"subagent token 別 model 扱い" は別 issue 送りだが、subagent main session 内で
+発火する per-message event は normal な count 対象 (drift guard:
+`test_subagent_assistant_usage_included`)。

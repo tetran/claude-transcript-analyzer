@@ -25,6 +25,8 @@ from subagent_metrics import (
     usage_invocation_events,
     usage_invocation_intervals,
 )
+# Issue #99 / v0.8.0: session_breakdown for `/api/data` (cost / token / model 内訳)
+from cost_metrics import TOP_N_SESSIONS, aggregate_model_distribution, aggregate_session_breakdown
 # Issue #24 PR#31 codex P2: server.json の lock + compare-and-delete primitives は
 # `server_registry` に切り出して `hooks/launch_dashboard.py` の cleanup パスと
 # 共有する。本モジュール内では従来 API 名で再 export し、既存テスト
@@ -1104,6 +1106,21 @@ def build_dashboard_data(
         "skill_invocation_breakdown": aggregate_skill_invocation_breakdown(events),
         "skill_lifecycle": aggregate_skill_lifecycle(events, now=now),
         "skill_hibernating": aggregate_skill_hibernating(events, now=now),
+        # Issue #99 / v0.8.0: session 単位の token / cost / model 内訳 / service_tier。
+        # boundary (session_start / session_end) は **全期間 events** から lookup、
+        # content (assistant_usage / skill_tool) は **period_events_raw** で in-period
+        # 限定。これで period 跨ぎ session (= session_start が pre-cutoff、in-period
+        # に assistant_usage がある) も in-period の cost / token を保ったまま render
+        # される (codex review Round 1 / cross-cutoff regression 対策)。
+        "session_breakdown": aggregate_session_breakdown(
+            events,
+            period_events=period_events_raw,
+            now=now,
+            top_n=TOP_N_SESSIONS,
+        ),
+        # Issue #106 / v0.8.0: Overview モデル分布パネル。period_events_raw 経由で
+        # session_breakdown と semantics を揃える (period 連動 / subagent assistant_usage 包含)。
+        "model_distribution": aggregate_model_distribution(period_events_raw),
         "period_applied": period if period in _PERIOD_DELTAS or period == "all" else "all",
     }
 
@@ -1144,6 +1161,7 @@ _CSS_FILES = (
     "30_pages.css",         # multipage shell (Issue #57)
     "40_patterns.css",      # hourly heatmap + skill cooccurrence + project×skill (Issue #58/59)
     "50_quality.css",       # subagent percentile/failure + permission breakdown + compact density (Issue #60/61)
+    "55_sessions.css",      # Sessions table + KPI 4 枚 + cost meter / model chip / tier chip (Issue #103)
     "60_surface.css",       # Surface 3 panel + tooltip border colors (Issue #74)
 )
 _MAIN_JS_FILES = (
@@ -1154,6 +1172,7 @@ _MAIN_JS_FILES = (
     "25_live_diff.js",            # live mode 差分 highlight + toast (Issue #69)
     "30_renderers_patterns.js",   # heatmap / cooccurrence / project×skill matrix renderers
     "40_renderers_quality.js",    # subagent percentile / failure / permission / compact renderers
+    "45_renderers_sessions.js",   # Sessions table renderer + KPI 4 cards (Issue #103)
     "50_renderers_surface.js",    # Surface invocation / lifecycle / hibernating + fmtDur
     "60_hashchange_listener.js",  # hashchange → loadAndRender 再実行 (Issue #58 Q2)
     "70_init_eventsource.js",     # 初回描画 + EventSource (live refresh)

@@ -1,0 +1,1488 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sessions — Claude Code Usage (mock)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+<!--
+  ============================================================================
+  Sessions page — visual mock for Issue #103
+  ============================================================================
+  Purpose: design exploration. Self-contained file, no JS required (a tiny
+  inline IIFE handles `?` popup toggle so the help-pops behave like production).
+
+  REUSED tokens / classes (verbatim from production):
+    - All :root color + radius + font tokens
+    - .page-nav / .page / .panel / .panel-head / .panel-body / .ttl-wrap / .sub
+    - .help-host / .help-btn / .help-pop / .pop-ttl / .pop-body
+    - .surface-table (extended below — see "NEW")
+    - .conn-status (with [data-state="online"] pulse animation)
+    - .kpi / .kpi-row (used for the proposed KPI strip)
+    - .app-footer
+
+  NEW classes (proposed — namespaced `sessions-*` so they slot in cleanly):
+    - .sessions-table           (extends .surface-table grammar)
+    - .sessions-table .col-cost (cost column emphasis)
+    - .cost-cell / .cost-bar    (in-row magnitude bar)
+    - .model-chip / .tier-chip  (extends .mode-chip / .status-chip family)
+    - .live-pill                (進行中 — reuses conn-pulse keyframe)
+
+  REVISIONS applied (post-review feedback):
+    - Token columns: replaced visible "Tokens" supergroup label with a
+      single help-pop on the Input column header documenting all 4 token
+      types (Input / Output / Cache R / Cache C).
+    - Service tier: added a help-pop documenting priority / standard / batch.
+    - Session ID column dropped; column order now: 開始時刻 | 期間 |
+      Project | Models | tokens(4) | 推計コスト | Service tier | Skills |
+      Subagents (12 columns total).
+
+  Tradeoffs noted at bottom in <aside class="design-notes">.
+-->
+
+<style>
+  /* ------------------------------------------------------------------------
+     PRODUCTION TOKENS (verbatim from dashboard/template/styles/00_base.css)
+     Inlined so the file renders correctly with file://
+     ------------------------------------------------------------------------ */
+  :root {
+    --bg-app: #1c1d22;
+    --bg-panel: #25272d;
+    --bg-panel-2: #2b2e35;
+    --bg-elevated: #2f3239;
+
+    --line: #353841;
+    --line-strong: #404453;
+
+    --ink: #f1f2f5;
+    --ink-soft: #b6bac6;
+    --ink-faint: #7e8290;
+
+    --mint: #6fe3c8;
+    --mint-soft: #2f6f63;
+    --coral: #ff8a76;
+    --coral-soft: #803f37;
+    --peri: #8aa6ff;
+    --peri-soft: #3f4d80;
+    --peach: #ffc97a;
+    --peach-soft: #80633d;
+    --rose: #ff6f9c;
+    --rose-soft: #803757;
+
+    --r-lg: 14px;
+    --r-md: 10px;
+    --r-sm: 6px;
+    --r-pill: 8px;
+
+    --ff-sans: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --ff-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin:0; padding:0; }
+  body {
+    font-family: var(--ff-sans);
+    font-feature-settings: "ss01", "cv11";
+    background: var(--bg-app);
+    color: var(--ink);
+    min-height: 100vh;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    background-image:
+      radial-gradient(ellipse 60% 50% at 15% 0%, rgba(111,227,200,0.05), transparent 60%),
+      radial-gradient(ellipse 40% 40% at 90% 10%, rgba(138,166,255,0.045), transparent 60%);
+  }
+  .app {
+    max-width: 1480px;
+    margin: 0 auto;
+    padding: 22px 22px 32px;
+  }
+
+  /* ----- page-nav (verbatim from 30_pages.css) ----- */
+  .page-nav {
+    display: flex; gap: 4px;
+    padding: 0 0 14px; margin-bottom: 18px;
+    border-bottom: 1px solid var(--line);
+    flex-wrap: wrap; align-items: center;
+  }
+  .page-nav a {
+    padding: 8px 14px;
+    font-size: 13px; font-weight: 500;
+    color: var(--ink-soft); text-decoration: none;
+    border-radius: var(--r-md) var(--r-md) 0 0;
+    transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
+    border: 1px solid transparent;
+    border-bottom: none;
+    margin-bottom: -1px;
+  }
+  .page-nav a:hover { color: var(--ink); background: var(--bg-panel); }
+  .page-nav a.active {
+    color: var(--mint);
+    background: var(--bg-panel);
+    border-color: var(--line);
+    border-bottom: 2px solid var(--mint);
+  }
+  /* heartbeat svg sits between Sessions and the right edge — inline SVG */
+  .heartbeat {
+    width: 80px; height: 18px;
+    margin-left: auto; margin-right: 4px;
+    color: var(--ink-faint); opacity: 0.6;
+  }
+  .heartbeat polyline { fill: none; stroke: currentColor; stroke-width: 1.4; }
+
+  /* ----- header (verbatim) ----- */
+  .header {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 24px;
+    align-items: end;
+    margin-bottom: 22px;
+    padding-bottom: 18px;
+    border-bottom: 1px solid var(--line);
+  }
+  .header h1 {
+    margin: 0 0 4px;
+    font-size: 22px; font-weight: 600;
+    letter-spacing: -0.01em; color: var(--ink);
+  }
+  .header h1 .accent { color: var(--mint); font-weight: 700; }
+  .header .lede { color: var(--ink-soft); font-size: 13px; }
+  .header .lede .num { font-family: var(--ff-mono); color: var(--ink); font-weight: 500; }
+
+  /* ----- panel (verbatim) ----- */
+  .panel {
+    background: var(--bg-panel);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+  }
+  .panel-head {
+    display: flex; justify-content: space-between; align-items: baseline;
+    padding: 14px 18px 12px;
+    border-bottom: 1px solid var(--line);
+    gap: 12px;
+  }
+  .panel-head .ttl-wrap { display: flex; align-items: center; gap: 8px; }
+  .panel-head .ttl {
+    font-size: 14px; font-weight: 600;
+    color: var(--ink); letter-spacing: -0.005em;
+  }
+  .panel-head .ttl .dot {
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--mint);
+    margin-right: 9px; vertical-align: 1px;
+  }
+  .panel-head.c-coral .ttl .dot { background: var(--coral); }
+  .panel-head.c-peri  .ttl .dot { background: var(--peri); }
+  .panel-head.c-peach .ttl .dot { background: var(--peach); }
+  .panel-head .sub {
+    font-size: 11.5px; color: var(--ink-faint);
+    font-family: var(--ff-mono);
+  }
+  .panel-body { padding: 14px 18px 18px; }
+
+  /* ----- KPI (verbatim, just the bits we need) ----- */
+  .kpi-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+    margin-bottom: 22px;
+  }
+  .kpi {
+    background: var(--bg-panel);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    padding: 13px 14px 14px;
+    position: relative; overflow: visible;
+  }
+  .kpi::before {
+    content: ""; position: absolute;
+    top: 0; left: 14px; right: 14px;
+    height: 2px; border-radius: 0 0 4px 4px;
+    background: var(--mint); opacity: 0.85;
+  }
+  .kpi.c-coral::before { background: var(--coral); }
+  .kpi.c-peri::before  { background: var(--peri); }
+  .kpi.c-peach::before { background: var(--peach); }
+  .kpi .k-row { display: flex; justify-content: space-between; align-items: center; gap: 6px; }
+  .kpi .k {
+    font-size: 10.5px; color: var(--ink-faint);
+    text-transform: uppercase; letter-spacing: 0.08em; font-weight: 500;
+  }
+  .kpi .v {
+    font-family: var(--ff-mono);
+    font-size: 26px; font-weight: 600;
+    color: var(--ink); margin-top: 6px;
+    line-height: 1.05; letter-spacing: -0.01em;
+  }
+  .kpi .v.sm { font-size: 20px; }
+  .kpi .s { font-size: 11px; color: var(--ink-faint); margin-top: 6px; }
+  .kpi .s em { font-style: normal; color: var(--ink-soft); font-family: var(--ff-mono); }
+
+  /* ----- help-pop (verbatim from 20_help_tooltip.css) ----- */
+  .help-host { position: relative; display: inline-flex; align-items: center; }
+  .help-btn {
+    appearance: none; -webkit-appearance: none;
+    border: 1px solid var(--line-strong);
+    background: var(--bg-elevated);
+    color: var(--ink-faint);
+    width: 16px; height: 16px;
+    border-radius: 50%; padding: 0;
+    font-family: var(--ff-sans); font-size: 10px;
+    font-weight: 600; line-height: 1;
+    cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center;
+    transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
+  }
+  .help-btn:hover, .help-btn:focus-visible {
+    color: var(--ink);
+    background: var(--bg-panel-2);
+    border-color: var(--ink-faint);
+    outline: none;
+  }
+  .help-btn:focus-visible { box-shadow: 0 0 0 2px rgba(138,166,255,0.45); }
+  .help-btn[aria-expanded="true"] {
+    color: var(--peri);
+    border-color: var(--peri);
+    background: rgba(138,166,255,0.10);
+  }
+  .help-pop {
+    position: absolute;
+    top: calc(100% + 8px);
+    z-index: 50;
+    width: max-content; max-width: 420px;
+    padding: 10px 12px;
+    /* `<th white-space: nowrap>` 継承で popup 本文が 1 行に圧縮されるのを抑止。
+       max-width 420px の中で wrap させる。 */
+    white-space: normal;
+    /* `<th class="num">` の text-align: right や group-row の text-align: center
+       が popup 内の本文 / タイトルに継承して中央寄せ・右寄せになるのを抑止。 */
+    text-align: left;
+    background: var(--bg-elevated);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-md);
+    box-shadow: 0 1px 2px rgba(0,0,0,0.30), 0 8px 24px rgba(0,0,0,0.35);
+    color: var(--ink-soft);
+    font-size: 12px; line-height: 1.55;
+    visibility: hidden; opacity: 0;
+    transform: translateY(-2px);
+    transition: opacity 120ms ease, transform 120ms ease, visibility 120ms;
+    pointer-events: none;
+  }
+  .help-pop[data-place="right"] { left: -8px; }
+  .help-pop[data-place="left"]  { right: -8px; }
+  .help-host:hover > .help-pop,
+  .help-pop[data-open="true"] {
+    visibility: visible; opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
+  }
+  .help-pop .pop-ttl {
+    display: block; color: var(--ink);
+    font-weight: 600; font-size: 12px; margin-bottom: 4px;
+  }
+  /* pop-body は <span> なのでデフォルト inline。width が効かず <br> 入りの
+     長文が popup 幅 (max-width 420px) を超えて右にはみ出る → block 化して
+     popup の幅で wrap させる。 */
+  .help-pop .pop-body { display: block; color: var(--ink-soft); }
+  .help-pop .pop-body code {
+    font-family: var(--ff-mono); font-size: 11px;
+    background: rgba(138,166,255,0.10);
+    color: var(--ink);
+    padding: 1px 5px; border-radius: 4px;
+  }
+
+  /* ----- conn-status pulse (verbatim — used by .live-pill) ----- */
+  @keyframes conn-pulse {
+    0%   { box-shadow: 0 0 0 0 currentColor; opacity: 1; }
+    70%  { box-shadow: 0 0 0 6px transparent; opacity: 0.85; }
+    100% { box-shadow: 0 0 0 0 transparent; opacity: 1; }
+  }
+
+  /* ----- app-footer (verbatim) ----- */
+  .app-footer {
+    margin-top: 32px; padding-top: 16px;
+    border-top: 1px solid var(--line);
+    display: flex; justify-content: space-between; align-items: center;
+    flex-wrap: wrap; gap: 14px;
+    font-size: 11.5px; color: var(--ink-faint);
+  }
+  .app-footer .meta { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+  .app-footer .meta-item { display: inline-flex; align-items: baseline; gap: 4px; }
+  .app-footer .meta-item .k { color: var(--ink-faint); }
+  .app-footer .meta-item .v { color: var(--ink-soft); font-family: var(--ff-mono); }
+  .app-footer .credits { color: var(--ink-faint); font-size: 11px; }
+  .app-footer .credits .accent { color: var(--mint); font-weight: 600; }
+  .app-footer .credits .sep { margin: 0 8px; opacity: 0.5; }
+
+  .conn-status {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 3px 10px;
+    font-family: var(--ff-mono); font-size: 11px;
+    border-radius: var(--r-pill);
+    border: 1px solid var(--mint-soft);
+    background: var(--bg-panel);
+    color: var(--mint);
+  }
+  .conn-status::before {
+    content: ""; width: 6px; height: 6px;
+    border-radius: 50%; background: currentColor;
+    animation: conn-pulse 1.6s ease-out infinite;
+  }
+
+  /* ========================================================================
+     NEW — Sessions table grammar
+     Extends .surface-table conventions: mono font, 12px, hover-row, num-right
+     ======================================================================== */
+  .sessions-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+    font-family: var(--ff-mono);
+    table-layout: fixed;
+  }
+
+  .sessions-table thead .data-row th {
+    text-align: left;
+    color: var(--ink-faint);
+    font-weight: 500;
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--line);
+    white-space: nowrap;
+    position: relative;
+  }
+  .sessions-table thead .data-row th.num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  .sessions-table thead .data-row th .help-host { vertical-align: -2px; margin-left: 4px; }
+
+  /* Tokens super-group row: 4 token 列 (Input/Output/Cache R/Cache C) を
+     1 ラベルにまとめる。peri tint で「カラム束」感を出す。 */
+  .sessions-table thead .group-row th {
+    padding: 4px 8px 5px;
+    border-bottom: 1px solid var(--line);
+    color: var(--peri);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    text-align: center;
+    background: rgba(138,166,255, 0.05);
+  }
+  .sessions-table thead .group-row th.empty {
+    background: transparent;
+    border-bottom: 1px solid transparent;
+  }
+  .sessions-table thead .group-row th .help-host { vertical-align: -1px; margin-left: 4px; }
+
+  .sessions-table tbody tr {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  }
+  .sessions-table tbody tr:hover {
+    background: rgba(255, 255, 255, 0.025);
+  }
+  .sessions-table tbody tr.is-active {
+    background: rgba(111,227,200, 0.04);
+  }
+  .sessions-table tbody tr.is-active:hover {
+    background: rgba(111,227,200, 0.07);
+  }
+  .sessions-table tbody tr.is-whale {
+    /* a soft peach left-edge for the headline-cost outlier */
+    box-shadow: inset 3px 0 0 var(--peach);
+  }
+  .sessions-table tbody tr:focus-visible {
+    outline: 2px solid var(--peri);
+    outline-offset: -1px;
+  }
+  .sessions-table td {
+    padding: 8px 8px;
+    color: var(--ink);
+    vertical-align: middle;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .sessions-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .sessions-table td.dim { color: var(--ink-faint); }
+
+  /* Specific column widths — keeps cost column wide enough for $X.XXXX bar
+     and gives Models/Tier room to wrap to 2 chips. table-layout: fixed makes
+     these load-bearing. Session ID column was dropped per maintainer feedback;
+     Project absorbs the freed space (project names are the longest text). */
+  .sessions-table col.col-project { width: 246px; }
+  .sessions-table col.col-start   { width: 88px; }
+  .sessions-table col.col-dur     { width: 84px; }
+  .sessions-table col.col-models  { width: 140px; }
+  .sessions-table col.col-tok-in  { width: 60px; }
+  .sessions-table col.col-tok-out { width: 60px; }
+  .sessions-table col.col-tok-cr  { width: 60px; }
+  .sessions-table col.col-tok-cc  { width: 60px; }
+  .sessions-table col.col-cost    { width: 88px; }
+  .sessions-table col.col-tier    { width: 134px; }
+  .sessions-table col.col-skills  { width: 52px; }
+  .sessions-table col.col-sub     { width: 56px; }
+
+  /* Project / time / duration — mono cells */
+  .sess-proj  { color: var(--ink); }
+  .sess-time  { color: var(--ink-soft); }
+  .sess-dur   { color: var(--ink-soft); }
+  .sess-tok-cache { color: var(--ink-faint); } /* cache reads/creates — dimmer */
+
+  /* ---- Models chips (extends .mode-chip vocabulary) ---- */
+  .model-chips {
+    display: flex; flex-wrap: wrap; gap: 3px;
+  }
+  .model-chip {
+    display: inline-flex; align-items: baseline;
+    gap: 4px;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 10px;
+    letter-spacing: 0.02em;
+    background: rgba(255,255,255,0.05);
+    color: var(--ink-faint);
+  }
+  .model-chip .ct {
+    font-weight: 600;
+    color: var(--ink);
+    font-size: 10px;
+  }
+  /* color per family — mint = sonnet (workhorse / default), coral = opus
+     (premium), peach = haiku (cheap). Mapping reuses dashboard's
+     accent palette so cost-class is implicit. */
+  .model-chip.m-sonnet { background: rgba(111,227,200,0.10); color: var(--mint); }
+  .model-chip.m-opus   { background: rgba(255,138,118,0.10); color: var(--coral); }
+  .model-chip.m-haiku  { background: rgba(255,201,122,0.10); color: var(--peach); }
+
+  /* ---- Service tier chips (peri = priority, ink-faint = standard, peach = batch) ----
+     Note: priority maps to peri (not mint) so it doesn't compete with the
+     "active session" mint-tinted row background. */
+  .tier-chips { display: flex; flex-wrap: wrap; gap: 3px; }
+  .tier-chip {
+    display: inline-flex; align-items: baseline; gap: 4px;
+    padding: 1px 6px; border-radius: 3px;
+    font-size: 10px; letter-spacing: 0.02em;
+    background: rgba(255,255,255,0.04);
+    color: var(--ink-faint);
+  }
+  .tier-chip .ct { font-weight: 600; color: var(--ink); font-size: 10px; }
+  .tier-chip.t-priority { background: rgba(138,166,255,0.10); color: var(--peri); }
+  .tier-chip.t-standard { background: rgba(255,255,255,0.04); color: var(--ink-soft); }
+  .tier-chip.t-batch    { background: rgba(255,201,122,0.10); color: var(--peach); }
+
+  /* ---- 進行中 pill — reuses conn-pulse ---- */
+  .live-pill {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 1px 7px;
+    border-radius: var(--r-pill);
+    background: rgba(111,227,200,0.10);
+    color: var(--mint);
+    font-size: 10px;
+    font-weight: 500;
+    border: 1px solid var(--mint-soft);
+  }
+  .live-pill::before {
+    content: "";
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: currentColor;
+    animation: conn-pulse 1.6s ease-out infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .live-pill::before { animation: none; }
+  }
+
+  /* ---- Cost cell — the headline metric.
+     Layout: a horizontal magnitude bar behind the dollar value, scaled to
+     the row's `--cost-pct` (set inline). The bar is a soft peach-to-coral
+     gradient so cheap rows have a tiny mint-soft sliver and the whale
+     visually anchors the table. Value sits left of the bar (right-aligned
+     numerically), bar fills remaining width. */
+  .cost-cell {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 5px;
+    padding: 4px 8px;
+  }
+  .cost-cell .cost-val {
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    color: var(--ink);
+    letter-spacing: -0.01em;
+    line-height: 1.1;
+  }
+  .cost-cell .cost-bar {
+    position: relative;
+    width: 64px;
+    height: 4px;
+    background: rgba(255,255,255,0.04);
+    border-radius: var(--r-pill);
+    overflow: hidden;
+  }
+  .cost-cell .cost-bar::after {
+    content: "";
+    position: absolute;
+    top: 0; bottom: 0; left: 0;
+    width: var(--cost-pct, 0%);
+    background: linear-gradient(90deg, var(--mint-soft) 0%, var(--peach) 60%, var(--coral) 100%);
+    border-radius: var(--r-pill);
+  }
+  /* whale row: cost-val takes a faint peach tint so it pops */
+  tr.is-whale .cost-cell .cost-val { color: var(--peach); }
+  /* very cheap rows: the bar is barely visible — dim the value too */
+  tr.is-cheap .cost-cell .cost-val { color: var(--ink-soft); font-weight: 500; }
+
+  /* ---- Skills / subagents counts — small inline pill if 0 */
+  .count-zero { color: var(--ink-faint); }
+  .count-pos { color: var(--ink); font-weight: 600; }
+
+  /* Responsive — at narrow viewports, hide cache-token columns first
+     (they're least important + their data lives in API anyway) and then
+     collapse Models / Tier chips to single most-frequent label. */
+  @media (max-width: 1280px) {
+    .sessions-table col.col-tok-cr,
+    .sessions-table col.col-tok-cc,
+    .sessions-table th.tok-cr, .sessions-table td.tok-cr,
+    .sessions-table th.tok-cc, .sessions-table td.tok-cc {
+      display: none;
+    }
+  }
+
+  /* ----- design-notes block at bottom ----- */
+  .design-notes {
+    margin-top: 28px;
+    padding: 16px 20px;
+    background: var(--bg-panel);
+    border: 1px dashed var(--line-strong);
+    border-radius: var(--r-md);
+    font-size: 12.5px;
+    color: var(--ink-soft);
+    line-height: 1.65;
+  }
+  .design-notes h3 {
+    margin: 0 0 8px;
+    font-size: 13px; font-weight: 600;
+    color: var(--peri);
+    letter-spacing: 0.02em;
+  }
+  .design-notes h4 {
+    margin: 14px 0 4px;
+    font-size: 12px; font-weight: 600;
+    color: var(--ink);
+  }
+  .design-notes ul { margin: 4px 0 0; padding-left: 18px; }
+  .design-notes li { margin-bottom: 3px; }
+  .design-notes code {
+    font-family: var(--ff-mono); font-size: 11px;
+    background: rgba(138,166,255,0.10);
+    color: var(--ink);
+    padding: 1px 5px; border-radius: 4px;
+  }
+  .design-notes .tag {
+    display: inline-block;
+    font-size: 9px; letter-spacing: 0.08em;
+    text-transform: uppercase; font-weight: 700;
+    color: var(--peach);
+    background: rgba(255,201,122,0.10);
+    padding: 1px 5px; border-radius: 3px;
+    margin-right: 6px;
+  }
+</style>
+</head>
+<body>
+  <div class="app">
+
+    <!-- =================================================================
+         PAGE NAV — 5 tabs now (Sessions added between Surface and the
+         heartbeat svg). Sessions tab is .active.
+         ================================================================= -->
+    <nav class="page-nav" role="navigation" aria-label="ダッシュボードページ">
+      <a href="#/"          data-page-link="overview">Overview</a>
+      <a href="#/patterns"  data-page-link="patterns">Patterns</a>
+      <a href="#/quality"   data-page-link="quality">Quality</a>
+      <a href="#/surface"   data-page-link="surface">Surface</a>
+      <a href="#/sessions"  data-page-link="sessions" class="active" aria-current="page">Sessions</a>
+      <svg class="heartbeat" viewBox="0 0 140 22" preserveAspectRatio="none" role="img" aria-label="ライブ更新インジケータ">
+        <polyline points="0,11 14,11 22,4 30,18 40,8 52,13 64,11 78,11 86,4 96,18 108,8 120,13 140,11"/>
+      </svg>
+    </nav>
+
+    <!-- =================================================================
+         SESSIONS PAGE
+         ================================================================= -->
+    <section data-page="sessions" class="page" aria-labelledby="page-sessions-title">
+
+      <header class="header">
+        <div>
+          <h1 id="page-sessions-title"><span class="accent">Sessions</span></h1>
+          <p class="lede">
+            最新 <span class="num">20</span> セッションのトークン消費・コスト・モデル構成を一覧表示。
+            実測トークン × モデル別単価で算出した推計コスト。
+          </p>
+        </div>
+        <div style="display:flex; align-items:center; gap:10px;">
+          <span class="conn-status" data-state="online">● live</span>
+        </div>
+      </header>
+
+      <!-- Proposed KPI strip (4 cards, lightweight, clearly tagged 提案).
+           並びは: 合計 (大局) → 中央値 / 平均 (隣接させて median ≪ mean = whale 偏り
+           を一目で見せる) → Cache 効率 (independent な効率指標)。 -->
+      <div class="kpi-row">
+        <div class="kpi">
+          <div class="k-row">
+            <span class="k">直近20件 合計コスト</span>
+          </div>
+          <div class="v">$12.4831</div>
+          <div class="s">うち opus セッション <em>$10.21</em> (82%)</div>
+        </div>
+        <div class="kpi c-coral">
+          <div class="k-row">
+            <span class="k">セッション中央値</span>
+          </div>
+          <div class="v sm">$0.2348</div>
+          <div class="s">最大 <em>$5.8210</em> · 最小 <em>$0.0011</em></div>
+        </div>
+        <div class="kpi c-peri">
+          <div class="k-row">
+            <span class="k">セッション平均</span>
+          </div>
+          <div class="v sm">$0.6242</div>
+          <div class="s">中央値の <em>2.7×</em> · 上位 1 件で <em>47%</em> 寄与</div>
+        </div>
+        <div class="kpi c-peach">
+          <div class="k-row">
+            <span class="k">Cache 効率</span>
+          </div>
+          <div class="v sm">78%</div>
+          <div class="s">cache_read <em>34.8M</em> / 入力合計 <em>44.6M</em> tokens</div>
+        </div>
+      </div>
+
+      <!-- =================================================================
+           Main panel — Sessions table
+           ================================================================= -->
+      <div class="panel">
+        <div class="panel-head c-mint">
+          <div class="ttl-wrap">
+            <span class="ttl"><span class="dot"></span>セッション一覧 (直近 20 件)</span>
+            <span class="help-host">
+              <button class="help-btn" type="button" aria-label="説明を表示" aria-expanded="false" data-help-id="hp-sessions">?</button>
+              <span class="help-pop" id="hp-sessions" role="tooltip" data-place="right">
+                <span class="pop-ttl">セッション一覧</span>
+                <span class="pop-body">
+                  <code>session_start</code> イベントを起点に、同 <code>session_id</code> 内の
+                  <code>llm_response</code> から model 別 token 数 / service_tier を集計。
+                  開始時刻降順で 20 件。<code>ended_at</code> が未観測のものは
+                  「進行中」として最上部に表示する。
+                </span>
+              </span>
+            </span>
+          </div>
+          <span class="sub">有効セッション 20 · 7 projects · live · last update 09:17:42</span>
+        </div>
+
+        <div class="panel-body" style="padding: 0 12px 4px;">
+          <table class="sessions-table" id="sessionsTable">
+            <colgroup>
+              <col class="col-start">
+              <col class="col-dur">
+              <col class="col-project">
+              <col class="col-models">
+              <col class="col-tok-in">
+              <col class="col-tok-out">
+              <col class="col-tok-cr">
+              <col class="col-tok-cc">
+              <col class="col-cost">
+              <col class="col-tier">
+              <col class="col-skills">
+              <col class="col-sub">
+            </colgroup>
+            <thead>
+              <!-- Token 4 列を束ねる super-group 行。peri tint で「ここから先 4 列は
+                   token 種別ブレイクダウン」と視認させる。help-pop は super-label 側に
+                   付け、Input/Output/Cache R/Cache C 個別ヘッダはマーカーフリーのまま
+                   numeric 揃えに集中させる。 -->
+              <tr class="group-row">
+                <th class="empty" colspan="4"></th>
+                <th colspan="4">
+                  Tokens
+                  <span class="help-host">
+                    <button class="help-btn" type="button" aria-label="トークン種別の説明" aria-expanded="false" data-help-id="hp-tokens">?</button>
+                    <span class="help-pop" id="hp-tokens" role="tooltip" data-place="bottom">
+                      <span class="pop-ttl">トークン種別</span>
+                      <span class="pop-body">
+                        <code>Input</code>: ユーザープロンプト + システムプロンプト + tool 結果として送られた token 数 (cache 経由を除く)。<br>
+                        <code>Output</code>: assistant が生成した token 数 (一番高い単価)。<br>
+                        <code>Cache R</code> (cache read): prompt cache から読み出した token 数。通常 input の 1/10 程度の単価で、長い会話・大きな CLAUDE.md ほどここが膨らむ。<br>
+                        <code>Cache C</code> (cache creation): prompt cache に書き込まれた token 数。通常 input の 1.25 倍の単価。同じ context が再利用されるほど償却されてお得になる。
+                      </span>
+                    </span>
+                  </span>
+                </th>
+                <th class="empty" colspan="4"></th>
+              </tr>
+              <tr class="data-row">
+                <th>開始時刻</th>
+                <th>期間</th>
+                <th>Project</th>
+                <th>Models</th>
+                <th class="num">Input</th>
+                <th class="num">Output</th>
+                <th class="num tok-cr" style="color:var(--ink-faint);">Cache R</th>
+                <th class="num tok-cc" style="color:var(--ink-faint);">Cache C</th>
+                <th class="num">
+                  推計コスト
+                  <span class="help-host">
+                    <button class="help-btn" type="button" aria-label="コストの説明" aria-expanded="false" data-help-id="hp-cost">?</button>
+                    <span class="help-pop" id="hp-cost" role="tooltip" data-place="left">
+                      <span class="pop-ttl">推計コスト</span>
+                      <span class="pop-body">
+                        実測 token × モデル別公開価格表の掛け算による<strong>参考値</strong>。
+                        Anthropic が価格改定すると過去値も再計算で動く。
+                        cache create / read / input / output で単価が異なるため、
+                        token 4 種を分けて積算している。
+                      </span>
+                    </span>
+                  </span>
+                </th>
+                <th>
+                  Service tier
+                  <span class="help-host">
+                    <button class="help-btn" type="button" aria-label="Service tier の説明" aria-expanded="false" data-help-id="hp-tier">?</button>
+                    <span class="help-pop" id="hp-tier" role="tooltip" data-place="left">
+                      <span class="pop-ttl">Service tier</span>
+                      <span class="pop-body">
+                        <code>priority</code> / <code>standard</code> / <code>batch</code> は Anthropic API 側で記録される料金ティア。<br>
+                        <code>priority</code>: Priority Tier (有料の優先度確約枠)。レイテンシ・容量保証の代わりに割増料金。<br>
+                        <code>standard</code>: 通常リクエスト (Claude Code のデフォルト)。<br>
+                        <code>batch</code>: Batch API 経由 (50% 割引・最大 24h で完了)。Claude Code では稀。<br>
+                        1 session 内で混在し得る (<code>/model</code> 切替・再接続で経路が変わる)。
+                      </span>
+                    </span>
+                  </span>
+                </th>
+                <th class="num">Skills</th>
+                <th class="num">Subagents</th>
+              </tr>
+            </thead>
+            <tbody>
+              <!-- ============== ACTIVE SESSIONS (3) ============== -->
+
+              <!-- ROW: active opus-heavy whale-in-progress -->
+              <tr class="is-active is-whale" tabindex="0">
+                <td class="sess-time">05/06 09:14</td>
+                <td><span class="live-pill">進行中</span></td>
+                <td class="sess-proj">claude-transcript-analyzer</td>
+                <td>
+                  <div class="model-chips">
+                    <span class="model-chip m-opus">opus <span class="ct">8</span></span>
+                    <span class="model-chip m-sonnet">sonnet <span class="ct">2</span></span>
+                  </div>
+                </td>
+                <td class="num">2.1M</td>
+                <td class="num">38.2k</td>
+                <td class="num tok-cr sess-tok-cache">14.8M</td>
+                <td class="num tok-cc sess-tok-cache">412k</td>
+                <td>
+                  <div class="cost-cell" style="--cost-pct: 71%;">
+                    <span class="cost-val">$3.2104</span>
+                    <span class="cost-bar"></span>
+                  </div>
+                </td>
+                <td>
+                  <div class="tier-chips">
+                    <span class="tier-chip t-priority">priority <span class="ct">10</span></span>
+                  </div>
+                </td>
+                <td class="num count-pos">7</td>
+                <td class="num count-pos">3</td>
+              </tr>
+
+              <!-- ROW: active short sonnet -->
+              <tr class="is-active" tabindex="0">
+                <td class="sess-time">05/06 08:51</td>
+                <td><span class="live-pill">進行中</span></td>
+                <td class="sess-proj">personal-website</td>
+                <td>
+                  <div class="model-chips">
+                    <span class="model-chip m-sonnet">sonnet <span class="ct">4</span></span>
+                  </div>
+                </td>
+                <td class="num">182k</td>
+                <td class="num">6.3k</td>
+                <td class="num tok-cr sess-tok-cache">920k</td>
+                <td class="num tok-cc sess-tok-cache">48k</td>
+                <td>
+                  <div class="cost-cell" style="--cost-pct: 9%;">
+                    <span class="cost-val">$0.1842</span>
+                    <span class="cost-bar"></span>
+                  </div>
+                </td>
+                <td>
+                  <div class="tier-chips">
+                    <span class="tier-chip t-standard">standard <span class="ct">4</span></span>
+                  </div>
+                </td>
+                <td class="num count-pos">2</td>
+                <td class="num count-zero">0</td>
+              </tr>
+
+              <!-- ROW: active mixed-model investigation -->
+              <tr class="is-active" tabindex="0">
+                <td class="sess-time">05/06 07:32</td>
+                <td><span class="live-pill">進行中</span></td>
+                <td class="sess-proj">work-rails-api</td>
+                <td>
+                  <div class="model-chips">
+                    <span class="model-chip m-opus">opus <span class="ct">2</span></span>
+                    <span class="model-chip m-sonnet">sonnet <span class="ct">5</span></span>
+                    <span class="model-chip m-haiku">haiku <span class="ct">3</span></span>
+                  </div>
+                </td>
+                <td class="num">621k</td>
+                <td class="num">14.7k</td>
+                <td class="num tok-cr sess-tok-cache">3.8M</td>
+                <td class="num tok-cc sess-tok-cache">126k</td>
+                <td>
+                  <div class="cost-cell" style="--cost-pct: 19%;">
+                    <span class="cost-val">$0.7621</span>
+                    <span class="cost-bar"></span>
+                  </div>
+                </td>
+                <td>
+                  <div class="tier-chips">
+                    <span class="tier-chip t-priority">priority <span class="ct">3</span></span>
+                    <span class="tier-chip t-standard">standard <span class="ct">7</span></span>
+                  </div>
+                </td>
+                <td class="num count-pos">5</td>
+                <td class="num count-pos">2</td>
+              </tr>
+
+              <!-- ============== COMPLETED SESSIONS ============== -->
+
+              <!-- ROW: WHALE — closed long opus session -->
+              <tr class="is-whale" tabindex="0">
+                <td class="sess-time">05/05 21:08</td>
+                <td class="sess-dur">4h 47m</td>
+                <td class="sess-proj">claude-transcript-analyzer</td>
+                <td>
+                  <div class="model-chips">
+                    <span class="model-chip m-opus">opus <span class="ct">23</span></span>
+                    <span class="model-chip m-sonnet">sonnet <span class="ct">6</span></span>
+                  </div>
+                </td>
+                <td class="num">5.4M</td>
+                <td class="num">141.8k</td>
+                <td class="num tok-cr sess-tok-cache">38.2M</td>
+                <td class="num tok-cc sess-tok-cache">1.1M</td>
+                <td>
+                  <div class="cost-cell" style="--cost-pct: 100%;">
+                    <span class="cost-val">$5.8210</span>
+                    <span class="cost-bar"></span>
+                  </div>
+                </td>
+                <td>
+                  <div class="tier-chips">
+                    <span class="tier-chip t-priority">priority <span class="ct">12</span></span>
+                    <span class="tier-chip t-standard">standard <span class="ct">17</span></span>
+                  </div>
+                </td>
+                <td class="num count-pos">14</td>
+                <td class="num count-pos">8</td>
+              </tr>
+
+              <!-- ROW: normal sonnet medium -->
+              <tr tabindex="0">
+                <td class="sess-time">05/05 18:42</td>
+                <td class="sess-dur">2h 14m</td>
+                <td class="sess-proj">experiment-rag-eval</td>
+                <td>
+                  <div class="model-chips">
+                    <span class="model-chip m-sonnet">sonnet <span class="ct">9</span></span>
+                  </div>
+                </td>
+                <td class="num">1.2M</td>
+                <td class="num">28.4k</td>
+                <td class="num tok-cr sess-tok-cache">8.4M</td>
+                <td class="num tok-cc sess-tok-cache">241k</td>
+                <td>
+                  <div class="cost-cell" style="--cost-pct: 24%;">
+                    <span class="cost-val">$1.0923</span>
+                    <span class="cost-bar"></span>
+                  </div>
+                </td>
+                <td>
+                  <div class="tier-chips">
+                    <span class="tier-chip t-standard">standard <span class="ct">9</span></span>
+                  </div>
+                </td>
+                <td class="num count-pos">6</td>
+                <td class="num count-pos">2</td>
+              </tr>
+
+              <!-- ROW: normal sonnet medium with priority -->
+              <tr tabindex="0">
+                <td class="sess-time">05/05 16:11</td>
+                <td class="sess-dur">1h 38m</td>
+                <td class="sess-proj">work-rails-api</td>
+                <td>
+                  <div class="model-chips">
+                    <span class="model-chip m-sonnet">sonnet <span class="ct">7</span></span>
+                  </div>
+                </td>
+                <td class="num">844k</td>
+                <td class="num">19.1k</td>
+                <td class="num tok-cr sess-tok-cache">5.2M</td>
+                <td class="num tok-cc sess-tok-cache">158k</td>
+                <td>
+                  <div class="cost-cell" style="--cost-pct: 17%;">
+                    <span class="cost-val">$0.7184</span>
+                    <span class="cost-bar"></span>
+                  </div>
+                </td>
+                <td>
+                  <div class="tier-chips">
+                    <span class="tier-chip t-priority">priority <span class="ct">5</span></span>
+                    <span class="tier-chip t-standard">standard <span class="ct">2</span></span>
+                  </div>
+                </td>
+                <td class="num count-pos">4</td>
+                <td class="num count-pos">1</td>
+              </tr>
+
+              <!-- ROW: normal sonnet -->
+              <tr tabindex="0">
+                <td class="sess-time">05/05 14:55</td>
+                <td class="sess-dur">52m</td>
+                <td class="sess-proj">claude-transcript-analyzer</td>
+                <td>
+                  <div class="model-chips">
+                    <span class="model-chip m-sonnet">sonnet <span class="ct">5</span></span>
+                  </div>
+                </td>
+                <td class="num">412k</td>
+                <td class="num">9.2k</td>
+                <td class="num tok-cr sess-tok-cache">2.6M</td>
+                <td class="num tok-cc sess-tok-cache">81k</td>
+                <td>
+                  <div class="cost-cell" style="--cost-pct: 8%;">
+                    <span class="cost-val">$0.3412</span>
+                    <span class="cost-bar"></span>
+                  </div>
+                </td>
+                <td>
+                  <div class="tier-chips">
+                    <span class="tier-chip t-standard">standard <span class="ct">5</span></span>
+                  </div>
+                </td>
+                <td class="num count-pos">3</td>
+                <td class="num count-zero">0</td>
+              </tr>
+
+              <!-- ROW: normal sonnet -->
+              <tr tabindex="0">
+                <td class="sess-time">05/05 12:21</td>
+                <td class="sess-dur">41m</td>
+                <td class="sess-proj">dotfiles</td>
+                <td>
+                  <div class="model-chips">
+                    <span class="model-chip m-sonnet">sonnet <span class="ct">3</span></span>
+                  </div>
+                </td>
+                <td class="num">238k</td>
+                <td class="num">5.4k</td>
+                <td class="num tok-cr sess-tok-cache">1.4M</td>
+                <td class="num tok-cc sess-tok-cache">52k</td>
+                <td>
+                  <div class="cost-cell" style="--cost-pct: 5%;">
+                    <span class="cost-val">$0.1923</span>
+                    <span class="cost-bar"></span>
+                  </div>
+                </td>
+                <td>
+                  <div class="tier-chips">
+                    <span class="tier-chip t-standard">standard <span class="ct">3</span></span>
+                  </div>
+                </td>
+                <td class="num count-pos">2</td>
+                <td class="num count-zero">0</td>
+              </tr>
+
+              <!-- ROW: cheap short sonnet -->
+              <tr class="is-cheap" tabindex="0">
+                <td class="sess-time">05/05 11:44</td>
+                <td class="sess-dur">5m</td>
+                <td class="sess-proj">personal-website</td>
+                <td>
+                  <div class="model-chips">
+                    <span class="model-chip m-sonnet">sonnet <span class="ct">1</span></span>
+                  </div>
+                </td>
+                <td class="num">18k</td>
+                <td class="num">412</td>
+                <td class="num tok-cr sess-tok-cache">94k</td>
+                <td class="num tok-cc sess-tok-cache">3.2k</td>
+                <td>
+                  <div class="cost-cell" style="--cost-pct: 0.5%;">
+                    <span class="cost-val">$0.0084</span>
+                    <span class="cost-bar"></span>
+                  </div>
+                </td>
+                <td>
+                  <div class="tier-chips">
+                    <span class="tier-chip t-standard">standard <span class="ct">1</span></span>
+                  </div>
+                </td>
+                <td class="num count-pos">1</td>
+                <td class="num count-zero">0</td>
+              </tr>
+
+              <!-- ROW: HAIKU-only ultra cheap -->
+              <tr class="is-cheap" tabindex="0">
+                <td class="sess-time">05/05 10:08</td>
+                <td class="sess-dur">12m</td>
+                <td class="sess-proj">experiment-rag-eval</td>
+                <td>
+                  <div class="model-chips">
+                    <span class="model-chip m-haiku">haiku <span class="ct">8</span></span>
+                  </div>
+                </td>
+                <td class="num">96k</td>
+                <td class="num">2.1k</td>
+                <td class="num tok-cr sess-tok-cache">0</td>
+                <td class="num tok-cc sess-tok-cache">0</td>
+                <td>
+                  <div class="cost-cell" style="--cost-pct: 0.02%;">
+                    <span class="cost-val">$0.0011</span>
+                    <span class="cost-bar"></span>
+                  </div>
+                </td>
+                <td>
+                  <div class="tier-chips">
+                    <span class="tier-chip t-batch">batch <span class="ct">8</span></span>
+                  </div>
+                </td>
+                <td class="num count-zero">0</td>
+                <td class="num count-zero">0</td>
+              </tr>
+
+              <!-- ROW: normal sonnet -->
+              <tr tabindex="0">
+                <td class="sess-time">05/04 22:18</td>
+                <td class="sess-dur">1h 22m</td>
+                <td class="sess-proj">claude-transcript-analyzer</td>
+                <td>
+                  <div class="model-chips">
+                    <span class="model-chip m-sonnet">sonnet <span class="ct">6</span></span>
+                  </div>
+                </td>
+                <td class="num">658k</td>
+                <td class="num">14.8k</td>
+                <td class="num tok-cr sess-tok-cache">4.1M</td>
+                <td class="num tok-cc sess-tok-cache">128k</td>
+                <td>
+                  <div class="cost-cell" style="--cost-pct: 13%;">
+                    <span class="cost-val">$0.5421</span>
+                    <span class="cost-bar"></span>
+                  </div>
+                </td>
+                <td>
+                  <div class="tier-chips">
+                    <span class="tier-chip t-standard">standard <span class="ct">6</span></span>
+                  </div>
+                </td>
+                <td class="num count-pos">3</td>
+                <td class="num count-pos">1</td>
+              </tr>
+
+              <!-- ROW: opus medium -->
+              <tr tabindex="0">
+                <td class="sess-time">05/04 19:42</td>
+                <td class="sess-dur">2h 03m</td>
+                <td class="sess-proj">work-rails-api</td>
+                <td>
+                  <div class="model-chips">
+                    <span class="model-chip m-opus">opus <span class="ct">4</span></span>
+                  </div>
+                </td>
+                <td class="num">1.8M</td>
+                <td class="num">29.4k</td>
+                <td class="num tok-cr sess-tok-cache">9.6M</td>
+                <td class="num tok-cc sess-tok-cache">288k</td>
+                <td>
+                  <div class="cost-cell" style="--cost-pct: 36%;">
+                    <span class="cost-val">$1.4823</span>
+                    <span class="cost-bar"></span>
+                  </div>
+                </td>
+                <td>
+                  <div class="tier-chips">
+                    <span class="tier-chip t-priority">priority <span class="ct">4</span></span>
+                  </div>
+                </td>
+                <td class="num count-pos">5</td>
+                <td class="num count-pos">2</td>
+              </tr>
+
+              <!-- ROW: short cheap haiku batch -->
+              <tr class="is-cheap" tabindex="0">
+                <td class="sess-time">05/04 17:08</td>
+                <td class="sess-dur">8m</td>
+                <td class="sess-proj">dotfiles</td>
+                <td>
+                  <div class="model-chips">
+                    <span class="model-chip m-haiku">haiku <span class="ct">3</span></span>
+                  </div>
+                </td>
+                <td class="num">42k</td>
+                <td class="num">980</td>
+                <td class="num tok-cr sess-tok-cache">0</td>
+                <td class="num tok-cc sess-tok-cache">0</td>
+                <td>
+                  <div class="cost-cell" style="--cost-pct: 0.05%;">
+                    <span class="cost-val">$0.0027</span>
+                    <span class="cost-bar"></span>
+                  </div>
+                </td>
+                <td>
+                  <div class="tier-chips">
+                    <span class="tier-chip t-batch">batch <span class="ct">3</span></span>
+                  </div>
+                </td>
+                <td class="num count-zero">0</td>
+                <td class="num count-zero">0</td>
+              </tr>
+
+              <!-- ROW: normal sonnet -->
+              <tr tabindex="0">
+                <td class="sess-time">05/04 14:33</td>
+                <td class="sess-dur">1h 11m</td>
+                <td class="sess-proj">claude-transcript-analyzer</td>
+                <td>
+                  <div class="model-chips">
+                    <span class="model-chip m-sonnet">sonnet <span class="ct">5</span></span>
+                  </div>
+                </td>
+                <td class="num">534k</td>
+                <td class="num">11.2k</td>
+                <td class="num tok-cr sess-tok-cache">3.4M</td>
+                <td class="num tok-cc sess-tok-cache">102k</td>
+                <td>
+                  <div class="cost-cell" style="--cost-pct: 11%;">
+                    <span class="cost-val">$0.4421</span>
+                    <span class="cost-bar"></span>
+                  </div>
+                </td>
+                <td>
+                  <div class="tier-chips">
+                    <span class="tier-chip t-standard">standard <span class="ct">5</span></span>
+                  </div>
+                </td>
+                <td class="num count-pos">2</td>
+                <td class="num count-zero">0</td>
+              </tr>
+
+              <!-- ROW: short sonnet -->
+              <tr tabindex="0">
+                <td class="sess-time">05/04 11:02</td>
+                <td class="sess-dur">28m</td>
+                <td class="sess-proj">experiment-rag-eval</td>
+                <td>
+                  <div class="model-chips">
+                    <span class="model-chip m-sonnet">sonnet <span class="ct">2</span></span>
+                  </div>
+                </td>
+                <td class="num">128k</td>
+                <td class="num">2.9k</td>
+                <td class="num tok-cr sess-tok-cache">740k</td>
+                <td class="num tok-cc sess-tok-cache">28k</td>
+                <td>
+                  <div class="cost-cell" style="--cost-pct: 3%;">
+                    <span class="cost-val">$0.1023</span>
+                    <span class="cost-bar"></span>
+                  </div>
+                </td>
+                <td>
+                  <div class="tier-chips">
+                    <span class="tier-chip t-standard">standard <span class="ct">2</span></span>
+                  </div>
+                </td>
+                <td class="num count-pos">1</td>
+                <td class="num count-zero">0</td>
+              </tr>
+
+              <!-- ROW: opus medium-cheap -->
+              <tr tabindex="0">
+                <td class="sess-time">05/03 23:14</td>
+                <td class="sess-dur">38m</td>
+                <td class="sess-proj">claude-transcript-analyzer</td>
+                <td>
+                  <div class="model-chips">
+                    <span class="model-chip m-opus">opus <span class="ct">3</span></span>
+                    <span class="model-chip m-sonnet">sonnet <span class="ct">1</span></span>
+                  </div>
+                </td>
+                <td class="num">412k</td>
+                <td class="num">8.7k</td>
+                <td class="num tok-cr sess-tok-cache">2.1M</td>
+                <td class="num tok-cc sess-tok-cache">68k</td>
+                <td>
+                  <div class="cost-cell" style="--cost-pct: 8%;">
+                    <span class="cost-val">$0.3284</span>
+                    <span class="cost-bar"></span>
+                  </div>
+                </td>
+                <td>
+                  <div class="tier-chips">
+                    <span class="tier-chip t-priority">priority <span class="ct">2</span></span>
+                    <span class="tier-chip t-standard">standard <span class="ct">2</span></span>
+                  </div>
+                </td>
+                <td class="num count-pos">3</td>
+                <td class="num count-pos">1</td>
+              </tr>
+
+              <!-- ROW: normal sonnet -->
+              <tr tabindex="0">
+                <td class="sess-time">05/03 19:51</td>
+                <td class="sess-dur">1h 47m</td>
+                <td class="sess-proj">work-rails-api</td>
+                <td>
+                  <div class="model-chips">
+                    <span class="model-chip m-sonnet">sonnet <span class="ct">8</span></span>
+                  </div>
+                </td>
+                <td class="num">912k</td>
+                <td class="num">19.4k</td>
+                <td class="num tok-cr sess-tok-cache">5.8M</td>
+                <td class="num tok-cc sess-tok-cache">172k</td>
+                <td>
+                  <div class="cost-cell" style="--cost-pct: 14%;">
+                    <span class="cost-val">$0.6112</span>
+                    <span class="cost-bar"></span>
+                  </div>
+                </td>
+                <td>
+                  <div class="tier-chips">
+                    <span class="tier-chip t-standard">standard <span class="ct">8</span></span>
+                  </div>
+                </td>
+                <td class="num count-pos">4</td>
+                <td class="num count-pos">2</td>
+              </tr>
+
+              <!-- ROW: cheap sonnet -->
+              <tr class="is-cheap" tabindex="0">
+                <td class="sess-time">05/03 16:08</td>
+                <td class="sess-dur">14m</td>
+                <td class="sess-proj">personal-website</td>
+                <td>
+                  <div class="model-chips">
+                    <span class="model-chip m-sonnet">sonnet <span class="ct">2</span></span>
+                  </div>
+                </td>
+                <td class="num">82k</td>
+                <td class="num">1.8k</td>
+                <td class="num tok-cr sess-tok-cache">412k</td>
+                <td class="num tok-cc sess-tok-cache">15k</td>
+                <td>
+                  <div class="cost-cell" style="--cost-pct: 1.5%;">
+                    <span class="cost-val">$0.0612</span>
+                    <span class="cost-bar"></span>
+                  </div>
+                </td>
+                <td>
+                  <div class="tier-chips">
+                    <span class="tier-chip t-standard">standard <span class="ct">2</span></span>
+                  </div>
+                </td>
+                <td class="num count-pos">1</td>
+                <td class="num count-zero">0</td>
+              </tr>
+
+              <!-- ROW: opus heavy with priority -->
+              <tr tabindex="0">
+                <td class="sess-time">05/03 11:22</td>
+                <td class="sess-dur">3h 02m</td>
+                <td class="sess-proj">claude-transcript-analyzer</td>
+                <td>
+                  <div class="model-chips">
+                    <span class="model-chip m-opus">opus <span class="ct">12</span></span>
+                    <span class="model-chip m-sonnet">sonnet <span class="ct">3</span></span>
+                  </div>
+                </td>
+                <td class="num">3.1M</td>
+                <td class="num">62.4k</td>
+                <td class="num tok-cr sess-tok-cache">21.8M</td>
+                <td class="num tok-cc sess-tok-cache">612k</td>
+                <td>
+                  <div class="cost-cell" style="--cost-pct: 56%;">
+                    <span class="cost-val">$2.4189</span>
+                    <span class="cost-bar"></span>
+                  </div>
+                </td>
+                <td>
+                  <div class="tier-chips">
+                    <span class="tier-chip t-priority">priority <span class="ct">8</span></span>
+                    <span class="tier-chip t-standard">standard <span class="ct">7</span></span>
+                  </div>
+                </td>
+                <td class="num count-pos">9</td>
+                <td class="num count-pos">4</td>
+              </tr>
+
+              <!-- ROW: short sonnet -->
+              <tr tabindex="0">
+                <td class="sess-time">05/03 09:14</td>
+                <td class="sess-dur">22m</td>
+                <td class="sess-proj">dotfiles</td>
+                <td>
+                  <div class="model-chips">
+                    <span class="model-chip m-sonnet">sonnet <span class="ct">2</span></span>
+                  </div>
+                </td>
+                <td class="num">98k</td>
+                <td class="num">2.2k</td>
+                <td class="num tok-cr sess-tok-cache">512k</td>
+                <td class="num tok-cc sess-tok-cache">19k</td>
+                <td>
+                  <div class="cost-cell" style="--cost-pct: 1.8%;">
+                    <span class="cost-val">$0.0729</span>
+                    <span class="cost-bar"></span>
+                  </div>
+                </td>
+                <td>
+                  <div class="tier-chips">
+                    <span class="tier-chip t-standard">standard <span class="ct">2</span></span>
+                  </div>
+                </td>
+                <td class="num count-pos">1</td>
+                <td class="num count-zero">0</td>
+              </tr>
+
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- =================================================================
+           Design notes (visible to designer + maintainer; remove before ship)
+           ================================================================= -->
+      <aside class="design-notes" aria-label="design notes">
+        <h3>Design notes <span style="color:var(--ink-faint);font-weight:400;font-size:11px;">— remove from production</span></h3>
+
+        <h4>Typography &amp; spacing</h4>
+        <ul>
+          <li><code>font-family</code> on the table is <code>--ff-mono</code> at <code>12px</code> — exactly matching <code>.surface-table</code>. The chips drop to <code>10px</code> so 2 chips fit in the same vertical rhythm as a single mono number.</li>
+          <li>Row padding is <code>8px</code> vertical (vs. <code>5px</code> on Surface) — Sessions rows carry more chips, so the extra breathing room prevents chip stacks from feeling cramped. The cost cell uses inner <code>4px 8px</code> so the magnitude bar has its own micro-padding.</li>
+          <li><code>letter-spacing: -0.01em</code> on the cost value is the same trick used by KPI <code>.v</code> — tightens the dollar number so <code>$5.8210</code> reads as one glyph cluster.</li>
+        </ul>
+
+        <h4>Why this column layout</h4>
+        <ul>
+          <li><strong>Token columns documented via help-pop, not super-header.</strong> Earlier draft used a visible <code>Tokens</code> column-group label in peri above the 4 numeric columns. Per review, replaced with a single <code>?</code> help-pop on the <code>Input</code> header documenting all 4 token types (input / output / cache read / cache create) and their relative pricing. The popup carries far more useful information than the super-label could (cache R is ~1/10 input price, cache C is 1.25× input, etc.) and matches the existing <code>.help-host/.help-btn/.help-pop</code> grammar already used elsewhere on the dashboard. Cache R/Cache C are still dimmed (<code>--ink-faint</code>) at the column level so they read as supporting evidence rather than headline metrics.</li>
+          <li><strong>Service tier also gets a help-pop.</strong> <code>priority / standard / batch</code> are not self-explanatory — a user seeing all 3 chips on the same row needs to know that priority means a paid latency-guarantee tier (Anthropic-side billing concept, mixable per-message via <code>/model</code> switch / reconnection), not a Claude Code preference.</li>
+          <li><strong>Session ID column dropped per maintainer feedback.</strong> The 8-char shortened ID was rarely actionable in the row-level ledger view: <code>project + 開始時刻</code> already uniquely identifies a session at a glance, and freed width goes to the <code>Project</code> column where long names actually need it. Drill-down to per-message timeline (where the full <code>session_id</code> would be shown in a header) is a future feature.</li>
+          <li><strong>Cost gets the headline treatment.</strong> Inline magnitude bar with <code>--cost-pct</code> custom-property scaling (set per row at render time as <code>max(row_cost) / row_cost</code>). The whale row visually anchors the table at <code>100%</code>; everything else is a fraction. Whale + cheap rows get tinted values (peach / ink-soft) so cost-class is recognizable in &lt;200ms.</li>
+          <li><strong>Models / Tier are chip-stacks, not strings.</strong> Color-coding is intentional and reuses the dashboard's accent palette so cost-class is doubly encoded: opus reads as coral (premium) without needing to know the price table, sonnet reads as mint (workhorse), haiku as peach (cheap-and-fast). Tier reuses peri (priority) / ink-soft (standard) / peach (batch) — peri was chosen for priority instead of mint to avoid color-clash with the active-row mint background tint.</li>
+          <li><strong>進行中 pill</strong> reuses <code>conn-pulse</code> (already in <code>10_components.css</code>) so live sessions inherit the same heartbeat motif as the connection badge. Active rows also get a subtle mint-tinted background (<code>rgba(111,227,200,0.04)</code>) so they pop without needing to be visually heavy.</li>
+        </ul>
+
+        <h4>What was sacrificed</h4>
+        <ul>
+          <li><strong>Per-message granularity.</strong> The chip <code>opus (8)</code> shows count of <code>llm_response</code> events but not their individual cost contribution. Click-through to a per-session detail panel is the natural next step (out of scope for this mock).</li>
+          <li><strong>Sortability indicator.</strong> No header sort glyphs in this draft — the spec says "sorted by start time descending" only. If the maintainer wants ad-hoc sort by cost / duration / token-count, add <code>aria-sort</code> + a small chevron in column headers. Cheap to add later.</li>
+          <li><strong>Filter UI.</strong> No project-filter dropdown / model-filter chips above the table. The Period toggle pattern from Overview/Patterns could be reused for "今日 / 7d / 30d" but that pushes scope past Issue #103. For 20 rows, scrolling is faster than filtering anyway.</li>
+          <li><strong>モデル使用比率のドーナツ/円グラフ</strong>は、本ページではなく <strong>Overview ページの「モデル分布」パネル</strong> (既存「プロジェクト分布」横の stacked bar grammar を流用) として別 Issue で追加予定。Sessions ページは「1 行 = 1 session の台帳」が役割なので、集約系のチャートは持たない。</li>
+        </ul>
+
+        <h4>What changes at narrow viewport</h4>
+        <ul>
+          <li>At <code>&lt;1280px</code>, the two cache-token columns (<code>Cache R</code> / <code>Cache C</code>) hide via <code>display: none</code> on <code>col</code> and <code>th/td</code>. The full numbers stay in the API response, just not in the visual table — they're recoverable via row hover tooltip (proposal: data-tip pattern from <code>20_help_tooltip.css</code>, not implemented in this mock).</li>
+          <li>At <code>&lt;1080px</code>, recommend collapsing chip stacks to "most-frequent label only" (e.g. <code>opus 8</code> instead of <code>opus 8 / sonnet 2</code>) and showing the secondary chip in a hover tooltip. Not implemented — would need JS.</li>
+          <li>At <code>&lt;720px</code>, the table becomes scrollable horizontally with a sticky <code>Session</code> + <code>Project</code> column-pair. CSS-only via <code>position: sticky; left: 0</code> on the first 2 cells. Also not implemented in this mock.</li>
+        </ul>
+
+        <h4>Class additions vs reuse summary</h4>
+        <ul>
+          <li><span class="tag">REUSED</span> <code>.panel</code>, <code>.panel-head</code>, <code>.help-host/.help-btn/.help-pop</code>, <code>.kpi/.kpi-row</code>, <code>.page-nav</code>, <code>conn-pulse</code> keyframes</li>
+          <li><span class="tag">EXTENDED</span> <code>.surface-table</code> grammar (mono / 12px / num-right / hover-row) — namespaced under <code>.sessions-table</code> because of the <code>colgroup</code> + group-header row</li>
+          <li><span class="tag">NEW</span> <code>.model-chip.m-{opus,sonnet,haiku}</code> — mirrors <code>.mode-chip</code> family</li>
+          <li><span class="tag">NEW</span> <code>.tier-chip.t-{priority,standard,batch}</code> — same pattern</li>
+          <li><span class="tag">NEW</span> <code>.cost-cell</code> + <code>.cost-bar</code> — inline magnitude visualisation, scales via <code>--cost-pct</code> CSS var set per-row by aggregator</li>
+          <li><span class="tag">NEW</span> <code>.live-pill</code> — wraps <code>conn-pulse</code> in a pill shape for the 進行中 marker</li>
+        </ul>
+
+        <h4>Open questions for the maintainer</h4>
+        <ul>
+          <li>Whale-row peach left-edge (3px <code>inset box-shadow</code>) — too loud? Could be dialled down to a 1px border instead, or removed entirely if the cost-bar magnitude is sufficient.</li>
+          <li>Cost bar gradient goes <code>mint-soft → peach → coral</code>. An alternative is a single solid <code>peri</code> bar (matches the help-pop trigger color). The gradient encodes "cheap → expensive" as a bonus; flat peri reads as "neutral magnitude bar". Either works; kept the gradient for now because the headline-cost framing in the spec asks for visual prominence.</li>
+          <li>Row tinting for active sessions — currently <code>rgba(111,227,200, 0.04)</code> (very subtle). At very narrow viewports / on glossy displays this can drop below perceptible threshold. Consider bumping to <code>0.06</code> or pairing with a left-edge mint stripe to mirror the whale treatment.</li>
+        </ul>
+      </aside>
+
+    </section>
+
+    <!-- =================================================================
+         FOOTER (verbatim shape, mock values)
+         ================================================================= -->
+    <footer class="app-footer">
+      <div class="meta">
+        <span class="conn-status" data-state="online">● live</span>
+        <span class="meta-item"><span class="k">最終更新</span><span class="v">09:17:42</span></span>
+        <span class="meta-item"><span class="k">sessions</span><span class="v">20</span></span>
+      </div>
+      <div class="credits">
+        <span class="accent">claude-transcript-analyzer</span> · v0.7.4<span class="sep">·</span>stdlib only · no third-party js
+      </div>
+    </footer>
+
+  </div>
+
+<script>
+/* Tiny help-pop toggle — mirrors production behavior of 80_help_popup.js
+   so designers can verify the `?` button works on click as well as hover.
+   Click-toggles aria-expanded + data-open; click outside closes any open. */
+(function(){
+  document.addEventListener('click', function(ev){
+    var btn = ev.target.closest && ev.target.closest('.help-btn');
+    if (btn) {
+      ev.preventDefault();
+      var expanded = btn.getAttribute('aria-expanded') === 'true';
+      // close any other open
+      document.querySelectorAll('.help-btn[aria-expanded="true"]').forEach(function(b){
+        if (b !== btn) {
+          b.setAttribute('aria-expanded', 'false');
+          var p = document.getElementById(b.getAttribute('data-help-id'));
+          if (p) p.removeAttribute('data-open');
+        }
+      });
+      btn.setAttribute('aria-expanded', expanded ? 'false' : 'true');
+      var pop = document.getElementById(btn.getAttribute('data-help-id'));
+      if (pop) {
+        if (expanded) pop.removeAttribute('data-open');
+        else pop.setAttribute('data-open', 'true');
+      }
+      return;
+    }
+    // click outside any help-host closes all
+    if (!ev.target.closest('.help-host')) {
+      document.querySelectorAll('.help-btn[aria-expanded="true"]').forEach(function(b){
+        b.setAttribute('aria-expanded', 'false');
+        var p = document.getElementById(b.getAttribute('data-help-id'));
+        if (p) p.removeAttribute('data-open');
+      });
+    }
+  });
+})();
+</script>
+</body>
+</html>

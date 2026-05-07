@@ -13,6 +13,8 @@ from reports._archive_loader import archive_read_lock, iter_archive_events_unloc
 _DEFAULT_PATH = Path.home() / ".claude" / "transcript-analyzer" / "usage.jsonl"
 DATA_FILE = Path(os.environ.get("USAGE_JSONL", str(_DEFAULT_PATH)))
 
+_COST_DISCLAIMER = "※ 実測 token × 価格表掛け算による参考値。価格改定で過去値も動きます。"
+
 # Notification.notification_type は公式仕様で `permission`、過去実装/テストでは `permission_prompt` を観測。
 # 両方を許可ダイアログ系としてカウントする。
 _PERMISSION_NOTIFICATION_TYPES = frozenset({"permission", "permission_prompt"})
@@ -131,7 +133,7 @@ def _format_duration(ms: float | None) -> str:
     return f"{ms:.0f}ms"
 
 
-def print_report(events: list[dict]) -> None:
+def print_report(events: list[dict], *, include_cost: bool = False) -> None:
     skill_stats = aggregate_skill_stats(events)
     subagent_stats = aggregate_subagent_stats(events)
     session_stats = aggregate_session_stats(events)
@@ -166,6 +168,21 @@ def print_report(events: list[dict]) -> None:
     else:
         print("  (no data)")
 
+    if include_cost:
+        from cost_metrics import aggregate_session_breakdown  # noqa: PLC0415
+        breakdown = aggregate_session_breakdown(events, top_n=10**9)
+        total = round(sum(b["estimated_cost_usd"] for b in breakdown), 4)
+        top10 = sorted(breakdown, key=lambda b: -b["estimated_cost_usd"])[:10]
+        print("\n=== Cost (estimated) ===")
+        print(f"  Total estimated cost: ${total:.4f}")
+        print("\n  Top 10 sessions by estimated cost")
+        if top10:
+            for b in top10:
+                print(f"  ${b['estimated_cost_usd']:>9.4f}  {b['session_id'][:8]}  {b['project']}")
+        else:
+            print("  (no data)")
+        print(f"\n{_COST_DISCLAIMER}")
+
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Skills/Subagents 使用状況の集計レポート")
@@ -174,8 +191,14 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="archive/*.jsonl.gz を読み込んで集計に含める (default: hot tier のみ)",
     )
+    parser.add_argument(
+        "--include-cost",
+        action="store_true",
+        help="Total estimated cost / Top 10 sessions by cost を表示する",
+    )
     args = parser.parse_args(argv)
-    print_report(load_events(include_archive=args.include_archive))
+    print_report(load_events(include_archive=args.include_archive),
+                 include_cost=args.include_cost)
 
 
 if __name__ == "__main__":

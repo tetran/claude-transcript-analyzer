@@ -295,3 +295,111 @@ class TestAggregateSubagentStats:
         stats = mod.aggregate_subagent_stats(events)
         assert stats["Plan"]["count"] == 2
         assert stats["Plan"]["failure_count"] == 1
+
+
+def _session_start(session_id: str, project: str, ts: str) -> dict:
+    return {"event_type": "session_start", "session_id": session_id,
+            "project": project, "timestamp": ts}
+
+
+def _au_event(session_id: str, project: str, ts: str, *,
+               model: str = "claude-sonnet-4-6",
+               in_t: int = 1000, out_t: int = 100,
+               msg_id: str = "m") -> dict:
+    return {
+        "event_type": "assistant_usage",
+        "session_id": session_id,
+        "project": project,
+        "timestamp": ts,
+        "model": model,
+        "input_tokens": in_t,
+        "output_tokens": out_t,
+        "cache_read_tokens": 0,
+        "cache_creation_tokens": 0,
+        "message_id": msg_id,
+        "source": "main",
+    }
+
+
+def _session_with_usage(session_id: str, project: str, ts_start: str, ts_usage: str, *,
+                         in_t: int = 1000, out_t: int = 100, msg_id: str = "m") -> list[dict]:
+    """session_start + assistant_usage のペアを返す。"""
+    return [
+        _session_start(session_id, project, ts_start),
+        _au_event(session_id, project, ts_usage, in_t=in_t, out_t=out_t, msg_id=msg_id),
+    ]
+
+
+class TestPrintReportIncludeCost:
+    def _run(self, events, include_cost=True, tmp_path=None):
+        import io
+        import contextlib
+        usage_file = (tmp_path or Path("/tmp")) / "usage.jsonl"
+        write_events(usage_file, events)
+        mod = load_summary_module(usage_file)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            mod.print_report(events, include_cost=include_cost)
+        return buf.getvalue(), mod
+
+    def test_summary_include_cost_prints_total_line(self, tmp_path):
+        events = _session_with_usage("s1", "proj", "2026-05-01T09:59:00+00:00",
+                                     "2026-05-01T10:00:00+00:00", msg_id="m1")
+        stdout, _ = self._run(events, tmp_path=tmp_path)
+        assert "Total estimated cost: $" in stdout
+
+    def test_summary_include_cost_prints_top10_header(self, tmp_path):
+        events = _session_with_usage("s1", "proj", "2026-05-01T09:59:00+00:00",
+                                     "2026-05-01T10:00:00+00:00", msg_id="m1")
+        stdout, _ = self._run(events, tmp_path=tmp_path)
+        assert "Top 10 sessions by estimated cost" in stdout
+
+    def test_summary_include_cost_sorts_descending(self, tmp_path):
+        events = (
+            _session_with_usage("s1", "proj", "2026-05-01T09:59:00+00:00",
+                                 "2026-05-01T10:00:00+00:00", in_t=10000, out_t=1000, msg_id="m1")
+            + _session_with_usage("s2", "proj", "2026-05-01T10:00:00+00:00",
+                                   "2026-05-01T10:01:00+00:00", in_t=100, out_t=10, msg_id="m2")
+            + _session_with_usage("s3", "proj", "2026-05-01T10:01:00+00:00",
+                                   "2026-05-01T10:02:00+00:00", in_t=5000, out_t=500, msg_id="m3")
+        )
+        stdout, _ = self._run(events, tmp_path=tmp_path)
+        # Cost section のみ抽出して順序確認
+        cost_section = stdout[stdout.find("=== Cost"):]
+        idx_s1 = cost_section.find("s1")
+        idx_s2 = cost_section.find("s2")
+        idx_s3 = cost_section.find("s3")
+        assert idx_s1 < idx_s3 < idx_s2
+
+    def test_summary_include_cost_caps_at_10(self, tmp_path):
+        events = []
+        for i in range(11):
+            events += _session_with_usage(
+                f"session_{i:02d}", "proj",
+                f"2026-05-01T09:{i:02d}:00+00:00",
+                f"2026-05-01T10:{i:02d}:00+00:00",
+                in_t=1000 - i * 10, out_t=100, msg_id=f"m{i}",
+            )
+        stdout, _ = self._run(events, tmp_path=tmp_path)
+        # 11 sessions 中 top 10 のみ表示: "session_10" は最安なので除外される
+        cost_section = stdout[stdout.find("Top 10 sessions"):]
+        assert cost_section.count("session_") == 10
+
+    def test_summary_include_cost_prints_disclaimer(self, tmp_path):
+        events = _session_with_usage("s1", "proj", "2026-05-01T09:59:00+00:00",
+                                     "2026-05-01T10:00:00+00:00", msg_id="m1")
+        stdout, mod = self._run(events, tmp_path=tmp_path)
+        assert mod._COST_DISCLAIMER in stdout
+
+    def test_summary_without_include_cost_omits_cost_section(self, tmp_path):
+        events = _session_with_usage("s1", "proj", "2026-05-01T09:59:00+00:00",
+                                     "2026-05-01T10:00:00+00:00", msg_id="m1")
+        stdout, mod = self._run(events, include_cost=False, tmp_path=tmp_path)
+        assert "Total estimated cost" not in stdout
+        assert "Top 10 sessions by estimated cost" not in stdout
+        assert mod._COST_DISCLAIMER not in stdout
+
+    def test_summary_include_cost_handles_empty_events(self, tmp_path):
+        stdout, _ = self._run([], tmp_path=tmp_path)
+        assert "Total estimated cost: $" in stdout
+        assert "Top 10 sessions by estimated cost" in stdout

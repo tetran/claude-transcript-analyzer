@@ -223,6 +223,9 @@ _TIER2_DISPATCH: dict[str, tuple[str, ...]] = {
     "subagent_start": ("subagent_type",),
     # user_slash_command は旧 schema (source 欠落) を吸収するため特別扱い
     "user_slash_command": ("skill", "source"),
+    # Issue #99 / v0.8.0: assistant_usage は (session_id, message_id) で dedup。
+    # tool_use_id を持たないため tier1 ではなく tier2 secondary_key 経路で固定。
+    "assistant_usage": ("message_id",),
 }
 
 

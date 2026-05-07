@@ -13,12 +13,13 @@ __INCLUDE_STYLES__
 </head>
 <body>
   <div class="app">
-    <!-- 共通: 4 ページ切替 nav (Issue #57) -->
+    <!-- 共通: 5 ページ切替 nav (Issue #57 / #103 で Sessions 追加) -->
     <nav class="page-nav" role="navigation" aria-label="ダッシュボードページ">
       <a href="#/" data-page-link="overview" tabindex="0">Overview</a>
       <a href="#/patterns" data-page-link="patterns" tabindex="0">Patterns</a>
       <a href="#/quality" data-page-link="quality" tabindex="0">Quality</a>
       <a href="#/surface" data-page-link="surface" tabindex="0">Surface</a>
+      <a href="#/sessions" data-page-link="sessions" tabindex="0">Sessions</a>
       <!-- Issue #83: live heartbeat sparkline。
            default `hidden` で static export 経路では非表示、live 経路で
            startHeartbeat() が hidden を解除する。 -->
@@ -130,6 +131,52 @@ __INCLUDE_STYLES__
       <div class="panel-body">
         <div class="stack" id="stack"></div>
         <div class="stack-legend" id="stackLegend"></div>
+      </div>
+    </div>
+
+    <!-- Issue #106: モデル分布 (opus / sonnet / haiku の messages × cost donut grid) -->
+    <div class="panel" id="model-dist-panel" style="margin-top: 14px;">
+      <div class="panel-head c-rose">
+        <div class="ttl-wrap">
+          <span class="ttl"><span class="dot"></span>モデル分布</span>
+          <span class="help-host">
+            <button class="help-btn" type="button" aria-label="説明を表示" aria-expanded="false" aria-describedby="hp-model-dist" data-help-id="hp-model-dist">?</button>
+            <span class="help-pop" id="hp-model-dist" role="tooltip" data-place="left">
+              <span class="pop-ttl">モデル分布の読み方</span>
+              <span class="pop-body"><code>assistant_usage</code> event ごとの <code>model</code> フィールドを family (opus / sonnet / haiku) にロールアップした、モデル別の負荷分担。メッセージ数では sonnet が workhorse、コストでは opus が支配的になりがち — 両軸を併置することで、message-count では見えないコスト偏りを発見できる。集計対象は <code>assistant_usage</code> event のみ (session_start / skill_tool / subagent invocation は除外)。未知 model は sonnet family に寄せて集計する。</span>
+            </span>
+          </span>
+        </div>
+        <span class="sub" id="modelDistSub"></span>
+      </div>
+      <div class="panel-body">
+        <div class="axis-pair">
+          <div class="axis-col" data-axis="messages">
+            <div class="axis-head">MESSAGES</div>
+            <div class="donut-wrap">
+              <svg class="donut" viewBox="0 0 120 120" preserveAspectRatio="xMidYMid meet" aria-hidden="true"></svg>
+              <div class="axis-center"></div>
+              <div class="donut-callouts"></div>
+            </div>
+          </div>
+          <div class="axis-col" data-axis="cost">
+            <div class="axis-head">COST</div>
+            <div class="donut-wrap">
+              <svg class="donut" viewBox="0 0 120 120" preserveAspectRatio="xMidYMid meet" aria-hidden="true"></svg>
+              <div class="axis-center"></div>
+              <div class="donut-callouts"></div>
+            </div>
+          </div>
+        </div>
+        <div class="model-legend">
+          <div class="model-legend-head">
+            <span class="lh-dot"></span>
+            <span class="lh-fam"></span>
+            <span class="lh-msgs">msgs</span>
+            <span class="lh-cost">cost</span>
+          </div>
+          <div class="model-legend-body"></div>
+        </div>
       </div>
     </div>
 
@@ -483,6 +530,105 @@ __INCLUDE_STYLES__
       </div>
     </section>
 
+    <!-- Sessions ページ (Issue #103): session 単位の token / cost / model / service_tier 内訳 -->
+    <section data-page="sessions" class="page" aria-labelledby="page-sessions-title" hidden>
+      <header class="header">
+        <div>
+          <h1 id="page-sessions-title"><span class="accent">Sessions</span></h1>
+          <p class="lede">
+            最新 20 件の有効セッションのトークン消費・推計コスト・モデル構成を一覧。
+            実測トークン × モデル別公開価格表の掛け算による参考値。
+          </p>
+        </div>
+      </header>
+
+      <!-- KPI 行 (4 枚): 合計コスト / 中央値 / 平均 / Cache 効率 -->
+      <div class="kpi-row" id="sessionsKpi"></div>
+
+      <div class="panel" id="sessions-table-panel">
+        <div class="panel-head c-mint">
+          <div class="ttl-wrap">
+            <span class="ttl"><span class="dot"></span>セッション一覧 (直近 20 件)</span>
+            <span class="help-host">
+              <button class="help-btn" type="button" aria-label="説明を表示" aria-expanded="false" aria-describedby="hp-sessions" data-help-id="hp-sessions">?</button>
+              <span class="help-pop" id="hp-sessions" role="tooltip" data-place="right">
+                <span class="pop-ttl">セッション一覧</span>
+                <span class="pop-body"><code>session_start</code> イベントを起点に、同 <code>session_id</code> 内の <code>assistant_usage</code> から model 別 token 数 / service_tier を集計。開始時刻降順で最新 20 件。<code>ended_at</code> が未観測のものは「進行中」として表示する。<code>assistant_usage</code> event を 1 件も持たない session (起動だけ / builtin command のみ / abort) は集計対象外。</span>
+              </span>
+            </span>
+          </div>
+          <span class="sub" id="sessionsSub"></span>
+        </div>
+        <div class="panel-body" style="padding: 0 12px 4px;">
+          <table class="sessions-table" id="sessionsTable">
+            <colgroup>
+              <col class="col-start">
+              <col class="col-dur">
+              <col class="col-project">
+              <col class="col-models">
+              <col class="col-tok-in">
+              <col class="col-tok-out">
+              <col class="col-tok-cr">
+              <col class="col-tok-cc">
+              <col class="col-cost">
+              <col class="col-tier">
+              <col class="col-skills">
+              <col class="col-sub">
+            </colgroup>
+            <thead>
+              <tr class="group-row">
+                <th class="empty" colspan="4"></th>
+                <th colspan="4">
+                  Tokens
+                  <span class="help-host">
+                    <button class="help-btn" type="button" aria-label="トークン種別の説明" aria-expanded="false" aria-describedby="hp-tokens" data-help-id="hp-tokens">?</button>
+                    <span class="help-pop" id="hp-tokens" role="tooltip" data-place="bottom">
+                      <span class="pop-ttl">トークン種別</span>
+                      <span class="pop-body"><code>Input</code>: ユーザープロンプト + システムプロンプト + tool 結果 (cache 経由を除く)。<code>Output</code>: assistant 生成 (一番高い単価)。<code>Cache R</code>: prompt cache から読み出した token (input の 1/10 程度の単価)。<code>Cache C</code>: prompt cache に書き込まれた token (input の 1.25 倍の単価)。</span>
+                    </span>
+                  </span>
+                </th>
+                <th class="empty" colspan="4"></th>
+              </tr>
+              <tr class="data-row">
+                <th>開始時刻</th>
+                <th>期間</th>
+                <th>プロジェクト</th>
+                <th>Models</th>
+                <th class="num">Input</th>
+                <th class="num">Output</th>
+                <th class="num tok-cr">Cache R</th>
+                <th class="num tok-cc">Cache C</th>
+                <th class="num">
+                  推計コスト
+                  <span class="help-host">
+                    <button class="help-btn" type="button" aria-label="コストの説明" aria-expanded="false" aria-describedby="hp-cost" data-help-id="hp-cost">?</button>
+                    <span class="help-pop" id="hp-cost" role="tooltip" data-place="left">
+                      <span class="pop-ttl">推計コスト</span>
+                      <span class="pop-body">実測 token × モデル別公開価格表の掛け算による<strong>参考値</strong>。Anthropic が価格改定すると過去値も再計算で動く。cache create / read / input / output で単価が異なるため、token 4 種を分けて積算している。</span>
+                    </span>
+                  </span>
+                </th>
+                <th>
+                  Service tier
+                  <span class="help-host">
+                    <button class="help-btn" type="button" aria-label="Service tier の説明" aria-expanded="false" aria-describedby="hp-tier" data-help-id="hp-tier">?</button>
+                    <span class="help-pop" id="hp-tier" role="tooltip" data-place="left">
+                      <span class="pop-ttl">Service tier</span>
+                      <span class="pop-body"><code>priority</code> / <code>standard</code> / <code>batch</code> は Anthropic API 側で記録される料金ティア。<code>priority</code>: 優先度確約枠 (割増)。<code>standard</code>: 通常 (Claude Code デフォルト)。<code>batch</code>: Batch API (50% 割引)。1 session 内で混在し得る。</span>
+                    </span>
+                  </span>
+                </th>
+                <th class="num">Skills</th>
+                <th class="num">Subagents</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
     <!-- 全ページ共通の app-footer (Issue #57): 接続バッジ + 最終更新 + セッション数 + クレジット -->
     <footer class="app-footer">
       <div class="meta">
@@ -491,7 +637,7 @@ __INCLUDE_STYLES__
         <span class="meta-item"><span class="k">sessions</span><span class="v" id="sessVal">—</span></span>
       </div>
       <div class="credits">
-        <span class="accent">claude-transcript-analyzer</span> · v0.7.4<span class="sep">·</span>stdlib only · no third-party js
+        <span class="accent">claude-transcript-analyzer</span> · v0.8.0<span class="sep">·</span>stdlib only · no third-party js
       </div>
     </footer>
   </div>

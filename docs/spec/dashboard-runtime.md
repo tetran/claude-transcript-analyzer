@@ -90,20 +90,21 @@ kill $(jq -r .pid ~/.claude/transcript-analyzer/server.json)
 
 ## ダッシュボード複数ページ構成
 
-ダッシュボードは **ハッシュベース router で 4 ページ** に分割。
+ダッシュボードは **ハッシュベース router で 5 ページ** に分割。
 
 ### ページ構成
 
 | Path | data-page | 名前 | 主な目的 |
 |------|-----------|------|----------|
-| `#/` | `overview` | Overview | KPI / skill ranking / subagent ranking / project breakdown / daily trend / health alerts |
+| `#/` | `overview` | Overview | KPI / skill ranking / subagent ranking / project breakdown / daily trend / health alerts / モデル分布 (Issue #106) |
 | `#/patterns` | `patterns` | Patterns | 利用パターン (時間帯 / 共起 / project×skill) |
 | `#/quality` | `quality` | Quality | 実行品質と摩擦シグナル (permission / compact / percentile) |
 | `#/surface` | `surface` | Surface | スキル surface (発見性 / 想起性) |
+| `#/sessions` | `sessions` | Sessions | session 単位の token / 推計コスト / model 内訳 / service_tier (Issue #103)。`assistant_usage` event を 1 件も持たない session は除外 (Issue #109、panel sub は「有効セッション」表記) |
 
 ### 共通 chrome と Overview 専用 chrome の分離
 
-- **共通頂部 nav** (`<nav class="page-nav">`): 4 タブ。`.app` 直下、全ページに表示
+- **共通頂部 nav** (`<nav class="page-nav">`): 5 タブ。`.app` 直下、全ページに表示
 - **共通 footer** (`<footer class="app-footer">`): conn-status / lastRx / sessVal /
   クレジット行。全ページに表示（接続バッジは Overview 以外のページからも見える）
 - **Overview 専用 header** (`<header class="header">`): h1「Claude Code Usage
@@ -111,7 +112,7 @@ kill $(jq -r .pid ~/.claude/transcript-analyzer/server.json)
 
 ### Router の動作仕様
 
-- **DOM 構造**: 4 つの `<section data-page="...">` を DOM に常駐させ、`hidden`
+- **DOM 構造**: 5 つの `<section data-page="...">` を DOM に常駐させ、`hidden`
   属性切替でページ表示を切り替える（DOM tree から削除しない）
 - **router IIFE**: `<script>` ブロック内に独立した IIFE で実装。`HASH_TO_PAGE`
   テーブル + `applyRoute(rawHash)` + `hashchange` listener。SSE refresh 経路と
@@ -145,9 +146,12 @@ hashchange listener を 1 本持つ。router IIFE は先に登録されている
   hashchange listener で active page slot に DOM を `appendChild` で move する
   (1 DOM 維持 / state sync 不要)。router IIFE (`00_router.js`) の hashchange listener
   で `body.dataset.activePage` が先に更新されてから本 listener が走る (登録順 = 発火順)。
-- **可視範囲**: Overview / Patterns 表示時のみ可視。Quality / Surface には slot が
-  存在しないので move 先が無く、`body[data-active-page="quality"|"surface"] #periodToggle { display: none }`
-  の page-scoped CSS rule で隠す (toggle DOM は前 page の slot に残る)。
+- **可視範囲**: Overview / Patterns 表示時のみ可視。Quality / Surface / Sessions には slot が
+  存在しないので move 先が無く、`body[data-active-page="quality"|"surface"|"sessions"] #periodToggle { display: none }`
+  の page-scoped CSS rule で隠す (toggle DOM は前 page の slot に残る)。Sessions ページの
+  `session_breakdown` 自体は Overview/Patterns で設定した period が継続適用される
+  (`aggregate_session_breakdown` が `period_events_raw` を経由して in-period content を集計)
+  が、Sessions ページから period を切り替える UI は持たない (Issue #103)。
 - **State**: `05_period.js` の closure-private `__periodCurrent` で持ち、
   `window.__period.{getCurrentPeriod, setCurrentPeriod, wirePeriodToggle}` を expose。
   click handler で `aria-pressed` 付け替え + `setCurrentPeriod(p)` + 再 fetch を呼ぶ。
