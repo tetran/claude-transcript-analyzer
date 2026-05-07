@@ -377,10 +377,14 @@ def aggregate_session_breakdown(
       `skill_tool` / `user_slash_command` の token / cost / models / service_tier /
       skill_count を in-period 限定で count するための入力。`None` のときは
       `events` を流用 (= period 適用なしと同じ振る舞い、後方互換)
-    - **session pool 定義**: `period_events` に **少なくとも 1 件** event がある
-      session のみ render 対象。session_start が pre-cutoff でも、in-period に
-      assistant_usage / skill / subagent event があれば cost/token は in-period
-      分だけ集計して render する (= period 跨ぎ visible)。
+    - **session pool 定義**: `period_events` に **少なくとも 1 件** event があり、
+      **かつ `assistant_usage` event が 1 件以上ある** session のみ render 対象
+      (Issue #109)。session_start が pre-cutoff でも、in-period に
+      assistant_usage event があれば cost/token は in-period 分だけ集計して
+      render する (= period 跨ぎ visible)。assistant_usage を 1 件も持たない
+      session (= 起動だけ / builtin command のみ / abort) は除外する。
+      `session_stats.total_sessions` (footer 観測総数) は別経路 (raw events
+      から `session_start` 直接 count) なので本除外の影響を受けない。
 
     subagent_count は `period_events` 経由で計算 (= in-period invocation のみ count)。
     cost / token と semantics を揃えて in-period 限定とする。
@@ -399,13 +403,19 @@ def aggregate_session_breakdown(
         full_by_session.setdefault(sid, []).append(ev)
 
     # Group period events by session for content lookup
-    # かつ session pool (= period 内に少なくとも 1 event ある session) を確定
+    # かつ session pool (= period 内に少なくとも 1 event ある session) を確定。
+    # Issue #109: 同 pass で has_assistant_usage flag を構築し、empty session
+    # (= assistant_usage event 0 件 / 起動だけ / builtin command のみ / abort) を
+    # row pool 段階で除外する。`any(...)` 再走を避けて O(N_event) で完結。
     period_by_session: dict[str, list[dict]] = {}
+    has_assistant_usage: dict[str, bool] = {}
     for ev in period_events:
         sid = ev.get("session_id", "")
         if not sid:
             continue
         period_by_session.setdefault(sid, []).append(ev)
+        if ev.get("event_type") == "assistant_usage":
+            has_assistant_usage[sid] = True
 
     # subagent_count は in-period 限定で計算 (cost/token と semantics を揃える)
     subagent_counts = session_subagent_counts(period_events)
@@ -417,7 +427,7 @@ def aggregate_session_breakdown(
         row = _build_session_row(
             sid, boundary_evs, content_evs, subagent_counts.get(sid, 0),
         )
-        if row is not None:
+        if row is not None and has_assistant_usage.get(sid, False):
             rows.append(row)
 
     rows.sort(key=lambda r: r["started_at"] or "", reverse=True)

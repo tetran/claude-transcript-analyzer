@@ -536,7 +536,7 @@ __INCLUDE_STYLES__
         <div>
           <h1 id="page-sessions-title"><span class="accent">Sessions</span></h1>
           <p class="lede">
-            最新 20 セッションのトークン消費・推計コスト・モデル構成を一覧。
+            最新 20 件の有効セッションのトークン消費・推計コスト・モデル構成を一覧。
             実測トークン × モデル別公開価格表の掛け算による参考値。
           </p>
         </div>
@@ -553,7 +553,7 @@ __INCLUDE_STYLES__
               <button class="help-btn" type="button" aria-label="説明を表示" aria-expanded="false" aria-describedby="hp-sessions" data-help-id="hp-sessions">?</button>
               <span class="help-pop" id="hp-sessions" role="tooltip" data-place="right">
                 <span class="pop-ttl">セッション一覧</span>
-                <span class="pop-body"><code>session_start</code> イベントを起点に、同 <code>session_id</code> 内の <code>assistant_usage</code> から model 別 token 数 / service_tier を集計。開始時刻降順で 20 件。<code>ended_at</code> が未観測のものは「進行中」として表示する。</span>
+                <span class="pop-body"><code>session_start</code> イベントを起点に、同 <code>session_id</code> 内の <code>assistant_usage</code> から model 別 token 数 / service_tier を集計。開始時刻降順で最新 20 件。<code>ended_at</code> が未観測のものは「進行中」として表示する。<code>assistant_usage</code> event を 1 件も持たない session (起動だけ / builtin command のみ / abort) は集計対象外。</span>
               </span>
             </span>
           </div>

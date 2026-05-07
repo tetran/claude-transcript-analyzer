@@ -252,6 +252,21 @@
       }).join('');
     }
 
+    // Issue #109: Sessions ページ panel sub 行の正本生成。
+    // sessions = data.session_breakdown (= aggregator が empty session を除外
+    // した後の cohort)。文字列正本: `有効セッション ${N} · ${projCount} projects`
+    // (中黒 U+00B7 / projects は半角小文字 / 単複の屈折分岐なし)。
+    function buildSessionsSubText(sessions) {
+      const arr = Array.isArray(sessions) ? sessions : [];
+      const projectSet = {};
+      for (let i = 0; i < arr.length; i++) {
+        const p = arr[i] && arr[i].project || '';
+        if (p) projectSet[p] = 1;
+      }
+      const projCount = Object.keys(projectSet).length;
+      return '有効セッション ' + arr.length + ' · ' + projCount + ' projects';
+    }
+
     function renderSessions(data) {
       if (typeof document === 'undefined') return;
       if (document.body && document.body.dataset.activePage !== 'sessions') return;
@@ -277,13 +292,7 @@
       }
 
       if (sub) {
-        const projectSet = {};
-        for (let i = 0; i < sessions.length; i++) {
-          const p = sessions[i].project || '';
-          if (p) projectSet[p] = 1;
-        }
-        const projCount = Object.keys(projectSet).length;
-        sub.textContent = sessions.length + ' sessions · ' + projCount + ' projects';
+        sub.textContent = buildSessionsSubText(sessions);
       }
 
       // help-pop の位置調整 (右端の help-pop が viewport を溢れないよう)
@@ -305,6 +314,7 @@
         buildSessionRow: buildSessionRow,
         buildKpiHTML: buildKpiHTML,
         computeKpi: computeKpi,
+        buildSessionsSubText: buildSessionsSubText,
       };
     }
   })();
