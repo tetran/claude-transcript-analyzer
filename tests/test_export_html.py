@@ -364,3 +364,61 @@ class TestRenderStaticHtmlSecurity:
         assert parsed["skill_ranking"][1]["name"] == "</style>"
         assert parsed["skill_ranking"][2]["name"] == "<!--comment-->"
 
+
+# ---------------------------------------------------------------------------
+# TestExportHtmlSessionBreakdown — session_breakdown field の regression guard
+# ---------------------------------------------------------------------------
+
+class TestExportHtmlSessionBreakdown:
+    def _import(self):
+        import importlib
+        import dashboard.server as m
+        importlib.reload(m)
+        return m
+
+    def _embedded_data(self, html: str) -> dict:
+        marker = "window.__DATA__ = "
+        idx = html.index(marker) + len(marker)
+        end = html.index(";</script>", idx)
+        return json.loads(html[idx:end])
+
+    def _make_session_events(self, session_id: str = "s1") -> list[dict]:
+        return [
+            {"event_type": "session_start", "session_id": session_id,
+             "project": "proj", "timestamp": "2026-05-01T09:59:00+00:00"},
+            {"event_type": "assistant_usage", "session_id": session_id,
+             "project": "proj", "timestamp": "2026-05-01T10:00:00+00:00",
+             "model": "claude-sonnet-4-6", "input_tokens": 1000, "output_tokens": 100,
+             "cache_read_tokens": 0, "cache_creation_tokens": 0,
+             "message_id": "m1", "source": "main"},
+        ]
+
+    def test_export_html_embeds_session_breakdown_field(self, tmp_path, monkeypatch):
+        m = self._import()
+        monkeypatch.setenv("SKILLS_DIR", str(tmp_path))
+        data = m.build_dashboard_data(self._make_session_events())
+        html = m.render_static_html(data)
+        embedded = self._embedded_data(html)
+        assert "session_breakdown" in embedded
+        assert len(embedded["session_breakdown"]) >= 1
+
+    def test_export_html_session_breakdown_includes_estimated_cost(self, tmp_path, monkeypatch):
+        m = self._import()
+        monkeypatch.setenv("SKILLS_DIR", str(tmp_path))
+        data = m.build_dashboard_data(self._make_session_events())
+        html = m.render_static_html(data)
+        embedded = self._embedded_data(html)
+        assert len(embedded["session_breakdown"]) >= 1
+        row = embedded["session_breakdown"][0]
+        assert "estimated_cost_usd" in row
+        assert isinstance(row["estimated_cost_usd"], float)
+
+    def test_export_html_with_empty_events_has_empty_session_breakdown(self, tmp_path, monkeypatch):
+        m = self._import()
+        monkeypatch.setenv("SKILLS_DIR", str(tmp_path))
+        data = m.build_dashboard_data([])
+        html = m.render_static_html(data)
+        embedded = self._embedded_data(html)
+        assert "session_breakdown" in embedded
+        assert embedded["session_breakdown"] == []
+
