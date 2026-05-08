@@ -525,7 +525,7 @@ def _make_event_set_for_period_test(now: datetime) -> list[dict]:
 
 
 class TestBuildDashboardDataWithPeriod:
-    """Step 2: build_dashboard_data(period=...) — 11 field period 適用 / 8 field 不変 / period_applied echo."""
+    """Step 2: build_dashboard_data(period=...) — 12 field period 適用 / 7 field 不変 / period_applied echo."""
 
     def _mod(self, tmp_path):
         return load_dashboard_module(tmp_path / "nonexistent.jsonl")
@@ -545,7 +545,7 @@ class TestBuildDashboardDataWithPeriod:
         assert legacy == explicit_all
 
     def test_period_7d_shrinks_period_applied_fields(self, tmp_path):
-        """period=7d で period 適用 11 field 全てから 8 日前 event が消える."""
+        """period=7d で period 適用 12 field のうちこの test がカバーする 11 field (session_stats は別 test class) 全てから 8 日前 event が消える."""
         mod = self._mod(tmp_path)
         events = _make_event_set_for_period_test(_FIXED_NOW)
         data_all = mod.build_dashboard_data(events, period="all", now=_FIXED_NOW)
@@ -600,7 +600,7 @@ class TestBuildDashboardDataWithPeriod:
             assert "p2" not in projects_in_matrix
 
     def test_full_period_fields_unchanged_across_periods(self, tmp_path):
-        """全期間 8 field は period に関わらず同一 (drift guard)."""
+        """全期間 7 field は period に関わらず同一 (drift guard / Issue #114 で session_stats を除外)."""
         mod = self._mod(tmp_path)
         events = _make_event_set_for_period_test(_FIXED_NOW)
         data_all = mod.build_dashboard_data(events, period="all", now=_FIXED_NOW)
@@ -611,7 +611,7 @@ class TestBuildDashboardDataWithPeriod:
             "permission_prompt_skill_breakdown",
             "permission_prompt_subagent_breakdown",
             "compact_density",
-            "session_stats",
+            # session_stats は Issue #114 で Period-applied 群へ移動
             "skill_invocation_breakdown",
             "skill_lifecycle",
             "skill_hibernating",
@@ -1078,6 +1078,109 @@ console.log(JSON.stringify({ initial }));
         out = _json.loads(result.stdout.strip().splitlines()[-1])
         assert out["initial"] == "all", f"getCurrentPeriod() の初期値が 'all' でない: {out}"
 
+    def test_sessions_header_has_empty_period_slot(self, tmp_path):
+        """Sessions header に `data-period-slot="sessions"` の空 slot が居る (move 先)。
+        かつ Sessions section 内 (<section data-page="sessions"> と </section><!-- /data-page="sessions" -->) に居る。
+        """
+        mod = self._mod(tmp_path)
+        template = mod._build_html_template()
+        assert 'data-period-slot="sessions"' in template, \
+            "Sessions header に data-period-slot=sessions slot が無い"
+        sessions_section_start = template.find('<section data-page="sessions"')
+        sessions_section_end = template.find('</section><!-- /data-page="sessions"')
+        slot_pos = template.find('data-period-slot="sessions"')
+        assert sessions_section_start != -1, "Sessions section (<section data-page=\"sessions\">) が無い"
+        assert sessions_section_end != -1, "Sessions section 終端コメント (<!-- /data-page=\"sessions\" -->) が無い"
+        assert sessions_section_start < slot_pos < sessions_section_end, \
+            "data-period-slot=sessions が Sessions section の外にある"
+
+    def test_sessions_slot_inside_sessions_header(self, tmp_path):
+        """Sessions section 内の <header class="header"> 〜 </header> の間に slot が居る。"""
+        mod = self._mod(tmp_path)
+        template = mod._build_html_template()
+        sessions_start = template.find('<section data-page="sessions"')
+        assert sessions_start != -1, "Sessions section が無い"
+        sessions_fragment = template[sessions_start:]
+        header_start = sessions_fragment.find('<header class="header">')
+        header_end = sessions_fragment.find('</header>', header_start)
+        assert header_start != -1, "Sessions section 内に <header class=\"header\"> が無い"
+        assert header_end != -1, "Sessions section 内に </header> が無い"
+        slot_pos = sessions_fragment.find('data-period-slot="sessions"')
+        assert header_start < slot_pos < header_end, \
+            "data-period-slot=sessions が Sessions section の header 外にある (panel-body 等に紛れ込んでいる)"
+
+    def test_period_toggle_moves_to_sessions_slot_via_hashchange(self, tmp_path):
+        """Node round-trip: activePage=sessions で movePeriodToggleToActivePage() を呼ぶと
+        Sessions slot の appendChild が呼ばれる (allow-list に sessions が含まれている証跡)。
+        """
+        import subprocess
+        import shutil
+        node = shutil.which("node")
+        if node is None:
+            import pytest as _pytest
+            _pytest.skip("node not available")
+        mod = self._mod(tmp_path)
+        bundle = mod._concat_main_js()
+        script = r"""
+const appendChildCalls = [];
+const sessionSlot = {
+  appendChild: function(el) { appendChildCalls.push(el); },
+};
+const toggleEl = { parentNode: null };
+
+// dataset は空で初期化 (bundle eval 中の movePeriodToggleToActivePage() は "overview" 経路)
+globalThis.window = { addEventListener: () => {}, removeEventListener: () => {}, location: { hash: "" } };
+globalThis.document = {
+  body: { dataset: {}, classList: { add: () => {}, remove: () => {}, contains: () => false } },
+  getElementById: (id) => id === "periodToggle" ? toggleEl : null,
+  querySelectorAll: (sel) => {
+    if (typeof sel === "string" && sel.indexOf("data-period") !== -1) {
+      return [{ addEventListener: () => {}, dataset: { period: "7d" }, setAttribute: () => {}, getAttribute: () => null }];
+    }
+    return [];
+  },
+  querySelector: (sel) => {
+    if (sel === '[data-period-slot="sessions"]') return sessionSlot;
+    return null;
+  },
+  addEventListener: () => {},
+};
+globalThis.fetch = async () => ({ ok: true, json: async () => ({}) });
+globalThis.EventSource = undefined;
+process.on("unhandledRejection", () => {});
+try { eval("(async function(){" + process.env.BUNDLE + "})();"); } catch (e) {}
+
+if (typeof window.__period === "undefined") {
+  console.log(JSON.stringify({ error: "no_period_namespace" }));
+  process.exit(0);
+}
+
+// bundle eval 後に sessions に切り替えて move を手動トリガー
+document.body.dataset.activePage = "sessions";
+// toggle の parentNode を null にリセット (bundle eval 中に overview slot に移った可能性をクリア)
+toggleEl.parentNode = null;
+window.__period.movePeriodToggleToActivePage();
+console.log(JSON.stringify({ appendChildCalls: appendChildCalls.length }));
+"""
+        result = subprocess.run(
+            [node, "-e", script],
+            env={**os.environ, "BUNDLE": bundle},
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+        )
+        assert result.returncode == 0, f"node failed: stderr={result.stderr}"
+        import json as _json
+        lines = [ln for ln in result.stdout.strip().splitlines() if ln.strip()]
+        assert lines, f"no JSON output: stdout={result.stdout!r} stderr={result.stderr!r}"
+        out = _json.loads(lines[-1])
+        assert "error" not in out, f"node script error: {out}"
+        assert out["appendChildCalls"] == 1, \
+            f"Sessions slot に toggle が move されなかった (appendChildCalls={out['appendChildCalls']}): " \
+            "allow-list に 'sessions' が含まれていない可能性"
+
 
 class TestPeriodAwareFetch:
     """Step 5: fetch 経路で period query を載せる."""
@@ -1237,13 +1340,13 @@ setImmediate(() => {
 
 
 class TestPeriodDriftGuardAndStaticExport:
-    """Step 7: drift guard (period 適用 11 field と全期間 8 field の boundary) + static export 不在 pin."""
+    """Step 7: drift guard (period 適用 12 field と全期間 7 field の boundary) + static export 不在 pin."""
 
     def _mod(self, tmp_path):
         return load_dashboard_module(tmp_path / "nonexistent.jsonl")
 
     def test_period_change_observably_shrinks_period_applied_set(self, tmp_path):
-        """period 切り替えで period 適用 11 field 側に差分が観測される (drift 観測点)."""
+        """period 切り替えで period 適用 12 field 側に差分が観測される (drift 観測点)."""
         mod = self._mod(tmp_path)
         events = _make_event_set_for_period_test(_FIXED_NOW)
         data_all = mod.build_dashboard_data(events, period="all", now=_FIXED_NOW)
@@ -1326,3 +1429,166 @@ class TestPeriodSentinelDocstring:
         source = (Path(__file__).parent.parent / "dashboard" / "server.py").read_text(encoding="utf-8")
         assert "Issue #85: daily_trend stays in period-applied set" in source, \
             "Issue #85 sentinel comment が dashboard/server.py から消えている"
+
+
+class TestSessionStatsPeriodApplied:
+    """Issue #114: session_stats の 4 KPI sub-field を period 連動にする drift guard.
+
+    Phase 1 RED → GREEN は最初に test_session_stats_total_sessions_shrinks_with_7d 1 件のみ
+    pin、GREEN 確認後に triangulation 7 件を additive で追加する (plan §Phase 1)。
+    """
+
+    def _mod(self, tmp_path):
+        return load_dashboard_module(tmp_path / "nonexistent.jsonl")
+
+    def test_session_stats_total_sessions_shrinks_with_7d(self, tmp_path):
+        """period=7d で session_stats.total_sessions が period=all より小さくなる (Issue #114 AC2)."""
+        mod = self._mod(tmp_path)
+        events = [
+            # period 内 (1 件)
+            {"event_type": "session_start", "source": "startup", "session_id": "s1",
+             "timestamp": _ts(_FIXED_NOW, days=1)},
+            # period 外 (2 件、cutoff 7d より過去)
+            {"event_type": "session_start", "source": "startup", "session_id": "s2",
+             "timestamp": _ts(_FIXED_NOW, days=10)},
+            {"event_type": "session_start", "source": "resume", "session_id": "s3",
+             "timestamp": _ts(_FIXED_NOW, days=20)},
+        ]
+        data_all = mod.build_dashboard_data(events, period="all", now=_FIXED_NOW)
+        data_7d = mod.build_dashboard_data(events, period="7d", now=_FIXED_NOW)
+        assert data_all["session_stats"]["total_sessions"] == 3
+        assert data_7d["session_stats"]["total_sessions"] == 1, \
+            "Issue #114: session_stats.total_sessions が period=7d で shrink しない (= period 連動になっていない)"
+
+    def test_session_stats_resume_rate_uses_period_internal_ratio(self, tmp_path):
+        """resume_rate = period 内 resume_count / period 内 total_sessions (Q2: period 内 ratio semantics)."""
+        mod = self._mod(tmp_path)
+        events = [
+            # period 内 (= 7d 以内): startup 1, resume 1 → ratio = 1/2 = 0.5
+            {"event_type": "session_start", "source": "startup", "session_id": "s_in_1",
+             "timestamp": _ts(_FIXED_NOW, days=1)},
+            {"event_type": "session_start", "source": "resume", "session_id": "s_in_2",
+             "timestamp": _ts(_FIXED_NOW, days=2)},
+            # period 外: resume 5 件
+            {"event_type": "session_start", "source": "resume", "session_id": "s_out_1",
+             "timestamp": _ts(_FIXED_NOW, days=10)},
+            {"event_type": "session_start", "source": "resume", "session_id": "s_out_2",
+             "timestamp": _ts(_FIXED_NOW, days=11)},
+            {"event_type": "session_start", "source": "resume", "session_id": "s_out_3",
+             "timestamp": _ts(_FIXED_NOW, days=12)},
+            {"event_type": "session_start", "source": "resume", "session_id": "s_out_4",
+             "timestamp": _ts(_FIXED_NOW, days=13)},
+            {"event_type": "session_start", "source": "resume", "session_id": "s_out_5",
+             "timestamp": _ts(_FIXED_NOW, days=14)},
+        ]
+        data_7d = mod.build_dashboard_data(events, period="7d", now=_FIXED_NOW)
+        assert data_7d["session_stats"]["total_sessions"] == 2
+        assert data_7d["session_stats"]["resume_rate"] == 0.5, \
+            "Issue #114 Q2: resume_rate は period 内 ratio (= 1/2 = 0.5)"
+
+    def test_session_stats_compact_count_period_applied(self, tmp_path):
+        """compact_count が period 連動になる."""
+        mod = self._mod(tmp_path)
+        events = [
+            # period 内 1 件
+            {"event_type": "compact_start", "trigger": "auto", "session_id": "s_in",
+             "timestamp": _ts(_FIXED_NOW, days=1)},
+            # period 外 3 件
+            {"event_type": "compact_start", "trigger": "auto", "session_id": "s_out1",
+             "timestamp": _ts(_FIXED_NOW, days=8)},
+            {"event_type": "compact_start", "trigger": "manual", "session_id": "s_out2",
+             "timestamp": _ts(_FIXED_NOW, days=15)},
+            {"event_type": "compact_start", "trigger": "auto", "session_id": "s_out3",
+             "timestamp": _ts(_FIXED_NOW, days=30)},
+        ]
+        data_7d = mod.build_dashboard_data(events, period="7d", now=_FIXED_NOW)
+        data_all = mod.build_dashboard_data(events, period="all", now=_FIXED_NOW)
+        assert data_7d["session_stats"]["compact_count"] == 1
+        assert data_all["session_stats"]["compact_count"] == 4
+
+    def test_session_stats_permission_prompt_count_period_applied(self, tmp_path):
+        """permission_prompt_count が period 連動になる."""
+        mod = self._mod(tmp_path)
+        events = [
+            # period 内 1 件
+            {"event_type": "notification", "notification_type": "permission_prompt",
+             "session_id": "s_in", "timestamp": _ts(_FIXED_NOW, days=1)},
+            # period 外 2 件
+            {"event_type": "notification", "notification_type": "permission",
+             "session_id": "s_out1", "timestamp": _ts(_FIXED_NOW, days=8)},
+            {"event_type": "notification", "notification_type": "permission_prompt",
+             "session_id": "s_out2", "timestamp": _ts(_FIXED_NOW, days=20)},
+        ]
+        data_7d = mod.build_dashboard_data(events, period="7d", now=_FIXED_NOW)
+        data_all = mod.build_dashboard_data(events, period="all", now=_FIXED_NOW)
+        assert data_7d["session_stats"]["permission_prompt_count"] == 1
+        assert data_all["session_stats"]["permission_prompt_count"] == 3
+
+    def test_session_stats_period_all_unchanged_from_pre_change(self, tmp_path):
+        """period=all 経路では aggregate_session_stats(events) を直接呼んだ結果と一致する (後方互換性 pin)."""
+        mod = self._mod(tmp_path)
+        events = _make_event_set_for_period_test(_FIXED_NOW)
+        data_all = mod.build_dashboard_data(events, period="all", now=_FIXED_NOW)
+        direct = mod.aggregate_session_stats(events)
+        assert data_all["session_stats"] == direct, \
+            "period=all のとき session_stats は events 直接渡しと完全一致しなければならない"
+
+    def test_session_stats_session_start_at_period_boundary_kept(self, tmp_path):
+        """session_start.timestamp == now - 7d (cutoff 包含境界) は period=7d で kept される."""
+        mod = self._mod(tmp_path)
+        events = [
+            {"event_type": "session_start", "source": "startup", "session_id": "s_boundary",
+             "timestamp": _ts(_FIXED_NOW, days=7)},
+        ]
+        data_7d = mod.build_dashboard_data(events, period="7d", now=_FIXED_NOW)
+        assert data_7d["session_stats"]["total_sessions"] == 1, \
+            "cutoff 包含境界 (cutoff <= ts <= now) を session_start も継承しなければならない"
+
+    def test_session_stats_session_start_just_outside_period_dropped(self, tmp_path):
+        """session_start.timestamp == now - (7d + 1s) は period=7d で drop される."""
+        mod = self._mod(tmp_path)
+        events = [
+            {"event_type": "session_start", "source": "startup", "session_id": "s_outside",
+             "timestamp": _ts(_FIXED_NOW, days=7, seconds=1)},
+        ]
+        data_7d = mod.build_dashboard_data(events, period="7d", now=_FIXED_NOW)
+        assert data_7d["session_stats"]["total_sessions"] == 0, \
+            "cutoff より 1 秒過去の session_start は drop されなければならない"
+
+    def test_kpi_help_body_period_neutral_wording_post_114(self, tmp_path):
+        """Issue #114: kpi-sess / -resume / -compact / -perm の helpBody に period 不変前提
+        wording (`lifetime` / `期間不変` / `全期間`) が混入しないことを assert (= future drift catcher)."""
+        js_path = Path(__file__).parent.parent / "dashboard" / "template" / "scripts" / "20_load_and_render.js"
+        js = js_path.read_text(encoding="utf-8")
+        forbidden = ["lifetime", "期間不変", "全期間"]
+        # 4 tile 各々の `id: 'kpi-XXX'` 行から次の `},` (KPI literal の終端) までの substring を抽出
+        for tile_id in ("kpi-sess", "kpi-resume", "kpi-compact", "kpi-perm"):
+            anchor = f"id: '{tile_id}'"
+            start = js.find(anchor)
+            assert start != -1, f"KPI tile {tile_id} の literal 開始 anchor が見つからない"
+            # KPI 配列要素は `{ id: 'kpi-XXX', ... },` の形なので次の "},\n" を終端とする
+            end = js.find("},\n", start)
+            assert end != -1, f"KPI tile {tile_id} の literal 終端が見つからない"
+            block = js[start:end]
+            for word in forbidden:
+                assert word not in block, \
+                    f"{tile_id} helpBody contains forbidden period-invariant wording '{word}' (Issue #114)"
+
+    def test_session_stats_no_pair_straddling_for_session_start(self, tmp_path):
+        """session_start は subagent_type key を持たないので _filter_events_by_period の第二段
+        (subagent invocation pair-straddling) で pull-back されない (構造的 pin)。"""
+        mod = self._mod(tmp_path)
+        events = [
+            # period 外 session_start (timestamp 第一段で drop されるべき、第二段で復活してはいけない)
+            {"event_type": "session_start", "source": "resume", "session_id": "s_old",
+             "timestamp": _ts(_FIXED_NOW, days=10)},
+            # period 内 subagent invocation (関係ないが、第二段 logic を起動するために)
+            {"event_type": "subagent_start", "subagent_type": "Helper", "session_id": "s_in",
+             "tool_use_id": "t1", "timestamp": _ts(_FIXED_NOW, days=1, seconds=-1),
+             "duration_ms": 1000, "success": True},
+            {"event_type": "subagent_stop", "subagent_type": "Helper", "session_id": "s_in",
+             "timestamp": _ts(_FIXED_NOW, days=1)},
+        ]
+        data_7d = mod.build_dashboard_data(events, period="7d", now=_FIXED_NOW)
+        assert data_7d["session_stats"]["total_sessions"] == 0, \
+            "period 外 session_start が第二段 pair-straddling で誤って復活してはいけない"

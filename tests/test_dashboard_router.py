@@ -3,7 +3,7 @@
 dashboard/template.html に以下が入ったかを文字列レベルで検証する:
 - 4 タブ nav (Overview / Patterns / Quality / Surface) + ハッシュ router
 - Overview 専用 chrome (h1 + lede + 既存 KPI / 各 panel)
-- 全ページ共通の app-footer (conn-status / lastRx / sessVal)
+- 全ページ共通の app-footer (conn-status / lastRx)
 - 後続 PR (#58〜#62) の placeholder section
 
 JS 実行を伴う動作 (キーボード遷移 / SSE refresh 整合 / ブラウザ戻る進む) は実機で
@@ -120,11 +120,20 @@ class TestCommonShell:
         footer = _extract_footer(template)
         assert 'id="lastRx"' in footer, "lastRx should be in app-footer"
 
-    def test_session_value_in_app_footer(self):
-        """セッション数表示も app-footer"""
+    def test_session_value_removed_from_app_footer(self):
+        """Issue #114: footer の sessVal は削除 (kpi-sess が period 連動で唯一の session 数表示)."""
         template = _load_template()
         footer = _extract_footer(template)
-        assert 'id="sessVal"' in footer, "sessVal should be in app-footer"
+        assert 'id="sessVal"' not in footer, "sessVal should be removed from app-footer (Issue #114)"
+
+    def test_app_footer_meta_items_count_after_sessVal_removal(self):
+        """Issue #114 drift guard: footer .meta 内の class="meta-item" は exactly 1 (lastRx のみ).
+        conn-status は別 class なので除外。"""
+        template = _load_template()
+        footer = _extract_footer(template)
+        count = footer.count('class="meta-item"')
+        assert count == 1, \
+            f"Footer should have 1 meta-item (lastRx only) post-#114; conn-status uses class=conn-status. Got {count}"
 
     def test_page_nav_outside_all_page_sections(self):
         """nav は <section data-page=...> の外 (= 全ページ共通の頂部)"""
@@ -147,7 +156,7 @@ class TestBackwardCompatibility:
         # template 全体に存在することだけ確認 (DOM 階層は別テスト)。
         for el_id in [
             'kpiRow', 'skillBody', 'subBody', 'spark', 'sparkStats',
-            'stack', 'stackLegend', 'connStatus', 'lastRx', 'sessVal',
+            'stack', 'stackLegend', 'connStatus', 'lastRx',
             'ledeEvents', 'ledeDays', 'ledeProjects',
             'skillSub', 'subSub', 'dailySub', 'projSub',
             'dataTooltip',

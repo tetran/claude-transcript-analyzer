@@ -13,9 +13,9 @@
 ### `period` (optional)
 
 - 値: `"7d"` / `"30d"` / `"90d"` / `"all"` (default `"all"`)
-- `"all"` 以外を渡すと、Overview / Patterns / KPI counter の **11 field** が
+- `"all"` 以外を渡すと、Overview / Patterns / KPI counter の **12 field** が
   rolling window (`now - timedelta(days=N) <= ts <= now`) で切られた events から
-  集計される。Quality / Surface / `session_stats` の **8 field** は **常に全期間**
+  集計される。Quality / Surface の **7 field** は **常に全期間**
   (period 不変)。
 - 不正値 / 空値 / 不在 → `"all"` に fallback (lenient: 400 を返さない)。
 - 三段 pair-straddling filter: timestamp 第一段 cut 後、`subagent_start ↔ subagent_lifecycle_start` の
@@ -25,20 +25,22 @@
   pairing semantics を尊重し、`failure_rate` / `avg_duration_ms` / pXX duration が
   period boundary 跨ぎで silent drift しないことを保証するため。
 
-### Period 適用 scope (12 field)
+### Period 適用 scope (13 field)
 
 - KPI counter: `total_events` / `skill_kinds_total` / `subagent_kinds_total` / `project_total`
 - Overview: `skill_ranking` / `subagent_ranking` / `daily_trend` / `project_breakdown`
 - Patterns: `hourly_heatmap` / `skill_cooccurrence` / `project_skill_matrix`
 - Sessions: `session_breakdown` (Issue #99 / v0.8.0〜)
 - Overview: `model_distribution` (Issue #106 / v0.8.0〜)
+- Sessions: `session_stats` (Issue #114 / v0.8.1〜) — 4 sub-field
+  (`total_sessions` / `resume_rate` / `compact_count` / `permission_prompt_count`)
+  はすべて period 内集計。
 
-### 全期間 (period 不変) scope (8 field)
+### 全期間 (period 不変) scope (7 field)
 
 - Quality: `subagent_failure_trend` / `permission_prompt_skill_breakdown` /
   `permission_prompt_subagent_breakdown` / `compact_density`
 - Surface: `skill_invocation_breakdown` / `skill_lifecycle` / `skill_hibernating`
-- `session_stats` (lifetime metric)
 
 ### Filter 対象外 (3 field)
 

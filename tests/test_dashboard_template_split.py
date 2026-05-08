@@ -25,7 +25,12 @@ _DASHBOARD_PATH = Path(__file__).parent.parent / "dashboard" / "server.py"
 # 改行の取り扱いを含めた byte 等価性を保証する。
 #
 # 意図的な template 変更時は新 hash に更新する (docstring 参照)。
-EXPECTED_TEMPLATE_SHA256 = "dd215897b318771787b1d54f5c68c61ca62f8ba93f8d7294f9d2fc2ed9dcd716"
+#
+# Bump history (1 行 / issue):
+# - 6db5eea86656: Issue #115 sessions period toggle slot + closing comment marker
+# - 50bf29f2a544: Issue #114 footer sessVal 削除 (kpi-sess が period 連動の唯一表示)
+# - 42d220a99be6: v0.8.1 release / footer bump
+EXPECTED_TEMPLATE_SHA256 = "42d220a99be6014442151570d4d933f32a700147141f21c47f1d4e8128c5a417"
 
 
 def _load_dashboard_module(tmp_path: Path):
@@ -78,7 +83,7 @@ def test_html_template_contains_critical_dom_anchors(tmp_path):
         "kpiRow", "skillBody", "subBody", "skillSub", "subSub",
         "ledeEvents", "ledeDays", "ledeProjects",
         "stack", "stackLegend", "projSub",
-        "lastRx", "sessVal", "connStatus",
+        "lastRx", "connStatus",
         "dataTooltip",
         # Issue #83: live heartbeat sparkline
         "heartbeat", "heartbeatSr",

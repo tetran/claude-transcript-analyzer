@@ -121,7 +121,7 @@
     color: var(--ink);
   }
 
-  /* 全ページ共通の app-footer。conn-status / lastRx / sessVal を集約。 */
+  /* 全ページ共通の app-footer。conn-status / lastRx を集約。 */
   .app-footer {
     margin-top: 32px;
     padding-top: 16px;
