@@ -203,8 +203,8 @@ def test_skill_kinds_total_matches_aggregate_skills_when_below_cap(self):
 
 | 群 | field | 判定基準 |
 |---|---|---|
-| **Period-applicable (11)** — KPI / Overview / Patterns | `total_events`, `skill_kinds_total`, `subagent_kinds_total`, `project_total` (KPI) / `skill_ranking`, `subagent_ranking`, `daily_trend`, `project_breakdown` (Overview) / `hourly_heatmap`, `skill_cooccurrence`, `project_skill_matrix` (Patterns) | usage event の集約で、窓を狭めても意味が壊れない |
-| **Full-period (8)** — Quality / Surface / lifetime | `subagent_failure_trend` (週バケッ: 7d だと 1 bucket になり trend として無意味) / `permission_prompt_skill_breakdown`, `permission_prompt_subagent_breakdown`, `compact_density` (Quality) / `skill_invocation_breakdown`, `skill_lifecycle` (`first_seen`/`last_seen` は lifetime 必須), `skill_hibernating` (Surface) / `session_stats` (resume/compact-count は lifetime 不変) | 観測窓不変 or lifetime metric。filter すると意味が壊れる |
+| **Period-applicable (12)** — KPI / Overview / Patterns / Sessions | `total_events`, `skill_kinds_total`, `subagent_kinds_total`, `project_total` (KPI) / `skill_ranking`, `subagent_ranking`, `daily_trend`, `project_breakdown` (Overview) / `hourly_heatmap`, `skill_cooccurrence`, `project_skill_matrix` (Patterns) / `session_stats` (Sessions, Issue #114) | usage event の集約で、窓を狭めても意味が壊れない |
+| **Full-period (7)** — Quality / Surface | `subagent_failure_trend` (週バケッ: 7d だと 1 bucket になり trend として無意味) / `permission_prompt_skill_breakdown`, `permission_prompt_subagent_breakdown`, `compact_density` (Quality) / `skill_invocation_breakdown`, `skill_lifecycle` (`first_seen`/`last_seen` は lifetime 必須), `skill_hibernating` (Surface) | 観測窓不変。filter すると意味が壊れる |
 | **Filtering-N/A (3)** — metadata | `last_updated`, `health_alerts`, `period_applied` (echo 用追加 field) | response metadata、filter とは独立 |
 
 判定ルール: **集計の cardinal 単位が period より粗いものは full-period 群**。週バケッを 7d 窓で出すと 1 bucket だけで trend 表示が壊れる、が典型。

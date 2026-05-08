@@ -105,7 +105,7 @@ kill $(jq -r .pid ~/.claude/transcript-analyzer/server.json)
 ### 共通 chrome と Overview 専用 chrome の分離
 
 - **共通頂部 nav** (`<nav class="page-nav">`): 5 タブ。`.app` 直下、全ページに表示
-- **共通 footer** (`<footer class="app-footer">`): conn-status / lastRx / sessVal /
+- **共通 footer** (`<footer class="app-footer">`): conn-status / lastRx /
   クレジット行。全ページに表示（接続バッジは Overview 以外のページからも見える）
 - **Overview 専用 header** (`<header class="header">`): h1「Claude Code Usage
   Overview」+ lede。`<section data-page="overview">` の中に閉じる

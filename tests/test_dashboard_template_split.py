@@ -28,7 +28,8 @@ _DASHBOARD_PATH = Path(__file__).parent.parent / "dashboard" / "server.py"
 #
 # Bump history (1 行 / issue):
 # - 6db5eea86656: Issue #115 sessions period toggle slot + closing comment marker
-EXPECTED_TEMPLATE_SHA256 = "6db5eea866562050ff6c196247ecde2dc6fa066af2c81ec15f4e175894e7b2e6"
+# - 50bf29f2a544: Issue #114 footer sessVal 削除 (kpi-sess が period 連動の唯一表示)
+EXPECTED_TEMPLATE_SHA256 = "50bf29f2a54464b07e4a6e666a1a9edebfe621d486b8afd5484b7443c12ca509"
 
 
 def _load_dashboard_module(tmp_path: Path):
@@ -81,7 +82,7 @@ def test_html_template_contains_critical_dom_anchors(tmp_path):
         "kpiRow", "skillBody", "subBody", "skillSub", "subSub",
         "ledeEvents", "ledeDays", "ledeProjects",
         "stack", "stackLegend", "projSub",
-        "lastRx", "sessVal", "connStatus",
+        "lastRx", "connStatus",
         "dataTooltip",
         # Issue #83: live heartbeat sparkline
         "heartbeat", "heartbeatSr",
