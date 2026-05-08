@@ -29,7 +29,8 @@ _DASHBOARD_PATH = Path(__file__).parent.parent / "dashboard" / "server.py"
 # Bump history (1 行 / issue):
 # - 6db5eea86656: Issue #115 sessions period toggle slot + closing comment marker
 # - 50bf29f2a544: Issue #114 footer sessVal 削除 (kpi-sess が period 連動の唯一表示)
-EXPECTED_TEMPLATE_SHA256 = "50bf29f2a54464b07e4a6e666a1a9edebfe621d486b8afd5484b7443c12ca509"
+# - 42d220a99be6: v0.8.1 release / footer bump
+EXPECTED_TEMPLATE_SHA256 = "42d220a99be6014442151570d4d933f32a700147141f21c47f1d4e8128c5a417"
 
 
 def _load_dashboard_module(tmp_path: Path):
