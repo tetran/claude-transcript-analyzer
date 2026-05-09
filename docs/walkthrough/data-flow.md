@@ -96,7 +96,7 @@ wc -l docs/walkthrough/fixtures/usage-sample.jsonl && du -h docs/walkthrough/fix
 
 ```output
      625 docs/walkthrough/fixtures/usage-sample.jsonl
-200K	docs/walkthrough/fixtures/usage-sample.jsonl
+152K	docs/walkthrough/fixtures/usage-sample.jsonl
 ```
 
 イベントの種類別に件数を出してみると、何がどれくらい飛んでくるか見えます。
@@ -319,6 +319,7 @@ Total events: 625
 - **append-only** — `hooks/_append.py` が cross-platform なファイルロックを取って 1 行ずつ追記する。複数の Claude Code インスタンスが同時に書いても壊れない
 - **180 日 retention** — `scripts/archive_usage.py` が SessionStart 時にべき等起動され、180 日超のイベントを月次 gzip に押し出す
 - **Archive は不変** — 一度 cold tier に入ったイベントは **書き換えない**。`reports/summary.py --include-archive` のような opt-in でだけ読まれる
+- **Rescan で過去分も再 append できる** — `scripts/rescan_transcripts.py` は `~/.claude/projects/` 配下の生 transcript を読み直し、`write_events_with_dedup()` 経由で append+dedup する。`assistant_usage` event の遡及バックフィルや、hook 取りこぼしの補修に使う。Archive 済みイベントは structural fingerprint で重複弾きされるため、何度叩いても hot tier の見え方は変わらない (Issue #104 / v0.8.0)
 
 詳しい契約は `docs/spec/archive-runtime.md`、設計判断は `docs/reference/storage.md`。
 

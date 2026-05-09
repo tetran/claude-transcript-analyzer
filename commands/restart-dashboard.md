@@ -4,40 +4,46 @@ Restart the running claude-transcript-analyzer dashboard server.
 "$(command -v python3 || command -v python)" ${CLAUDE_PLUGIN_ROOT}/scripts/restart_dashboard.py
 ```
 
-`hooks/launch_dashboard.py` は **idempotent な spawn** で動いているため、`/plugin update`
-で `dashboard/template.html` などの UI ファイルが更新されても、既存のダッシュボード
-プロセスがメモリに古い HTML を保持し続けて変更が反映されない (Issue #52)。
+`hooks/launch_dashboard.py` runs as an **idempotent spawn**, so even when a
+`/plugin update` refreshes UI files like `dashboard/template/shell.html`
+(split under `dashboard/template/` in Issue #67), the existing dashboard
+process keeps the old HTML in memory and the change is not reflected
+(Issue #52).
 
-このコマンドは **明示的に再起動** する経路:
+This command is the **explicit restart** path:
 
-1. `~/.claude/transcript-analyzer/server.json` から pid を読む
-2. SIGTERM を送って graceful shutdown を依頼し、最大 5 秒待つ
-3. 5 秒経っても死なない場合は SIGKILL で強制終了 (POSIX のみ)
-4. 残骸の `server.json` を compare-and-delete でクリーンアップ
-5. `hooks/launch_dashboard.py` を直叩きして新規 spawn
+1. Read pid from `~/.claude/transcript-analyzer/server.json`
+2. Send SIGTERM to request a graceful shutdown, wait up to 5 seconds
+3. If still alive after 5 seconds, force-kill with SIGKILL (POSIX only)
+4. Clean up the leftover `server.json` via compare-and-delete
+5. Invoke `hooks/launch_dashboard.py` directly to spawn a fresh process
 
-サーバーが動いていない状態で叩いても **冪等** に動作する (= 起動経路として兼用可能)。
+Running this command when no server is alive is **idempotent** (= it can
+double as the launch path).
 
-## 出力
+## Output
 
-すべて stderr に 1 行ずつ出力される:
+All progress is written one line at a time to stderr:
 
-- 進捗: `[restart] sending SIGTERM to dashboard pid=12345`
-- 起動完了 URL: `[restart] dashboard available at http://localhost:9999`
+- Progress: `[restart] sending SIGTERM to dashboard pid=12345`
+- Ready URL: `[restart] dashboard available at http://localhost:9999`
 
-URL が timeout 内に取れない (spawn 失敗等) ときは silent。その場合は
-`cat ~/.claude/transcript-analyzer/server.json` でも確認できる。
+If the URL cannot be obtained within the timeout (spawn failure, etc.) the
+command stays silent. In that case `cat ~/.claude/transcript-analyzer/server.json`
+also reveals the URL.
 
-## 失敗時
+## Failure
 
-既存プロセスを止められなかった場合 (PermissionError / SIGTERM/SIGKILL でも生存) は
-**新規 spawn を行わずに exit 1** で抜ける。二重起動を構造的に避けるための安全側挙動。
-その場合は `kill -9 $(jq -r .pid ~/.claude/transcript-analyzer/server.json)` 等で
-手動 cleanup してから再実行する。
+If the existing process cannot be stopped (PermissionError, or it survives
+both SIGTERM and SIGKILL), the command **exits 1 without spawning a new
+server** — a structural safeguard against double-launch. Clean up manually
+with e.g. `kill -9 $(jq -r .pid ~/.claude/transcript-analyzer/server.json)`
+and re-run.
 
-## 自動化のヒント
+## Automation hint
 
-`/plugin update` フック等で自動再起動したい場合は同じスクリプトを呼べばよい:
+To auto-restart from a `/plugin update` hook or similar, invoke the same
+script:
 
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/restart_dashboard.py

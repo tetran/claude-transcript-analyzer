@@ -4,8 +4,8 @@
 
 A tool that parses Claude Code transcripts (`.jsonl`) and **automatically collects, aggregates, and visualizes Skills and Subagents usage**.
 
-Claude Code Hooks collect events in real time and append them to `data/usage.jsonl`.
-A browser dashboard then renders the data.
+Claude Code Hooks collect events in real time and append them to `~/.claude/transcript-analyzer/usage.jsonl`.
+A browser dashboard (auto-launched idempotently by `hooks/launch_dashboard.py`) then renders the data.
 
 ## Data flow
 
@@ -39,20 +39,20 @@ Claude Code activity
   │  ── Archive auto-launch (Issue #30) ──────────────────
   │  SessionStart                     →  hooks/launch_archive.py    (idempotent launcher)
   ↓
-data/usage.jsonl          ← append-only event log (hot tier / last 180 days)
-  │  ├ hooks/_append.py          ← locked append (blocking SH / cross-platform)
-  │  └ scripts/archive_usage.py  ← moves events older than 180 days into monthly .jsonl.gz (gzip)
+~/.claude/transcript-analyzer/usage.jsonl  ← append-only event log (hot tier / last 180 days)
+  │  ├ hooks/_append.py                     ← locked append (blocking SH / cross-platform)
+  │  └ scripts/archive_usage.py             ← moves events older than 180 days into monthly .jsonl.gz (gzip)
   │       ↓
-  │   archive/YYYY-MM.jsonl.gz   ← cold tier / immutable / read by opt-in readers
+  │   ~/.claude/transcript-analyzer/archive/YYYY-MM.jsonl.gz   ← cold tier / immutable / read by opt-in readers
   │
   ├── reports/summary.py     →  terminal aggregate report (--include-archive includes archive)
   ├── reports/export_html.py →  standalone HTML report (--include-archive same as above)
   └── dashboard/server.py    →  browser dashboard (hot tier only — fixed at 180 days by spec)
 ```
 
-The actual storage location is `~/.claude/transcript-analyzer/usage.jsonl` (a path that survives plugin updates).
+The storage base `~/.claude/transcript-analyzer/` is a path that survives plugin updates.
 For tests, the `USAGE_JSONL` / `HEALTH_ALERTS_JSONL` / `ARCHIVE_DIR` /
-`ARCHIVE_STATE_FILE` / `USAGE_JSONL_LOCK` environment variables can override these paths.
+`ARCHIVE_STATE_FILE` / `USAGE_JSONL_LOCK` environment variables can override these paths (e.g. redirect to in-repo `data/usage.jsonl`).
 
 ## Docs — spec / reference
 
@@ -74,7 +74,7 @@ claude-transcript-analyzer/
 ├── reports/                  # report-generation scripts
 ├── subagent_metrics.py       # shared subagent aggregation logic (invocation-level pairing)
 ├── scripts/                  # utilities for manual / batch execution
-├── data/                     # data placeholder (unused as of v0.7.3)
+├── data/                     # gitignored dev-time fallback (production uses `~/.claude/transcript-analyzer/`)
 ├── tests/
 └── docs/
     ├── transcript-format.md  # raw transcript format + Hook input schema + Archive evolution rules
