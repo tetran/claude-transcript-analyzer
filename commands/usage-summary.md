@@ -15,3 +15,11 @@ To include archived events from `~/.claude/transcript-analyzer/archive/*.jsonl.g
 
 This merges every monthly `.jsonl.gz` archive with the hot tier for a full-history aggregate.
 
+To append a per-session estimated-cost ranking (top 10 sessions, calculated from `assistant_usage` events × `MODEL_PRICING`):
+
+```bash
+"$(command -v python3 || command -v python)" ${CLAUDE_PLUGIN_ROOT}/reports/summary.py --include-cost
+```
+
+`--include-cost` and `--include-archive` are independent and may be combined.
+

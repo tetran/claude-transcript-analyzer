@@ -1,63 +1,67 @@
 Manually launch the claude-transcript-analyzer dashboard server (idempotent).
 
-> **v0.3 以降の通常運用ではこのコマンドは不要**: `hooks/launch_dashboard.py` が
-> SessionStart / UserPromptExpansion / UserPromptSubmit / PostToolUse hook で
-> **べき等に自動起動**する。
-> このスラッシュコマンドは、明示的に手動で立ち上げたい場合の併存パスとして残す。
+> **Not needed in normal operation since v0.3**: `hooks/launch_dashboard.py`
+> is **auto-launched idempotently** on the SessionStart / UserPromptExpansion
+> / UserPromptSubmit / PostToolUse hooks.
+> This slash command remains as a coexisting path for explicit manual launch.
 
 ```bash
 "$(command -v python3 || command -v python)" ${CLAUDE_PLUGIN_ROOT}/hooks/launch_dashboard.py
 ```
 
-Hook 経由と同じ launcher を呼ぶため **べき等**: 既起動なら何もせず、未起動なら
-fork-and-detach で起動する。多重起動・ポート競合は起きない。
+It calls the same launcher as the hook path, so it is **idempotent**: a
+no-op if already running, fork-and-detach spawn otherwise. Double-launch
+and port collision cannot occur.
 
-URL は起動時 stderr に `Dashboard available: http://localhost:<port>` として 1 行出力される。
-また `~/.claude/transcript-analyzer/server.json` の `url` フィールドからも取得できる：
+The URL is printed to stderr at startup as a single line `Dashboard
+available: http://localhost:<port>`. It is also retrievable from the `url`
+field of `~/.claude/transcript-analyzer/server.json`:
 
 ```bash
 cat ~/.claude/transcript-analyzer/server.json
 # → {"pid": ..., "port": ..., "url": "http://localhost:...", "started_at": "..."}
 ```
 
-## 環境変数
+## Environment variables
 
-| 変数 | デフォルト | 意味 |
-|------|-----------|------|
-| `DASHBOARD_PORT` | `0`（OS 任せ・空きポート） | 具体ポート指定可 |
-| `DASHBOARD_IDLE_SECONDS` | `600`（10 分） | idle 自動停止の閾値秒。`0` で無効化 |
-| `DASHBOARD_POLL_INTERVAL` | `1.0` | usage.jsonl 変更検知の polling 周期 (秒) |
+| Variable | Default | Meaning |
+|---|---|---|
+| `DASHBOARD_PORT` | `0` (OS-assigned free port) | Specify an explicit port |
+| `DASHBOARD_IDLE_SECONDS` | `600` (10 min) | Idle auto-stop threshold in seconds. `0` disables |
+| `DASHBOARD_POLL_INTERVAL` | `1.0` | usage.jsonl change-detection polling interval (seconds) |
 
 ```bash
 DASHBOARD_PORT=9090 "$(command -v python3 || command -v python)" ${CLAUDE_PLUGIN_ROOT}/hooks/launch_dashboard.py
 ```
 
-## 停止
+## Stopping
 
-- idle 自動停止: 最後の HTTP リクエストから 10 分経過で graceful shutdown
-- 手動停止: `kill $(jq -r .pid ~/.claude/transcript-analyzer/server.json)`
+- Idle auto-stop: graceful shutdown after 10 minutes without an HTTP request
+- Manual stop: `kill $(jq -r .pid ~/.claude/transcript-analyzer/server.json)`
 
-idle 停止後は次の Claude Code 操作で hook 経由で **自動復活** する。
+After an idle stop, the next Claude Code action **revives** the dashboard
+automatically through the hook.
 
-## 再起動 (UI 変更を反映したいとき)
+## Restart (to pick up UI changes)
 
-`/plugin update` で `dashboard/template.html` 等の UI ファイルが更新されても、
-launcher は idempotent な spawn なので既存サーバーは古い HTML をメモリに保持し続ける。
-明示的に再起動するには `/restart-dashboard` を使う:
+When `/plugin update` refreshes UI files like `dashboard/template/shell.html`
+(split into shell + styles + scripts under `dashboard/template/` in Issue
+#67), the launcher's idempotent spawn keeps the existing server, which holds
+the old HTML in memory. To force an explicit restart, use `/restart-dashboard`:
 
 ```bash
 "$(command -v python3 || command -v python)" ${CLAUDE_PLUGIN_ROOT}/scripts/restart_dashboard.py
 ```
 
-## デバッグ用 fg 起動 (上級ユーザー向け)
+## Debug foreground launch (advanced users)
 
-サーバーログを foreground で見たい場合は `dashboard/server.py` を直接叩ける：
+To watch server logs in the foreground, invoke `dashboard/server.py` directly:
 
 ```bash
 "$(command -v python3 || command -v python)" ${CLAUDE_PLUGIN_ROOT}/dashboard/server.py
 ```
 
-⚠️ ただしこの経路は **launcher を経由しないため二重起動チェックを行わない**。
-事前に `cat ~/.claude/transcript-analyzer/server.json` で既起動を確認するか、
-既存サーバーを kill してから叩くこと。
-
+WARNING: this path **bypasses the launcher and therefore the double-launch
+check**. Verify there is no live server beforehand
+(`cat ~/.claude/transcript-analyzer/server.json`) or kill the existing server
+first.

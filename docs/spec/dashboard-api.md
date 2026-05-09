@@ -25,15 +25,15 @@
   pairing semantics を尊重し、`failure_rate` / `avg_duration_ms` / pXX duration が
   period boundary 跨ぎで silent drift しないことを保証するため。
 
-### Period 適用 scope (13 field)
+### Period 適用 scope (14 field)
 
 - KPI counter: `total_events` / `skill_kinds_total` / `subagent_kinds_total` / `project_total`
 - Overview: `skill_ranking` / `subagent_ranking` / `daily_trend` / `project_breakdown`
 - Patterns: `hourly_heatmap` / `skill_cooccurrence` / `project_skill_matrix`
 - Sessions: `session_breakdown` (Issue #99 / v0.8.0〜)
 - Overview: `model_distribution` (Issue #106 / v0.8.0〜)
-- Sessions: `session_stats` (Issue #114 / v0.8.1〜) — 4 sub-field
-  (`total_sessions` / `resume_rate` / `compact_count` / `permission_prompt_count`)
+- Sessions: `session_stats` (Issue #114 / v0.8.1〜) — 5 sub-field
+  (`total_sessions` / `resume_count` / `resume_rate` / `compact_count` / `permission_prompt_count`)
   はすべて period 内集計。
 
 ### 全期間 (period 不変) scope (7 field)
@@ -71,7 +71,10 @@
   "hourly_heatmap":          { ... },
   "skill_cooccurrence":      [...],
   "project_skill_matrix":    { ... },
-  "subagent_failure_trend":  [...],
+  "subagent_failure_trend":              [...],
+  "permission_prompt_skill_breakdown":    [...],
+  "permission_prompt_subagent_breakdown": [...],
+  "compact_density":         { ... },
   "session_stats":           { ... },
   "health_alerts":           [...],
   "skill_invocation_breakdown":  [...],
