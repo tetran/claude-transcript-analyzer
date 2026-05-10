@@ -76,7 +76,7 @@ summary.py
 | `hooks/record_skill.py` | Skill ツール実行 / スラッシュコマンド入力を `usage.jsonl` に記録 |
 | `hooks/record_subagent.py` | Task / Agent ツール実行と SubagentStart/Stop を記録 |
 | `hooks/record_session.py` | セッション開始/終了, PreCompact, 通知などを記録 |
-| `hooks/record_assistant_usage.py` | Stop hook で transcript から `(model, 4 種 token, message_id)` を抽出して `assistant_usage` event を記録 (詳しい流れは `cost-calculation.md`) |
+| `hooks/record_assistant_usage.py` | Stop hook で transcript から `(model, 4 種 token, message_id)` を抽出して `assistant_usage` イベントを記録 (詳しい流れは `cost-calculation.md`) |
 | `hooks/_append.py` | ファイルロック付きで append-only 書き込み |
 | `hooks/verify_session.py` | Stop hook で transcript と usage.jsonl を突き合わせて整合性チェック |
 | `hooks/launch_dashboard.py` | ダッシュボードを fork-and-detach でべき等に起動 |
@@ -168,7 +168,7 @@ for line in open(\"docs/walkthrough/fixtures/usage-sample.jsonl\"):
 
 ## 第 2 章: イベント 1 件のライフサイクル 🌱
 
-ではいよいよ「Claude Code から飛んできた raw な hook 入力が、どうやって `usage.jsonl` の 1 行になるか」を実機で再現します。
+ではいよいよ「Claude Code から飛んできた生の hook 入力が、どうやって `usage.jsonl` の 1 行になるか」を実機で再現します。
 
 Hook の入り口 `hooks/record_skill.py` は **stdin から JSON を 1 つ受け取り、stdout には何も出さず、ファイルに 1 行 append する** という単純なフィルタです。
 
@@ -238,7 +238,7 @@ rm -rf "$TMP"
 
 スラッシュコマンドは `event_type=user_slash_command` になり、`source=expansion` が付きます。`/clear` や `/help` のような **組み込みコマンドは記録しない** ロジックも `record_skill.py` の中で BUILTIN_COMMANDS リストとして弾かれています (`/exit /clear /help /compact /mcp /config /model /resume /context /skills /hooks /fast`)。
 
-> 💡 サブエージェント (`Task` / `Agent` ツール) には専用の `hooks/record_subagent.py` があり、`SubagentStart` / `SubagentStop` のペアリングを通じて invocation 単位で集計できるようになっています。アルゴリズムの解説は `docs/reference/subagent-invocation-pairing.md` にあります。
+> 💡 サブエージェント (`Task` / `Agent` ツール) には専用の `hooks/record_subagent.py` があり、`SubagentStart` / `SubagentStop` のペアリングを通じて呼び出し単位で集計できるようになっています。アルゴリズムの解説は `docs/reference/subagent-invocation-pairing.md` にあります。
 
 ---
 
@@ -316,10 +316,10 @@ Total events: 625
     └── .archive_state.json      ← rotation の進捗 marker
 
 設計のキモ:
-- **append-only** — `hooks/_append.py` が cross-platform なファイルロックを取って 1 行ずつ追記する。複数の Claude Code インスタンスが同時に書いても壊れない
-- **180 日 retention** — `scripts/archive_usage.py` が SessionStart 時にべき等起動され、180 日超のイベントを月次 gzip に押し出す
-- **Archive は不変** — 一度 cold tier に入ったイベントは **書き換えない**。`reports/summary.py --include-archive` のような opt-in でだけ読まれる
-- **Rescan で過去分も再 append できる** — `scripts/rescan_transcripts.py` は `~/.claude/projects/` 配下の生 transcript を読み直し、`write_events_with_dedup()` 経由で append+dedup する。`assistant_usage` event の遡及バックフィルや、hook 取りこぼしの補修に使う。Archive 済みイベントは structural fingerprint で重複弾きされるため、何度叩いても hot tier の見え方は変わらない (Issue #104 / v0.8.0)
+- **append-only** — `hooks/_append.py` がファイルロックを取って 1 行ずつ追記する。複数の Claude Code インスタンスが同時に書いても壊れない
+- **180 日 retention** — `scripts/archive_usage.py` が SessionStart 時にべき等で起動され、180 日超のイベントを月次 gzip に押し出す
+- **Archive は不変** — 一度 cold tier に入ったイベントは **書き換えない**。`reports/summary.py --include-archive` のように明示的に指定した場合のみ読まれる
+- **Rescan で過去分も再 append できる** — `scripts/rescan_transcripts.py` は `~/.claude/projects/` 配下の生 transcript を読み直し、`write_events_with_dedup()` 経由で重複除去の上で追記。`assistant_usage` イベントの遡及バックフィルや、hook 取りこぼしの補修に使う。Archive 済みイベントは `_structural_fingerprint()` 基準で除去されるため、何度叩いても hot tier へは影響しない (Issue #104 / v0.8.0)
 
 詳しい契約は `docs/spec/archive-runtime.md`、設計判断は `docs/reference/storage.md`。
 
@@ -353,4 +353,3 @@ dashboard は本番環境を必要とするのでこの walkthrough では実行
 ## おまけ: この walkthrough 自体を再生する 🔁
 
 このドキュメントは showboat 0.6.1 で作られています。書き直す手順だけを取り出すには `showboat extract docs/walkthrough/data-flow.md` を実行すると、`init` / `note` / `exec` の系列が出力されます。出力ブロックは含まれない (verify が再生成する) ので、別のリポジトリ向けに再利用したい場合の雛形にも使えます🛠️
-

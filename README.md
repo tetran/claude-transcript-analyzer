@@ -29,26 +29,6 @@ Claude Code のチャット内で以下を実行する：
 
 その後、Claude Code を再起動する。
 
-### Python 解決方式
-
-プラグインの hook と slash command は **bash の POSIX `command -v` fallback** で Python を解決する (Issue #33)：
-
-```bash
-"$(command -v python3 || command -v python)" ${CLAUDE_PLUGIN_ROOT}/hooks/foo.py
-```
-
-`python3` を優先し、無ければ `python` にフォールバックする。Claude Code hook の `command` フィールドは全 OS でデフォルト bash で実行されるため、この POSIX 構文が macOS / Linux / Windows のどれでも一律に動く。`$(...)` を double-quote で囲むのは、Windows で Python が `C:\Program Files\Python311\python.exe` のようにスペース入りパスにインストールされていても bash の word splitting で分割されないようにするため。
-
-| OS | 動作 |
-|----|------|
-| Windows | 公式インストーラ / Microsoft Store / Python Launcher のいずれで入れても `python.exe` または `python3.exe` のどちらかが PATH 上に来れば動く（alias を作る必要なし）。Claude Code hook は内部的に bash を spawn するため Git for Windows / WSL のいずれかが必要 |
-| macOS (Homebrew) | `brew install python@3.x` で `python3` が入る。`python` symlink の有無は問わない |
-| Linux | `python3` 単独提供が主流の Ubuntu 22+ / Debian 系をそのまま使える。`python-is-python3` 等の追加措置は不要 |
-
-二重保険として、`hooks/*.py` の各スクリプトには shebang `#!/usr/bin/env python3` と実行ビット (`chmod +x`) が付与されている。`$()` が空展開した場合 (PATH 上に `python3` も `python` も無い極端なケース) でも、`env: 'python3': No such file or directory` という Python 不在の本当のエラーメッセージが出る。
-
-> **経緯**: Issue #24 (PR #31) で `python` 統一としていたが、macOS Homebrew / Ubuntu 22+ の標準環境 (`python3` のみ) で hook が起動失敗するため、Issue #33 で `command -v` fallback に切り替えた。
-
 ### アンインストール
 
 ```
@@ -199,7 +179,7 @@ archive を含めて全期間で生成したい場合は `--include-archive` を
 ├── .archive_state.json   # archive job のべき等性 marker
 ├── health_alerts.jsonl   # transcript ↔ usage 照合の異常検知ログ（自動生成）
 ├── server.json           # ダッシュボード稼働中のメタデータ (pid / port / url)
-└── report.html           # /usage-export-html の default 出力先
+└── report.html           # /usage-export-html のデフォルト出力先
 ```
 
 Windows では `%USERPROFILE%\.claude\transcript-analyzer\` (Claude Code 本体の `HOME` 解決と同じ規約)。
@@ -231,4 +211,3 @@ mv data/usage.jsonl ~/.claude/transcript-analyzer/usage.jsonl
 ```bash
 USAGE_JSONL=./data/usage.jsonl python3 dashboard/server.py
 ```
-
