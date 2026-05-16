@@ -62,7 +62,7 @@ from typing import Optional
 # プロジェクトルートを sys.path に持っていない経路でも動くよう明示的に追加 (Hook から
 # 直接 `python <abs path>/launch_dashboard.py` で起動されるため)。
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from server_registry import remove_server_json as _registry_remove_server_json
+from analyzer.server_registry import remove_server_json as _registry_remove_server_json
 
 _DEFAULT_SERVER_JSON_PATH = Path.home() / ".claude" / "transcript-analyzer" / "server.json"
 SERVER_JSON_PATH = Path(os.environ.get("DASHBOARD_SERVER_JSON", str(_DEFAULT_SERVER_JSON_PATH)))

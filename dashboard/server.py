@@ -33,7 +33,7 @@ from analyzer.cost import TOP_N_SESSIONS, aggregate_model_distribution, aggregat
 # (mod._file_lock / mod.write_server_json / mod.remove_server_json 等) との互換を保つ。
 # 内部実装の monkeypatch (例: `_lock_fd` の差し替え) は本モジュールではなく
 # `server_registry` に対して行う必要がある (binding は ref ではなく値コピーのため)。
-import server_registry  # pylint: disable=wrong-import-position
+import analyzer.server_registry as server_registry  # pylint: disable=wrong-import-position
 
 _file_lock = server_registry._file_lock
 _lock_path_for = server_registry._lock_path_for

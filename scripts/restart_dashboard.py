@@ -39,7 +39,7 @@ sys.path.insert(0, str(_PROJECT_ROOT))
 # `_is_pid_alive` (POSIX/Windows 両対応) と server_registry を再利用する。
 # launch_dashboard.py は import 時に stdin を読まないので import しても副作用ゼロ。
 from hooks import launch_dashboard as _launcher  # noqa: E402  pylint: disable=wrong-import-position
-from server_registry import remove_server_json as _remove_server_json  # noqa: E402  pylint: disable=wrong-import-position
+from analyzer.server_registry import remove_server_json as _remove_server_json  # noqa: E402  pylint: disable=wrong-import-position
 
 # server.json のパス (テスト用に env で差し替え可能 / launch_dashboard と同じ規約)
 _DEFAULT_SERVER_JSON_PATH = Path.home() / ".claude" / "transcript-analyzer" / "server.json"

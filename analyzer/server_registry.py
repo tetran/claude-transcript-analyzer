@@ -1,4 +1,4 @@
-"""server_registry.py — server.json の atomic IO + 排他ロック。
+"""analyzer/server_registry.py — server.json の atomic IO + 排他ロック。
 
 `dashboard/server.py` の本体ランタイムと `hooks/launch_dashboard.py` の cleanup
 パスの両方から共有される。Issue #24 の TOCTOU race 解消は **両者が同じ

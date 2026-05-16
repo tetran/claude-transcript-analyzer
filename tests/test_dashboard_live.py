@@ -20,7 +20,7 @@ from pathlib import Path
 # 内の参照は変わらないため、内部実装テストは `server_registry` を直接 monkeypatch する。
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from test_dashboard import load_dashboard_module, start_server_in_thread  # noqa: F401, E402  (re-exported helpers)
-import server_registry  # noqa: E402
+import analyzer.server_registry as server_registry  # noqa: E402
 
 
 class TestThreadingServer:
