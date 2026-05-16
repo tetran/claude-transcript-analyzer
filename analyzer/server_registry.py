@@ -10,36 +10,34 @@ lock + compare-and-delete を経由する** ことで初めて成立するため
 """
 import json
 import os
-import sys
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator, Optional
+
+from analyzer.platform import lock as _lock
 
 
 # ---- cross-platform 排他ロック ---------------------------------------
 # `server.json` 自体を lock 対象にすると Windows の `msvcrt.locking` が unlink と
 # 相性が悪い (sharing violation) ため、別ファイル `<server.json>.lock` を経由する。
+# OS 別の fcntl/msvcrt 分岐は analyzer.platform.lock に集約済み (Issue #121)。
 
-if sys.platform == "win32":
-    import msvcrt  # pylint: disable=import-error
 
-    def _lock_fd(fd: int) -> None:
-        # LK_NBLCK: 取得失敗時は ~1秒×10回リトライ (LK_LOCK) せず即 OSError。
-        # `launch_dashboard.py` の < 100ms exit budget を Win 競合時にも維持するため
-        # (Issue #24 PR#31 claude[bot] review #1)。`_file_lock` の yield False 経路で
-        # 呼び出し側が安全側に倒す責務を持つ設計と整合する。
-        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+def _lock_fd(fd: int) -> None:
+    """server.json 用の EX ロックを取得する。
 
-    def _unlock_fd(fd: int) -> None:
-        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
-else:
-    import fcntl
+    POSIX (fcntl) は blocking、Windows (msvcrt) は non-blocking で取得する:
+    Windows の blocking 経路 (`LK_LOCK` = ~1秒×10回 retry) は `launch_dashboard.py`
+    の < 100ms exit budget を競合時に壊すため、Windows のみ即 OSError で fail-fast
+    する (Issue #24 PR#31 claude[bot] review #1)。`_file_lock` の yield False 経路で
+    呼び出し側が安全側に倒す責務を持つ設計と整合する。
+    """
+    _lock.acquire_exclusive(fd, blocking=_lock._HAS_FCNTL)
 
-    def _lock_fd(fd: int) -> None:
-        fcntl.flock(fd, fcntl.LOCK_EX)
 
-    def _unlock_fd(fd: int) -> None:
-        fcntl.flock(fd, fcntl.LOCK_UN)
+def _unlock_fd(fd: int) -> None:
+    """`_lock_fd` で取得した EX ロックを解除する (二重解除等の OSError は silent)。"""
+    _lock.release(fd)
 
 
 @contextmanager
@@ -50,8 +48,7 @@ def _file_lock(lock_path: Path) -> Iterator[bool]:
     失敗 (OSError) したときは silent best-effort で続行せず False を yield し、
     呼び出し側が安全側 (削除/書き込みを諦める) に倒す責務を持つ。
     """
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT)
+    fd = _lock.open_lock_file(lock_path)
     try:
         try:
             _lock_fd(fd)
@@ -61,10 +58,7 @@ def _file_lock(lock_path: Path) -> Iterator[bool]:
         try:
             yield True
         finally:
-            try:
-                _unlock_fd(fd)
-            except OSError:
-                pass
+            _unlock_fd(fd)
     finally:
         os.close(fd)
 
