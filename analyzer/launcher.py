@@ -1,4 +1,4 @@
-"""hooks/_launcher_common.py
+"""analyzer/launcher.py
 
 launch_dashboard.py / launch_archive.py の **fork-and-detach 経路の共通化**
 (Issue #30 Phase C / plan-reviewer Proposal 1)。
