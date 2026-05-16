@@ -13,7 +13,7 @@ import argparse
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from dashboard.server import build_dashboard_data, render_static_html
 from reports.summary import load_events

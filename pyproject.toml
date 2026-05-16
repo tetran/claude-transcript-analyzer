@@ -5,7 +5,8 @@ target-version = "py310"
 [tool.ruff.lint]
 # ruff デフォルト (E + F) のみ。isort (I) や pep8 warning (W) は導入時の差分が大きく
 # 旧 pylint の検出範囲とも乖離するため見送り。必要になった時点で個別に opt-in する。
-ignore = [
-    # 旧 .pylintrc の wrong-import-position に対応 (sys.path 操作後 import を許容)
-    "E402",
-]
+#
+# E402 (module-import-not-at-top-of-file) の全域 ignore は撤廃済み (Issue #121)。
+# `analyzer/` パッケージ内部は sys.path ハックを持たないため E402 は出ない。
+# entry-point leaf の「repo root を sys.path に載せてから analyzer.* を import」
+# する行のみ、その import 行に per-line `# noqa: E402` を個別付与して許可する。
