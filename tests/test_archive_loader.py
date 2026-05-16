@@ -24,7 +24,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "hooks"))
 
-import _lock  # noqa: E402  — Issue #44 cross-platform lock helper
+import analyzer.platform.lock as _lock  # noqa: E402  — Issue #44 cross-platform lock helper
 
 
 @pytest.fixture(name="loader_module")

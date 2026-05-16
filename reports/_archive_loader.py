@@ -25,10 +25,10 @@ import sys
 from pathlib import Path
 from typing import Iterator, Optional
 
-# `_lock` を import するため hooks/ を sys.path に追加 (Issue #44)
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "hooks"))
+# analyzer パッケージを import するため repo root を sys.path に追加
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import _lock  # noqa: E402
+from analyzer.platform import lock as _lock  # noqa: E402
 
 _DEFAULT_DATA_DIR = Path.home() / ".claude" / "transcript-analyzer"
 _DEFAULT_DATA_FILE = _DEFAULT_DATA_DIR / "usage.jsonl"

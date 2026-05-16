@@ -43,10 +43,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import IO, Optional
 
-# `_lock` を import するため hooks/ を sys.path に追加 (Issue #44)
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "hooks"))
+# analyzer パッケージを import するため repo root を sys.path に追加
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import _lock  # noqa: E402
+from analyzer.platform import lock as _lock  # noqa: E402
 
 
 DEFAULT_RETENTION_DAYS = 180

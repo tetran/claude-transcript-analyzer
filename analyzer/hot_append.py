@@ -1,4 +1,4 @@
-"""hooks/_append.py
+"""analyzer/hot_append.py
 
 usage.jsonl への lock 付き append (Issue #30 Phase A1 + codex 5th review P1
 + Issue #44 Windows 対応)。
@@ -29,15 +29,11 @@ usage.jsonl への lock 付き append (Issue #30 Phase A1 + codex 5th review P1
 """
 import json
 import os
-import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-# `_lock` を import するため hooks/ を sys.path に追加
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-
-import _lock  # noqa: E402
+from analyzer.platform import lock as _lock
 
 
 _DEFAULT_ALERTS_PATH = (
