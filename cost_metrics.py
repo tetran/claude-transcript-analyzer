@@ -59,12 +59,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import NamedTuple
 
-# subagent_metrics は repo root 直下なので sys.path 経由で import (既存慣習)
+# analyzer パッケージは repo root 直下なので sys.path 経由で import (既存慣習)
 _ROOT = Path(__file__).resolve().parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from subagent_metrics import session_subagent_counts  # noqa: E402
+from analyzer.subagent import session_subagent_counts  # noqa: E402
 
 
 TOP_N_SESSIONS = 20

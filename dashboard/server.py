@@ -16,7 +16,7 @@ from typing import Callable, Optional
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from subagent_metrics import (
+from analyzer.subagent import (
     _bucket_events,
     _build_invocations,
     _pair_invocations_with_stops,

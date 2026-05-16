@@ -7,7 +7,7 @@ from collections import Counter
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from subagent_metrics import aggregate_subagent_metrics
+from analyzer.subagent import aggregate_subagent_metrics
 from reports._archive_loader import archive_read_lock, iter_archive_events_unlocked
 
 _DEFAULT_PATH = Path.home() / ".claude" / "transcript-analyzer" / "usage.jsonl"

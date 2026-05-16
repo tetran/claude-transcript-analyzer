@@ -151,7 +151,7 @@ class TestSessionBreakdown(unittest.TestCase):
         assistant_usage を 1 件付ける。
         """
         from server import build_dashboard_data
-        from subagent_metrics import aggregate_subagent_metrics
+        from analyzer.subagent import aggregate_subagent_metrics
         events = [
             _session_start("s1", "p", "2026-05-01T10:00:00+00:00"),
             _au("s1", "p", "2026-05-01T10:03:00+00:00"),

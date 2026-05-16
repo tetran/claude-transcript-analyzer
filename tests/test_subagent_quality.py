@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-import subagent_metrics
+import analyzer.subagent as subagent_metrics
 
 _DASHBOARD_PATH = Path(__file__).parent.parent / "dashboard" / "server.py"
 

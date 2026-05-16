@@ -1,4 +1,4 @@
-"""subagent_metrics.py — subagent イベントを invocation 単位で集計する共通ロジック。
+"""analyzer/subagent.py — subagent イベントを invocation 単位で集計する共通ロジック。
 
 dashboard/server.py と reports/summary.py の両方から利用される。
 """
