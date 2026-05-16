@@ -87,8 +87,8 @@ class TestResolveArchiveDir:
         monkeypatch.setenv("USAGE_JSONL", str(tmp_path / "usage.jsonl"))
         monkeypatch.delenv("ARCHIVE_DIR", raising=False)
 
-        sys.modules.pop("scripts.archive_usage", None)
-        archive_usage = importlib.import_module("scripts.archive_usage")
+        sys.modules.pop("analyzer.archive.usage", None)
+        archive_usage = importlib.import_module("analyzer.archive.usage")
         writer_paths = archive_usage._resolve_paths()
         reader_dir = loader_module.resolve_archive_dir()
         assert writer_paths.archive_dir == reader_dir

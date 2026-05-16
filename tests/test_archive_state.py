@@ -1,6 +1,6 @@
 """tests/test_archive_state.py
 
-scripts/archive_usage.py の state marker / archivable horizon / env / lock 系
+analyzer/archive/usage.py の state marker / archivable horizon / env / lock 系
 テスト。コアロジック (boundary / partition / fingerprint / merge) は
 test_archive_usage.py に分離。
 
@@ -372,8 +372,8 @@ class TestRetentionEnvRobustness:
         monkeypatch.setenv("USAGE_JSONL_LOCK", str(tmp_path / "usage.jsonl.lock"))
         monkeypatch.setenv("HEALTH_ALERTS_JSONL", str(tmp_path / "health_alerts.jsonl"))
 
-        sys.modules.pop("archive_usage", None)
-        import archive_usage
+        sys.modules.pop("analyzer.archive.usage", None)
+        import analyzer.archive.usage as archive_usage
         importlib.reload(archive_usage)
 
         # main() が ValueError で死なず exit 0 で帰ってくる
@@ -391,8 +391,8 @@ class TestRetentionEnvRobustness:
         monkeypatch.setenv("USAGE_JSONL_LOCK", str(tmp_path / "usage.jsonl.lock"))
         monkeypatch.setenv("HEALTH_ALERTS_JSONL", str(tmp_path / "health_alerts.jsonl"))
 
-        sys.modules.pop("archive_usage", None)
-        import archive_usage
+        sys.modules.pop("analyzer.archive.usage", None)
+        import analyzer.archive.usage as archive_usage
         importlib.reload(archive_usage)
 
         rc = archive_usage.main(["--log", "-"])
@@ -433,9 +433,9 @@ def _archive_subprocess_main(env_dict: dict, sleep_inside: float, ready_q, resul
     """archive_usage を環境変数経由で起動。run_archive 内で sleep して contention を作る。"""
     for k, v in env_dict.items():
         os.environ[k] = v
-    sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
-    sys.modules.pop("archive_usage", None)
-    import archive_usage
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+    sys.modules.pop("analyzer.archive.usage", None)
+    import analyzer.archive.usage as archive_usage
     importlib.reload(archive_usage)
 
     # run_archive を patch して sleep を挟む

@@ -1,6 +1,6 @@
 """tests/test_archive_usage.py
 
-scripts/archive_usage.py の retention + 月次アーカイブ機構 (Issue #30 Phase A2) の
+analyzer/archive/usage.py の retention + 月次アーカイブ機構 (Issue #30 Phase A2) の
 コアロジック (boundary / partition / fingerprint / merge / run_archive integration)
 のテスト。state marker / env / lock 系は test_archive_state.py に分離。
 
