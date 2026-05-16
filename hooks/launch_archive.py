@@ -20,7 +20,7 @@ mid-month で立つ archive 対象を次の calendar 月まで遅延させる bu
 設計上の不変条件:
 - どんな例外でも **silent exit 0** (Claude Code をブロックしない)
 - 既起動検出経路は **< 100ms** (state file 1 個 read のみ)
-- ``analyzer.launcher.spawn_detached()`` 経由で OS 別 detach (POSIX
+- ``analyzer.platform.process.spawn_detached()`` 経由で OS 別 detach (POSIX
   ``start_new_session=True`` / Windows ``DETACHED_PROCESS|CREATE_NEW_PROCESS_GROUP``)
 - 子の archive_usage の log は子側で ``--log auto`` 経由で
   ``~/.claude/transcript-analyzer/archive.log`` に append (子のみが log を所有)
@@ -41,7 +41,7 @@ _DEFAULT_RETENTION_DAYS = 180
 # analyzer パッケージを import するため repo root を sys.path に追加
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from analyzer.launcher import spawn_detached  # noqa: E402
+from analyzer.platform.process import spawn_detached  # noqa: E402
 
 
 _DEFAULT_STATE_FILE = (

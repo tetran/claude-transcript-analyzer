@@ -135,7 +135,7 @@ class TestPhase30Files:
         assert (PROJECT_ROOT / "analyzer" / "hot_append.py").exists()
 
     def test_launcher_common_exists(self):
-        assert (PROJECT_ROOT / "analyzer" / "launcher.py").exists()
+        assert (PROJECT_ROOT / "analyzer" / "platform" / "process.py").exists()
 
     def test_archive_loader_exists(self):
         assert (PROJECT_ROOT / "analyzer" / "archive" / "loader.py").exists()

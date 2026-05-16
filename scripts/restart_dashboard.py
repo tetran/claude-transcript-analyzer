@@ -36,10 +36,11 @@ from typing import Optional
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_PROJECT_ROOT))
 
-# `_is_pid_alive` (POSIX/Windows 両対応) と server_registry を再利用する。
-# launch_dashboard.py は import 時に stdin を読まないので import しても副作用ゼロ。
+# pid 生存確認は analyzer.platform.process に集約済み。launch_dashboard.py は
+# spawn 起動 (`_run_launcher`) のために import する (import 時に stdin を読まない)。
 from hooks import launch_dashboard as _launcher  # noqa: E402  pylint: disable=wrong-import-position
 from analyzer.server_registry import remove_server_json as _remove_server_json  # noqa: E402  pylint: disable=wrong-import-position
+from analyzer.platform.process import is_pid_alive  # noqa: E402  pylint: disable=wrong-import-position
 
 # server.json のパス (テスト用に env で差し替え可能 / launch_dashboard と同じ規約)
 _DEFAULT_SERVER_JSON_PATH = Path.home() / ".claude" / "transcript-analyzer" / "server.json"
@@ -79,8 +80,8 @@ def _read_pid_from_server_json() -> Optional[int]:
 
 
 def _is_pid_alive(pid: int) -> bool:
-    """POSIX/Windows 両対応の pid 生存確認。launch_dashboard と同じ実装を再利用。"""
-    return _launcher._is_pid_alive(pid)
+    """POSIX/Windows 両対応の pid 生存確認 (analyzer.platform.process に委譲)。"""
+    return is_pid_alive(pid)
 
 
 def _wait_for_pid_exit(pid: int, timeout: float) -> bool:
