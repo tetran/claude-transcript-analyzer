@@ -1,6 +1,6 @@
 """tests/test_archive_loader.py
 
-reports/_archive_loader.py 単体のテスト。
+analyzer/archive/loader.py 単体のテスト。
 
 カバー範囲:
 - resolve_archive_dir() の env 解決規約 (codex P2 #1)
@@ -33,8 +33,8 @@ def _loader_module_fixture(monkeypatch):
     monkeypatch.delenv("ARCHIVE_DIR", raising=False)
     monkeypatch.delenv("USAGE_JSONL", raising=False)
     monkeypatch.delenv("USAGE_JSONL_LOCK", raising=False)
-    sys.modules.pop("reports._archive_loader", None)
-    return importlib.import_module("reports._archive_loader")
+    sys.modules.pop("analyzer.archive.loader", None)
+    return importlib.import_module("analyzer.archive.loader")
 
 
 def _write_archive(archive_dir: Path, month: str, events: list[dict]) -> None:

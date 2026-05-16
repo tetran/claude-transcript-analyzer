@@ -20,7 +20,7 @@ usage.jsonl への lock 付き append (Issue #30 Phase A1 + codex 5th review P1
   が 500ms を超える現実的なケースで append-only 不変条件を破っていた。
 - 設計判断: hook latency vs data loss のトレードオフで data loss を回避する側を
   選択。非競合時はマイクロ秒、競合時のみ archive 完了まで blocking 待ちで bounded。
-- reports/_archive_loader.py の blocking SH (codex 4th P2 #1) と意味論統一。
+- analyzer/archive/loader.py の blocking SH (codex 4th P2 #1) と意味論統一。
 
 設計上の不変条件:
 - 非競合 hot path の overhead は ~µs オーダー (lock acquire + write + release)

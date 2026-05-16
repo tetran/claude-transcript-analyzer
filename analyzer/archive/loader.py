@@ -1,4 +1,4 @@
-"""reports/_archive_loader.py
+"""analyzer/archive/loader.py
 
 archive ディレクトリ (`~/.claude/transcript-analyzer/archive/*.jsonl.gz`) から
 event を opt-in で読み込むための共通 loader (Issue #30 Phase B)。
@@ -21,14 +21,10 @@ import contextlib
 import gzip
 import json
 import os
-import sys
 from pathlib import Path
 from typing import Iterator, Optional
 
-# analyzer パッケージを import するため repo root を sys.path に追加
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-from analyzer.platform import lock as _lock  # noqa: E402
+from analyzer.platform import lock as _lock
 
 _DEFAULT_DATA_DIR = Path.home() / ".claude" / "transcript-analyzer"
 _DEFAULT_DATA_FILE = _DEFAULT_DATA_DIR / "usage.jsonl"

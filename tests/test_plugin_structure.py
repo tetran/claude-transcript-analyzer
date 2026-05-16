@@ -138,7 +138,7 @@ class TestPhase30Files:
         assert (PROJECT_ROOT / "analyzer" / "launcher.py").exists()
 
     def test_archive_loader_exists(self):
-        assert (PROJECT_ROOT / "reports" / "_archive_loader.py").exists()
+        assert (PROJECT_ROOT / "analyzer" / "archive" / "loader.py").exists()
 
     def test_usage_archive_command_exists(self):
         assert (PROJECT_ROOT / "commands" / "usage-archive.md").exists()
