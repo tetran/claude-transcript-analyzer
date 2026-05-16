@@ -111,7 +111,7 @@ class _BaseFixture(unittest.TestCase):
         }
 
     def run_hook(self, payload):
-        from record_assistant_usage import handle_stop
+        from analyzer.rescan.assistant_usage import handle_stop
         handle_stop(payload, data_file=self.usage_file)
 
     def assistant_usage_events(self):
@@ -348,11 +348,11 @@ class TestNaiveTimestampHandled(_BaseFixture):
 
 class TestModuleLevelExports(_BaseFixture):
     def test_extract_assistant_usage_is_module_public(self):
-        from record_assistant_usage import extract_assistant_usage
+        from analyzer.rescan.assistant_usage import extract_assistant_usage
         self.assertTrue(callable(extract_assistant_usage))
 
     def test_scan_dedup_keys_returns_session_message_id_set(self):
-        from record_assistant_usage import scan_dedup_keys
+        from analyzer.rescan.assistant_usage import scan_dedup_keys
         _write_jsonl(self.usage_file, [
             {"event_type": "assistant_usage", "session_id": "s1",
              "message_id": "m1", "timestamp": "2026-05-01T10:00:00+00:00"},
@@ -368,19 +368,19 @@ class TestModuleLevelExports(_BaseFixture):
         self.assertEqual(len(keys), 2)
 
     def test_scan_dedup_keys_empty_when_no_file(self):
-        from record_assistant_usage import scan_dedup_keys
+        from analyzer.rescan.assistant_usage import scan_dedup_keys
         keys = scan_dedup_keys(self.tmpdir / "nonexistent.jsonl")
         self.assertEqual(keys, set())
 
     def test_agent_id_from_filename_is_module_public(self):
-        from record_assistant_usage import agent_id_from_filename
+        from analyzer.rescan.assistant_usage import agent_id_from_filename
         self.assertEqual(agent_id_from_filename(Path("agent-foo123.jsonl")), "foo123")
         self.assertEqual(agent_id_from_filename(Path("other-foo.jsonl")), "")
 
 
 class TestExistingScanExistingStateUnchanged(_BaseFixture):
     def test_scan_existing_state_still_returns_two_sets(self):
-        from record_assistant_usage import _scan_existing_state
+        from analyzer.rescan.assistant_usage import _scan_existing_state
         _write_jsonl(self.usage_file, [
             {"event_type": "assistant_usage", "session_id": "s1",
              "message_id": "m1", "timestamp": "2026-05-01T10:00:00+00:00"},

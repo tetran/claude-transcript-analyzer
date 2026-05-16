@@ -11,7 +11,7 @@ from pathlib import Path
 _SCRIPTS_DIR = Path(__file__).parent.parent / "scripts"
 sys.path.insert(0, str(_SCRIPTS_DIR))
 
-import rescan_transcripts as rs  # noqa: E402
+from analyzer.rescan import transcripts as rs  # noqa: E402
 
 SCRIPT = _SCRIPTS_DIR / "rescan_transcripts.py"
 

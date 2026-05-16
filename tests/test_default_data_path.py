@@ -113,10 +113,10 @@ class TestSummaryDefaultPath:
 class TestRescanTranscriptsDefaultPath:
     def test_default_data_file_points_to_transcript_analyzer(self):
         mod = _reload_module(
-            "rescan_transcripts",
-            str(PROJECT_ROOT / "scripts" / "rescan_transcripts.py"),
+            "analyzer.rescan.transcripts",
+            str(PROJECT_ROOT / "analyzer" / "rescan" / "transcripts.py"),
         )
         assert mod._DEFAULT_DATA_FILE == EXPECTED_DIR / "usage.jsonl", (
-            f"rescan_transcripts._DEFAULT_DATA_FILE が期待値と違う: {mod._DEFAULT_DATA_FILE}"
+            f"analyzer.rescan.transcripts._DEFAULT_DATA_FILE が期待値と違う: {mod._DEFAULT_DATA_FILE}"
         )
 
