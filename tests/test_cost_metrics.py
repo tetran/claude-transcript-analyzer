@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from cost_metrics import (
+from analyzer.cost import (
     DEFAULT_PRICING,
     MODEL_PRICING,
     TOP_N_SESSIONS,

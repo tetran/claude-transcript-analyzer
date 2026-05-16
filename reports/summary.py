@@ -169,7 +169,7 @@ def print_report(events: list[dict], *, include_cost: bool = False) -> None:
         print("  (no data)")
 
     if include_cost:
-        from cost_metrics import aggregate_session_breakdown  # noqa: PLC0415
+        from analyzer.cost import aggregate_session_breakdown  # noqa: PLC0415
         breakdown = aggregate_session_breakdown(events, top_n=10**9)
         total = round(sum(b["estimated_cost_usd"] for b in breakdown), 4)
         top10 = sorted(breakdown, key=lambda b: -b["estimated_cost_usd"])[:10]

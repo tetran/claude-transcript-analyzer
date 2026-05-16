@@ -1,4 +1,4 @@
-"""cost_metrics.py — assistant_usage events から session 単位の cost を導出する純関数群。
+"""analyzer/cost.py — assistant_usage events から session 単位の cost を導出する純関数群。
 
 Issue #99 / v0.8.0〜。`docs/reference/cost-calculation-design.md` §9-§10 で
 採用した「per-message 集計 (raw token + model 永続化、表示時にオンデマンド計算)」
@@ -54,17 +54,10 @@ USD per 1M token で揃える AgenticSec / cost-calculation-design.md §2 の慣
 """
 from __future__ import annotations
 
-import sys
 from datetime import datetime
-from pathlib import Path
 from typing import NamedTuple
 
-# analyzer パッケージは repo root 直下なので sys.path 経由で import (既存慣習)
-_ROOT = Path(__file__).resolve().parent
-if str(_ROOT) not in sys.path:
-    sys.path.insert(0, str(_ROOT))
-
-from analyzer.subagent import session_subagent_counts  # noqa: E402
+from analyzer.subagent import session_subagent_counts
 
 
 TOP_N_SESSIONS = 20
