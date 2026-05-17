@@ -127,7 +127,7 @@ class TestReadServerJson:
 class TestIsPidAlive:
     def test_self_pid_is_alive(self, tmp_path):
         mod = load_launch_module(tmp_path / "server.json")
-        assert mod._is_pid_alive(os.getpid()) is True
+        assert mod.is_pid_alive(os.getpid()) is True
 
     def test_dead_pid_returns_false(self, tmp_path):
         mod = load_launch_module(tmp_path / "server.json")
@@ -135,7 +135,7 @@ class TestIsPidAlive:
         with subprocess.Popen([sys.executable, "-c", "pass"]) as proc:
             proc.wait()
         # 回収済み pid なので os.kill(pid, 0) は ESRCH
-        assert mod._is_pid_alive(proc.pid) is False
+        assert mod.is_pid_alive(proc.pid) is False
 
 
 # ----------------------------------------------------------------------------

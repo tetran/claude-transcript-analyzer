@@ -92,7 +92,7 @@ dispatch table) も `docs/transcript-format.md` に集約。
 
 - **`subagent_type == ""` レコードが構造的に存在する**: SubagentStop hook は
   メインスレッド停止時にも誤発火することがあり、その場合 `subagent_type` が空。
-  集計側 (`subagent_metrics._bucket_events`) で `if not name: continue` により
+  集計側 (`analyzer.subagent._bucket_events`) で `if not name: continue` により
   構造的に除外している。背景・観察値・diagnostic 手順は
   `docs/reference/subagent-invocation-pairing.md` の "Known artifact" 節を参照。
 - **`duration_ms` / `success` は記録しない**: 実 hook payload に存在しないため
@@ -134,10 +134,10 @@ dispatch table) も `docs/transcript-format.md` に集約。
   - `message_id` 欠損 → drop。dedup key を作れないため
   - timestamp parse 失敗 / 空 → drop
   - naive datetime も UTC として扱わず drop (= 既存
-    `subagent_metrics._week_start_iso` の safety belt 規律とは別。本 event は
+    `analyzer.subagent._week_start_iso` の safety belt 規律とは別。本 event は
     transcript の `+00:00` 付き ISO のみを正とする)
 - **archive tier 2 dispatch**: `assistant_usage` event は
-  `(session_id, message_id)` の secondary key を持つので、`scripts/archive_usage.py`
+  `(session_id, message_id)` の secondary key を持つので、`analyzer/archive/usage.py`
   の `_TIER2_DISPATCH` table に `assistant_usage` → `message_id` を additive で
   追記する (後続 archive 互換性確保)。
 

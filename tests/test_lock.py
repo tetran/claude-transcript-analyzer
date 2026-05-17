@@ -1,4 +1,4 @@
-"""hooks/_lock.py — POSIX/Windows cross-platform advisory file lock のテスト
+"""analyzer/platform/lock.py — POSIX/Windows cross-platform advisory file lock のテスト
 (Issue #44)。
 
 責務:
@@ -26,8 +26,8 @@ sys.path.insert(0, str(HOOKS_DIR))
 @pytest.fixture(name="fresh_lock_module")
 def _fresh_lock_module_fixture():
     """_lock モジュールをクリーンに reload。"""
-    sys.modules.pop("_lock", None)
-    import _lock  # noqa: E402
+    sys.modules.pop("analyzer.platform.lock", None)
+    import analyzer.platform.lock as _lock  # noqa: E402
     importlib.reload(_lock)
     return _lock
 
@@ -120,9 +120,9 @@ class TestAcquireRelease:
 def _hold_exclusive_lock(lock_path: str, hold_seconds: float, ready_event):
     """lock holder プロセスのエントリポイント。
     spawn context のため module-level 関数で picklable。"""
-    sys.path.insert(0, str(Path(__file__).parent.parent / "hooks"))
-    sys.modules.pop("_lock", None)
-    import _lock  # noqa: E402
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+    sys.modules.pop("analyzer.platform.lock", None)
+    import analyzer.platform.lock as _lock  # noqa: E402
     importlib.reload(_lock)
     fd = _lock.open_lock_file(Path(lock_path))
     try:
@@ -150,8 +150,8 @@ class TestCrossProcessContention:
         try:
             assert ready_event.wait(timeout=5), "holder failed to acquire lock"
 
-            sys.modules.pop("_lock", None)
-            import _lock  # noqa: E402
+            sys.modules.pop("analyzer.platform.lock", None)
+            import analyzer.platform.lock as _lock  # noqa: E402
             importlib.reload(_lock)
 
             fd = _lock.open_lock_file(lock_path)
@@ -185,8 +185,8 @@ class TestCrossProcessContention:
         try:
             assert ready_event.wait(timeout=5), "holder failed to acquire lock"
 
-            sys.modules.pop("_lock", None)
-            import _lock  # noqa: E402
+            sys.modules.pop("analyzer.platform.lock", None)
+            import analyzer.platform.lock as _lock  # noqa: E402
             importlib.reload(_lock)
 
             fd = _lock.open_lock_file(lock_path)
@@ -261,8 +261,8 @@ class TestNoLockingAvailable:
         monkeypatch.setitem(sys.modules, "fcntl", None)
         monkeypatch.setitem(sys.modules, "msvcrt", None)
 
-        sys.modules.pop("_lock", None)
-        import _lock  # noqa: E402
+        sys.modules.pop("analyzer.platform.lock", None)
+        import analyzer.platform.lock as _lock  # noqa: E402
         importlib.reload(_lock)
 
         try:
@@ -286,6 +286,6 @@ class TestNoLockingAvailable:
             with _lock.shared_lock(tmp_path / "test3.lock"):
                 pass
         finally:
-            sys.modules.pop("_lock", None)
+            sys.modules.pop("analyzer.platform.lock", None)
             monkeypatch.delitem(sys.modules, "fcntl", raising=False)
             monkeypatch.delitem(sys.modules, "msvcrt", raising=False)

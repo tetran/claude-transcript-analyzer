@@ -106,7 +106,7 @@ class TestSessionBreakdown(unittest.TestCase):
 
     def test_top_n_cap(self):
         from server import build_dashboard_data
-        from cost_metrics import TOP_N_SESSIONS
+        from analyzer.cost import TOP_N_SESSIONS
         # Issue #109: 各 session に assistant_usage を 1 件付けて render 対象にする
         events = []
         for i in range(TOP_N_SESSIONS + 5):
@@ -151,7 +151,7 @@ class TestSessionBreakdown(unittest.TestCase):
         assistant_usage を 1 件付ける。
         """
         from server import build_dashboard_data
-        from subagent_metrics import aggregate_subagent_metrics
+        from analyzer.subagent import aggregate_subagent_metrics
         events = [
             _session_start("s1", "p", "2026-05-01T10:00:00+00:00"),
             _au("s1", "p", "2026-05-01T10:03:00+00:00"),
@@ -231,7 +231,7 @@ class TestSessionBreakdownExcludesEmpty(unittest.TestCase):
     """
 
     def test_session_with_only_session_start_excluded(self):
-        from cost_metrics import aggregate_session_breakdown
+        from analyzer.cost import aggregate_session_breakdown
         events = [
             _session_start("s_empty", "p", "2026-05-01T10:00:00+00:00"),
         ]
@@ -239,7 +239,7 @@ class TestSessionBreakdownExcludesEmpty(unittest.TestCase):
         self.assertEqual(len(sb), 0)
 
     def test_session_with_only_session_start_and_session_end_excluded(self):
-        from cost_metrics import aggregate_session_breakdown
+        from analyzer.cost import aggregate_session_breakdown
         events = [
             _session_start("s_empty", "p", "2026-05-01T10:00:00+00:00"),
             _session_end("s_empty", "p", "2026-05-01T10:00:30+00:00"),
@@ -251,7 +251,7 @@ class TestSessionBreakdownExcludesEmpty(unittest.TestCase):
         """/help / /skills 等 skill_tool だけで終わった session
         (assistant_usage 未発火) は除外。
         """
-        from cost_metrics import aggregate_session_breakdown
+        from analyzer.cost import aggregate_session_breakdown
         events = [
             _session_start("s_empty", "p", "2026-05-01T10:00:00+00:00"),
             {"event_type": "skill_tool", "session_id": "s_empty", "project": "p",
@@ -262,7 +262,7 @@ class TestSessionBreakdownExcludesEmpty(unittest.TestCase):
 
     def test_session_with_only_user_slash_command_excluded(self):
         """builtin command (/exit / /clear 等) のみで終わった session は除外。"""
-        from cost_metrics import aggregate_session_breakdown
+        from analyzer.cost import aggregate_session_breakdown
         events = [
             _session_start("s_empty", "p", "2026-05-01T10:00:00+00:00"),
             {"event_type": "user_slash_command", "session_id": "s_empty",
@@ -274,7 +274,7 @@ class TestSessionBreakdownExcludesEmpty(unittest.TestCase):
 
     def test_session_with_one_assistant_usage_included(self):
         """boundary: assistant_usage 1 件あれば残す (Q1=A の verbatim)。"""
-        from cost_metrics import aggregate_session_breakdown
+        from analyzer.cost import aggregate_session_breakdown
         events = [
             _session_start("s_keep", "p", "2026-05-01T10:00:00+00:00"),
             _au("s_keep", "p", "2026-05-01T10:05:00+00:00"),
@@ -287,7 +287,7 @@ class TestSessionBreakdownExcludesEmpty(unittest.TestCase):
         """input=output=cr=cc=0 でも assistant_usage event 自体は 1 件
         → 残す (Q1=A の verbatim 解釈、event 数で判定)。
         """
-        from cost_metrics import aggregate_session_breakdown
+        from analyzer.cost import aggregate_session_breakdown
         events = [
             _session_start("s_keep", "p", "2026-05-01T10:00:00+00:00"),
             _au("s_keep", "p", "2026-05-01T10:05:00+00:00",
@@ -303,7 +303,7 @@ class TestSessionBreakdownExcludesEmpty(unittest.TestCase):
         1 件も発火しなかった session (= Task 起動直後 abort 等) は除外。
         Q1=A の verbatim ("assistant_usage event 0 件") に従う。
         """
-        from cost_metrics import aggregate_session_breakdown
+        from analyzer.cost import aggregate_session_breakdown
         events = [
             _session_start("s_empty", "p", "2026-05-01T10:00:00+00:00"),
             {"event_type": "subagent_start", "session_id": "s_empty",

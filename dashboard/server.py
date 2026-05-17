@@ -16,7 +16,7 @@ from typing import Callable, Optional
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from subagent_metrics import (
+from analyzer.subagent import (
     _bucket_events,
     _build_invocations,
     _pair_invocations_with_stops,
@@ -26,14 +26,14 @@ from subagent_metrics import (
     usage_invocation_intervals,
 )
 # Issue #99 / v0.8.0: session_breakdown for `/api/data` (cost / token / model 内訳)
-from cost_metrics import TOP_N_SESSIONS, aggregate_model_distribution, aggregate_session_breakdown
+from analyzer.cost import TOP_N_SESSIONS, aggregate_model_distribution, aggregate_session_breakdown
 # Issue #24 PR#31 codex P2: server.json の lock + compare-and-delete primitives は
 # `server_registry` に切り出して `hooks/launch_dashboard.py` の cleanup パスと
 # 共有する。本モジュール内では従来 API 名で再 export し、既存テスト
 # (mod._file_lock / mod.write_server_json / mod.remove_server_json 等) との互換を保つ。
 # 内部実装の monkeypatch (例: `_lock_fd` の差し替え) は本モジュールではなく
 # `server_registry` に対して行う必要がある (binding は ref ではなく値コピーのため)。
-import server_registry  # pylint: disable=wrong-import-position
+import analyzer.server_registry as server_registry  # pylint: disable=wrong-import-position
 
 _file_lock = server_registry._file_lock
 _lock_path_for = server_registry._lock_path_for

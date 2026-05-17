@@ -1,4 +1,4 @@
-"""hooks/_lock.py
+"""analyzer/platform/lock.py
 
 POSIX/Windows cross-platform advisory file lock 抽象化 (Issue #44)。
 

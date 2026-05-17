@@ -331,8 +331,8 @@ class TestSmokeIntegration:
 class TestLauncherCommon:
     def test_spawn_detached_uses_new_session_on_posix(self, monkeypatch):
         """POSIX では start_new_session=True が Popen に渡される."""
-        sys.modules.pop("_launcher_common", None)
-        import _launcher_common
+        sys.modules.pop("analyzer.platform.process", None)
+        import analyzer.platform.process as _launcher_common
 
         captured: dict = {}
 
@@ -351,8 +351,8 @@ class TestLauncherCommon:
         assert captured["kwargs"].get("close_fds") is True
 
     def test_spawn_detached_returns_none_on_oserror(self, monkeypatch):
-        sys.modules.pop("_launcher_common", None)
-        import _launcher_common
+        sys.modules.pop("analyzer.platform.process", None)
+        import analyzer.platform.process as _launcher_common
 
         def raising_popen(*args, **kwargs):
             raise OSError("fork failed")

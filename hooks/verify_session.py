@@ -16,11 +16,10 @@ from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
-# scripts/ ディレクトリをパスに追加して rescan_transcripts を利用
-_SCRIPTS_DIR = Path(__file__).parent.parent / "scripts"
-sys.path.insert(0, str(_SCRIPTS_DIR))
+# analyzer パッケージを import するため repo root を sys.path に追加
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rescan_transcripts import _scan_transcript_file  # noqa: E402
+from analyzer.rescan.transcripts import _scan_transcript_file  # noqa: E402
 
 _DEFAULT_DATA_FILE = Path.home() / ".claude" / "transcript-analyzer" / "usage.jsonl"
 _DEFAULT_ALERTS_FILE = (

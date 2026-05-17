@@ -1,6 +1,6 @@
 """tests/test_archive_loader.py
 
-reports/_archive_loader.py 単体のテスト。
+analyzer/archive/loader.py 単体のテスト。
 
 カバー範囲:
 - resolve_archive_dir() の env 解決規約 (codex P2 #1)
@@ -24,7 +24,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "hooks"))
 
-import _lock  # noqa: E402  — Issue #44 cross-platform lock helper
+import analyzer.platform.lock as _lock  # noqa: E402  — Issue #44 cross-platform lock helper
 
 
 @pytest.fixture(name="loader_module")
@@ -33,8 +33,8 @@ def _loader_module_fixture(monkeypatch):
     monkeypatch.delenv("ARCHIVE_DIR", raising=False)
     monkeypatch.delenv("USAGE_JSONL", raising=False)
     monkeypatch.delenv("USAGE_JSONL_LOCK", raising=False)
-    sys.modules.pop("reports._archive_loader", None)
-    return importlib.import_module("reports._archive_loader")
+    sys.modules.pop("analyzer.archive.loader", None)
+    return importlib.import_module("analyzer.archive.loader")
 
 
 def _write_archive(archive_dir: Path, month: str, events: list[dict]) -> None:
@@ -87,8 +87,8 @@ class TestResolveArchiveDir:
         monkeypatch.setenv("USAGE_JSONL", str(tmp_path / "usage.jsonl"))
         monkeypatch.delenv("ARCHIVE_DIR", raising=False)
 
-        sys.modules.pop("scripts.archive_usage", None)
-        archive_usage = importlib.import_module("scripts.archive_usage")
+        sys.modules.pop("analyzer.archive.usage", None)
+        archive_usage = importlib.import_module("analyzer.archive.usage")
         writer_paths = archive_usage._resolve_paths()
         reader_dir = loader_module.resolve_archive_dir()
         assert writer_paths.archive_dir == reader_dir

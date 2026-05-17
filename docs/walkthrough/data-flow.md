@@ -42,18 +42,26 @@
 まずは登場人物を確認します。
 
 ```bash
-ls -1 hooks reports dashboard | grep -v "__pycache__"
+ls -1 hooks reports dashboard analyzer | grep -v "__pycache__"
 ```
 
 ```output
+analyzer:
+__init__.py
+archive
+cost.py
+hot_append.py
+platform
+rescan
+server_registry.py
+subagent.py
+
 dashboard:
 server.py
 template
 
 hooks:
-_append.py
-_launcher_common.py
-_lock.py
+_bootstrap.py
 hooks.json
 launch_archive.py
 launch_dashboard.py
@@ -64,7 +72,6 @@ record_subagent.py
 verify_session.py
 
 reports:
-_archive_loader.py
 export_html.py
 summary.py
 ```
@@ -77,9 +84,10 @@ summary.py
 | `hooks/record_subagent.py` | Task / Agent ツール実行と SubagentStart/Stop を記録 |
 | `hooks/record_session.py` | セッション開始/終了, PreCompact, 通知などを記録 |
 | `hooks/record_assistant_usage.py` | Stop hook で transcript から `(model, 4 種 token, message_id)` を抽出して `assistant_usage` イベントを記録 (詳しい流れは `cost-calculation.md`) |
-| `hooks/_append.py` | ファイルロック付きで append-only 書き込み |
 | `hooks/verify_session.py` | Stop hook で transcript と usage.jsonl を突き合わせて整合性チェック |
 | `hooks/launch_dashboard.py` | ダッシュボードを fork-and-detach でべき等に起動 |
+| `analyzer/` | import 対象の共有ロジック (集計 / archive / rescan / OS seam)。各 `hooks/` `reports/` `scripts/` の leaf はここを import する薄い起動口 |
+| `analyzer/hot_append.py` | ファイルロック付きで append-only 書き込み |
 | `reports/summary.py` | ターミナルに集計レポート |
 | `reports/export_html.py` | スタンドアロン HTML レポート生成 |
 | `dashboard/server.py` | ブラウザ向けライブダッシュボード (SSE 配信) |
@@ -316,7 +324,7 @@ Total events: 625
     └── .archive_state.json      ← rotation の進捗 marker
 
 設計のキモ:
-- **append-only** — `hooks/_append.py` がファイルロックを取って 1 行ずつ追記する。複数の Claude Code インスタンスが同時に書いても壊れない
+- **append-only** — `analyzer/hot_append.py` がファイルロックを取って 1 行ずつ追記する。複数の Claude Code インスタンスが同時に書いても壊れない
 - **180 日 retention** — `scripts/archive_usage.py` が SessionStart 時にべき等で起動され、180 日超のイベントを月次 gzip に押し出す
 - **Archive は不変** — 一度 cold tier に入ったイベントは **書き換えない**。`reports/summary.py --include-archive` のように明示的に指定した場合のみ読まれる
 - **Rescan で過去分も再 append できる** — `scripts/rescan_transcripts.py` は `~/.claude/projects/` 配下の生 transcript を読み直し、`write_events_with_dedup()` 経由で重複除去の上で追記。`assistant_usage` イベントの遡及バックフィルや、hook 取りこぼしの補修に使う。Archive 済みイベントは `_structural_fingerprint()` 基準で除去されるため、何度叩いても hot tier へは影響しない (Issue #104 / v0.8.0)
