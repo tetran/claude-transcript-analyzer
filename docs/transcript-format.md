@@ -259,7 +259,7 @@ Hook スクリプトは標準入力で JSON を受け取る。共通フィール
 > **設計メモ — 観測点の役割分担**
 > `PostToolUse(Task\|Agent)` を **正規観測点** として `event_type: subagent_start` で記録する（count 集計の主ソース）。
 > `SubagentStart` hook 由来は補助観測として `event_type: subagent_lifecycle_start` で別個に記録する。
-> 集計側 (`subagent_metrics.aggregate_subagent_metrics`) は `(session_id, subagent_type)` バケット内で
+> 集計側 (`analyzer.subagent.aggregate_subagent_metrics`) は `(session_id, subagent_type)` バケット内で
 > 両ソースを timestamp 順マージし `INVOCATION_MERGE_WINDOW_SECONDS` (1 秒) 以内なら同一 invocation の重複扱い、
 > それ以上離れていれば別 invocation として count する。これにより：
 > - 両 hook 並列発火 → 1 invocation（重複統合）
@@ -267,7 +267,7 @@ Hook スクリプトは標準入力で JSON を受け取る。共通フィール
 > - 起動失敗 (start) と独立した lifecycle → 別 invocation として両方カウント
 >
 > ヘッドラインメトリクス (`total_events` / `daily_trend` / `project_breakdown`) も
-> `subagent_metrics.usage_invocation_events()` 経由で同じ invocation 同定を使い、
+> `analyzer.subagent.usage_invocation_events()` 経由で同じ invocation 同定を使い、
 > 各 invocation の代表イベント (start を優先、無ければ lifecycle) 1 件だけを反映する。
 > これで lifecycle-only invocation も headline に現れ、`subagent_ranking` と数字が必ず一致する。
 > 詳細は `CLAUDE.md` の同名セクションを参照。
@@ -358,7 +358,7 @@ dedup する。fingerprint 衝突時は **既存 archive 側を採用** (immutab
 
 新しい event_type を追加する際は **dispatch table に追記**することで
 tier 3 sha1 fallback の常時計算コストを避けられる。dispatch table は
-`scripts/archive_usage.py:_TIER2_DISPATCH` に集約。
+`analyzer/archive/usage.py:_TIER2_DISPATCH` に集約。
 
 ### `scripts/rescan_transcripts.py` との運用注意
 

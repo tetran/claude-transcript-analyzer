@@ -243,7 +243,7 @@ Stage 2: start↔lifecycle pair re-include — 同 (session_id, type) bucket の
 Stage 3: start↔stop pair re-include — bidirectional
          (kept start → next paired stop / kept stop → directly preceding paired start)
          start_ts ≤ stop_ts AND no other start in between
-         (= subagent_metrics._pair_invocations_with_stops semantics)
+         (= analyzer.subagent._pair_invocations_with_stops semantics)
 ```
 
 #### Boundary fixture が必須
@@ -259,7 +259,7 @@ Stage 3 が `stop_A` を `start_B` に **誤帰属させない** (it belongs to 
 
 #### Mirror 警告 — `_pair_invocations_with_stops` を canonical に
 
-`_filter_events_by_period` の Stage 3 は `subagent_metrics._pair_invocations_with_stops` の semantics を mirror している。**両側に `# Mirrors X. Keep in sync.` コメント** を入れて bidirectional grep で発見できるようにする。Mirror 実装は boundary case で必ず drift するので、可能な範囲で **canonical helper を直接 import して再利用する** (`_pair_invocations_with_stops` 自体を mirror から呼ぶ)。詳細 lesson は `subagent-invocation-pairing.md`「Pair-with-stop helper §教訓」(Issue #85 で codex review 5 round で 6 件の boundary-case drift を再発見した実績)。
+`_filter_events_by_period` の Stage 3 は `analyzer.subagent._pair_invocations_with_stops` の semantics を mirror している。**両側に `# Mirrors X. Keep in sync.` コメント** を入れて bidirectional grep で発見できるようにする。Mirror 実装は boundary case で必ず drift するので、可能な範囲で **canonical helper を直接 import して再利用する** (`_pair_invocations_with_stops` 自体を mirror から呼ぶ)。詳細 lesson は `subagent-invocation-pairing.md`「Pair-with-stop helper §教訓」(Issue #85 で codex review 5 round で 6 件の boundary-case drift を再発見した実績)。
 
 ### Wall-clock 注入チェーン — drift-guard test の deterministic 化
 
@@ -287,7 +287,7 @@ production 経路 (`_serve_api()`) は `now=None` のまま real-time 動作 (`N
 
 #### 残余 wall-clock gap の document
 
-`subagent_metrics.py` 内部の `datetime.now()` は plumb されていない (= ungated)。これは intentional な gap: 該当 field (`subagent_failure_trend` 等) は **full-period 群** なので、`period="all"` と `period="7d"` 両方とも同じ wall-clock instant (μs 内) を見て同 bucket に入る → equality は成立する。**deliberate な gap を doc に残す** ことで future maintainer が「why isn't this plumbed?」で迷わない。
+`analyzer/subagent.py` 内部の `datetime.now()` は plumb されていない (= ungated)。これは intentional な gap: 該当 field (`subagent_failure_trend` 等) は **full-period 群** なので、`period="all"` と `period="7d"` 両方とも同じ wall-clock instant (μs 内) を見て同 bucket に入る → equality は成立する。**deliberate な gap を doc に残す** ことで future maintainer が「why isn't this plumbed?」で迷わない。
 
 #### `last_updated` も `now=` 経由
 

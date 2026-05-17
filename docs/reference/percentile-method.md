@@ -1,6 +1,6 @@
 # Percentile method — Excel `PERCENTILE.INC` 採用と labeling 規律
 
-`subagent_metrics._percentiles()` が duration list から `(p50, p90, p99)` を返す際の **percentile 計算方式の選定理由**、**stdlib `statistics.quantiles` での実装**、**test fixture pin による回帰検出** をまとめたリファレンス。Issue #60 (subagent quality A5) で導入。
+`analyzer.subagent._percentiles()` が duration list から `(p50, p90, p99)` を返す際の **percentile 計算方式の選定理由**、**stdlib `statistics.quantiles` での実装**、**test fixture pin による回帰検出** をまとめたリファレンス。Issue #60 (subagent quality A5) で導入。
 
 ここで言う「method」とは Hyndman-Fan の 9 種類ある quantile 補間手法のうちどれを採用するか、の話。stdlib / numpy / R / Excel で **デフォルトが揃っていない** ため、明示的に固定して labeling しないと library 切替えで silently 値が変わる。
 
@@ -39,7 +39,7 @@ help-pop / docstring は (1) → (2) → (3) の順で書く。
 
 ## §2. 実装 — `_percentiles()` helper
 
-`subagent_metrics.py:352` に常駐:
+`analyzer/subagent.py:352` に常駐:
 
 ```python
 def _percentiles(durations: list[float]) -> tuple[float | None, float | None, float | None]:
@@ -104,8 +104,8 @@ default `method="linear"` を使うと parity が崩れる。
 
 ## 参照
 
-- 実装: `subagent_metrics.py:352` (`_percentiles`)
-- 利用側: `subagent_metrics.py:384` (`_build_metrics` で `p50_duration_ms`/`p90`/`p99` を組み立て)
-- spec: `docs/spec/dashboard-api.md` (`subagent_metrics` JSON 契約)
+- 実装: `analyzer/subagent.py:352` (`_percentiles`)
+- 利用側: `analyzer/subagent.py:374` (`_build_metrics` で `p50_duration_ms`/`p90`/`p99` を組み立て)
+- spec: `docs/spec/dashboard-api.md` (`analyzer.subagent` JSON 契約)
 - test: `tests/test_subagent_quality.py::TestPercentileEdgeCases`
 - 経緯: Issue #60 (subagent quality A5)
