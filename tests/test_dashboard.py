@@ -1218,3 +1218,29 @@ class TestDashboardPackageLayout:
         assert mod_a.load_events()[0]["skill"] == "alpha"
         assert mod_b.load_events()[0]["skill"] == "beta"
 
+    def test_submodules_attached_to_dashboard_package(self):
+        """`import dashboard.server` 後にサブモジュールが親パッケージ属性として引ける。
+
+        spec_from_file_location 経由の shim load は通常 import 機構の親 setattr を
+        バイパスするため、shim が明示結線する (codex review #123 Round 2 P2)。
+        `import dashboard.server` は sys.modules を汚染し他テストの
+        `from dashboard import server` を stale 化させるので、クリーンな
+        interpreter を subprocess で起動して検証する。
+        """
+        import subprocess
+        import sys
+
+        repo_root = Path(__file__).parent.parent
+        code = (
+            "import dashboard.server\n"
+            "import dashboard\n"
+            "missing = [n for n in ('config', 'aggregate', 'render', 'api', 'http_runtime')\n"
+            "           if not hasattr(dashboard, n)]\n"
+            "assert not missing, f'親パッケージ属性として結線されていない: {missing}'\n"
+            "_ = dashboard.config.DATA_FILE\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", code], cwd=repo_root, capture_output=True, text=True
+        )
+        assert result.returncode == 0, result.stderr
+

@@ -26,10 +26,14 @@ from pathlib import Path
 # サブモジュール load より前に最初の実行行として走らせる必要がある。
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-_PKG_DIR = Path(__file__).resolve().parent
+# 親パッケージ `dashboard` を sys.modules に確保する。_load_submodule が
+# load 済み submodule を親へ結線するのに必要 (下記 setattr 参照)。
+import dashboard  # noqa: E402
+
+_PKG_DIR = Path(__file__).resolve().parent  # noqa: E402
 
 
-def _load_submodule(name: str) -> None:
+def _load_submodule(name: str) -> None:  # noqa: E402
     """`dashboard/<name>.py` を fresh module として exec し sys.modules へ登録する。
 
     canonical な dotted 名 (`dashboard.<name>`) で登録するのは、サブモジュール
@@ -37,11 +41,18 @@ def _load_submodule(name: str) -> None:
     解決させるため。次の shim load は同じ key を上書きするだけで、先行 load の
     module オブジェクトは先行 shim の namespace と関数の `__globals__` から参照
     され生存し続けるので、load 間の独立性が保たれる。
+
+    通常の import 機構は submodule load 後に親パッケージへ
+    `setattr(dashboard, name, module)` するが、spec_from_file_location 経由では
+    走らないため明示的に行う。これがないと `import dashboard.server` 後の
+    `import dashboard.config` で `dashboard.config` 属性アクセスが
+    `AttributeError` になる (codex review #123 Round 2 P2)。
     """
     spec = importlib.util.spec_from_file_location(f"dashboard.{name}", _PKG_DIR / f"{name}.py")
     module = importlib.util.module_from_spec(spec)
     sys.modules[f"dashboard.{name}"] = module
     spec.loader.exec_module(module)
+    setattr(dashboard, name, module)
 
 
 # 依存順 (config → aggregate → render → api → http_runtime) に fresh load する。
