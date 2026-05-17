@@ -8,37 +8,53 @@ render / http_runtime) へ分割した。本ファイルは外部 importer
 
 tests/test_dashboard.py は本ファイルを `spec_from_file_location` で
 **ファイルパス直 import** し、その都度 `USAGE_JSONL` 等の env をパッチして
-fresh module として exec する。サブモジュール (`dashboard.config` 等) は
-通常のパッケージ import で `sys.modules` にキャッシュされるため、本 shim は
-exec のたびにサブモジュールを依存順に reload し、import 時 env 評価
-(`config.DATA_FILE` / `render._HTML_TEMPLATE`) を patch 済み env 下で
-再評価させる。reload しないと 2 回目以降の load で env override が効かず
-テスト隔離が静かに壊れる。
+fresh module として exec する。分割前の単一ファイル server.py は 1 回の
+exec_module で全コードが patch 済み env 下に再評価され「1 load = 完全独立
+インスタンス」だった。本 shim はこの契約を保つため、exec のたびに 5 つの
+サブモジュールを `_load_submodule()` で **fresh module として読み直す**
+(通常のパッケージ import + キャッシュ共有や `importlib.reload` では、後続の
+shim load が先行 load の load_events / DashboardHandler の参照する
+module dict を書き換え、先行 load が後発の env を読む cross-load leakage が
+起きる — codex review #123 Round 1 P2)。
 """
-import importlib
+import importlib.util
 import sys
 from pathlib import Path
 
-# サブパッケージ import (`import dashboard.config` 等) を解決するため repo root を
-# sys.path に積む。本 shim は spec_from_file_location でファイル直 import される
-# ため、サブモジュール import より前に必ず最初の実行行として走らせる必要がある。
+# サブモジュールが import する `analyzer.*` を解決するため repo root を sys.path に
+# 積む。本 shim は spec_from_file_location でファイル直 import されるため、
+# サブモジュール load より前に最初の実行行として走らせる必要がある。
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-# サブモジュール import はモジュールトップレベルで行う (遅延 import 禁止)。
-# 1 回の exec_module 内で config.py の env 評価・render.py のテンプレート concat 等の
-# import 時副作用が、loader がパッチした env 下で一括評価されるようにするため。
-import dashboard.config as _config  # noqa: E402
-import dashboard.aggregate as _aggregate  # noqa: E402
-import dashboard.render as _render  # noqa: E402
-import dashboard.api as _api  # noqa: E402
-import dashboard.http_runtime as _http_runtime  # noqa: E402
+_PKG_DIR = Path(__file__).resolve().parent
 
-# 依存順 (config → aggregate → render → api → http_runtime) に reload して、
-# キャッシュ済みサブモジュールの import 時 env 評価を patch 済み env 下で
-# やり直させる。reload を上位から先に回すと下位の `from ... import` が
-# 旧バインディングを掴むため、依存順は厳守する。
-for _submodule in (_config, _aggregate, _render, _api, _http_runtime):
-    importlib.reload(_submodule)
+
+def _load_submodule(name: str) -> None:
+    """`dashboard/<name>.py` を fresh module として exec し sys.modules へ登録する。
+
+    canonical な dotted 名 (`dashboard.<name>`) で登録するのは、サブモジュール
+    同士の `from dashboard.config import ...` を **今 load した fresh コピー** に
+    解決させるため。次の shim load は同じ key を上書きするだけで、先行 load の
+    module オブジェクトは先行 shim の namespace と関数の `__globals__` から参照
+    され生存し続けるので、load 間の独立性が保たれる。
+    """
+    spec = importlib.util.spec_from_file_location(f"dashboard.{name}", _PKG_DIR / f"{name}.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[f"dashboard.{name}"] = module
+    spec.loader.exec_module(module)
+
+
+# 依存順 (config → aggregate → render → api → http_runtime) に fresh load する。
+# 下位を先に sys.modules へ登録しておかないと、上位の `from dashboard.<lower>
+# import ...` が解決できない。各サブモジュールの import 時副作用
+# (config.py の env 評価・render.py のテンプレート concat) はこの exec 時に
+# loader がパッチした env 下で評価される。re-export は後続の
+# `from dashboard.<name> import ...` が sys.modules 経由で fresh コピーを引く。
+_load_submodule("config")
+_load_submodule("aggregate")
+_load_submodule("render")
+_load_submodule("api")
+_load_submodule("http_runtime")
 
 from dashboard.config import (  # noqa: E402
     ALERTS_FILE,

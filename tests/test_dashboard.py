@@ -1196,3 +1196,25 @@ class TestDashboardPackageLayout:
                     f"{module_name} が {symbol} を公開していない"
                 )
 
+    def test_repeated_loads_stay_isolated(self, tmp_path):
+        """複数回 load した shim module が互いの env override を踏まないことを pin。
+
+        分割前の単一ファイル server.py は 1 load = 完全独立インスタンスだった。
+        shim がサブモジュールを共有 (キャッシュ / importlib.reload) すると、後続
+        load が先行 load の load_events / DATA_FILE を書き換える cross-load
+        leakage が起きる (codex review #123 Round 1 P2)。
+        """
+        usage_a = tmp_path / "a.jsonl"
+        usage_b = tmp_path / "b.jsonl"
+        write_events(usage_a, [{"event_type": "skill_tool", "skill": "alpha",
+                                "session_id": "s", "timestamp": "2026-01-01T00:00:00+00:00"}])
+        write_events(usage_b, [{"event_type": "skill_tool", "skill": "beta",
+                                "session_id": "s", "timestamp": "2026-01-01T00:00:00+00:00"}])
+        mod_a = load_dashboard_module(usage_a)
+        mod_b = load_dashboard_module(usage_b)
+        # 後発 mod_b を load した後でも mod_a は自分の env (usage_a) を読み続ける
+        assert mod_a.DATA_FILE == usage_a
+        assert mod_b.DATA_FILE == usage_b
+        assert mod_a.load_events()[0]["skill"] == "alpha"
+        assert mod_b.load_events()[0]["skill"] == "beta"
+
