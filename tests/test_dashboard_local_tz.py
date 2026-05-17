@@ -187,10 +187,11 @@ class TestServerSentinelDocstring:
     def test_aggregate_daily_has_local_tz_sentinel_in_docstring(self):
         """`aggregate_daily` の docstring が dashboard frontend は使わない旨を
         明記している。将来 field 削除を検討するときの sentinel。"""
-        server_py = (Path(__file__).parent.parent / "dashboard" / "server.py").read_text(encoding="utf-8")
+        # Issue #123: aggregate_daily は dashboard/aggregate.py へ分割された。
+        aggregate_py = (Path(__file__).parent.parent / "dashboard" / "aggregate.py").read_text(encoding="utf-8")
         # aggregate_daily 関数定義から最初の triple-quoted block を抜き出す
         match = re.search(r"def\s+aggregate_daily\s*\([^)]*\)[^:]*:\s*\n\s*\"\"\"(.*?)\"\"\"",
-                          server_py, re.DOTALL)
+                          aggregate_py, re.DOTALL)
         assert match is not None, \
             "aggregate_daily に docstring が無い (sentinel 配置不可)"
         doc = match.group(1)
