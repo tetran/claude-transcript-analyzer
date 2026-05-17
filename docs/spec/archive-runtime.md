@@ -55,7 +55,7 @@ python3 ${CLAUDE_PLUGIN_ROOT}/reports/export_html.py --include-archive
 - archive job: `EX` を取得して直列化、state marker 再 read で race-free 二重起動回避
 - hook (`record_*.py`): **blocking SH** で archive の `EX` release を待ってから append (codex 5th review P1 で旧 `SH | NB × 5 retry × 100ms = 500ms upper-bound` の data loss 経路を撤廃)。
   - 取得失敗時は `health_alerts.jsonl` に `{"alert": "append_skipped_due_to_archive_lock", ...}` を 1 行記録して silent drop (実運用ではほぼ起きない / signal 起因等の異常系)
-- lock 層 (`hooks/_lock.py` / Issue #44): POSIX (`fcntl.flock`) と Windows (`msvcrt.locking`) の差を吸収。Windows は SH 概念無しのため SH も EX 相当で動作 (concurrency 落ちるが correctness は保たれる)
+- lock 層 (`analyzer/platform/lock.py` / Issue #44): POSIX (`fcntl.flock`) と Windows (`msvcrt.locking`) の差を吸収。Windows は SH 概念無しのため SH も EX 相当で動作 (concurrency 落ちるが correctness は保たれる)
 
 ## `rescan_transcripts.py` との運用注意
 
