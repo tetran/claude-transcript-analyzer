@@ -27,7 +27,7 @@
          ▼
     [usage.jsonl: assistant_usage event]         ← (1) 収集 / メッセージ単位で永続化
          │
-         │  読込 → cost_metrics.py
+         │  読込 → analyzer/cost.py
          ▼
     [calculate_message_cost / _get_pricing]      ← (2) 1 件ごと rate 適用
          │
@@ -38,7 +38,7 @@
          ▼
     /api/data session_breakdown[].estimated_cost_usd
 
-設計の中心は **「推計コストは表示時にオンデマンド計算する」** です。価格改定があっても `cost_metrics.MODEL_PRICING` の数値を書き換えることで、過去の `assistant_usage` event も含めて全期間が再計算されます。設計判断の出典 (外部リファレンス調査と採用判断) は `docs/reference/cost-calculation-design.md` § 9-§ 10 にまとまっています。
+設計の中心は **「推計コストは表示時にオンデマンド計算する」** です。価格改定があっても `analyzer.cost.MODEL_PRICING` の数値を書き換えることで、過去の `assistant_usage` event も含めて全期間が再計算されます。設計判断の出典 (外部リファレンス調査と採用判断) は `docs/reference/cost-calculation-design.md` § 9-§ 10 にまとまっています。
 
 ---
 
@@ -47,11 +47,11 @@
 コスト計算に絡む登場人物は 3 つだけです。
 
 ```bash
-ls -1 hooks/record_assistant_usage.py cost_metrics.py dashboard/server.py
+ls -1 hooks/record_assistant_usage.py analyzer/cost.py dashboard/server.py
 ```
 
 ```output
-cost_metrics.py
+analyzer/cost.py
 dashboard/server.py
 hooks/record_assistant_usage.py
 ```
@@ -59,10 +59,10 @@ hooks/record_assistant_usage.py
 | ファイル | 役割 |
 |---|---|
 | `hooks/record_assistant_usage.py` | Stop hook で main / per-subagent transcript から `(model, tokens, message_id)` を抽出して `assistant_usage` イベントとして追加。`(session_id, message_id)` で重複は先勝ち |
-| `cost_metrics.py` | 価格表 (`MODEL_PRICING`) + 1 件 cost (`calculate_message_cost`) + session cost (`calculate_session_cost`) + session 行を組み立て (`aggregate_session_breakdown`)。|
+| `analyzer/cost.py` | 価格表 (`MODEL_PRICING`) + 1 件 cost (`calculate_message_cost`) + session cost (`calculate_session_cost`) + session 行を組み立て (`aggregate_session_breakdown`)。|
 | `dashboard/server.py` | `build_dashboard_data` から `aggregate_session_breakdown` を呼んで `/api/data` の `session_breakdown` 配列を返す |
 
-価格表は **ソースコード直書き / per-1M-token USD** で、`cost_metrics.py` の docstring に出典 URL と取得日時を記録。改定時はそこを書き換えるだけで OK。
+価格表は **ソースコード直書き / per-1M-token USD** で、`analyzer/cost.py` の docstring に出典 URL と取得日時を記録。改定時はそこを書き換えるだけで OK。
 
 ---
 
@@ -135,17 +135,17 @@ for line in open('docs/walkthrough/fixtures/cost-sample.jsonl'):
 
 スキーマの正本は `docs/spec/usage-jsonl-events.md` の `assistant_usage` 節にあります。
 
-> 💡 transcript 1 行 = `assistant_usage` 1 件 ではありません。`message.role == "assistant"` かつ `message.usage` が辞書型、かつ `message.id` と `timestamp` が揃っている行だけが残ります。それ以外はスキップ (Stop hook をブロックしないルール / `record_assistant_usage.py:_extract_assistant_usage`)。
+> 💡 transcript 1 行 = `assistant_usage` 1 件 ではありません。`message.role == "assistant"` かつ `message.usage` が辞書型、かつ `message.id` と `timestamp` が揃っている行だけが残ります。それ以外はスキップ (Stop hook をブロックしないルール / `analyzer/rescan/assistant_usage.py:_extract_assistant_usage`)。
 
 ---
 
 ## 第 2 章: 1 message のコスト計算 💴
 
-`cost_metrics.calculate_message_cost(model, in, out, cr, cc)` は副作用なしの関数です。第 1 章で見た 1 件目 (opus-4-7, in=6 / out=325 / cr=0 / cc=34998) を流し込んでみます。
+`analyzer.cost.calculate_message_cost(model, in, out, cr, cc)` は副作用なしの関数です。第 1 章で見た 1 件目 (opus-4-7, in=6 / out=325 / cr=0 / cc=34998) を流し込んでみます。
 
 ```bash
 python3 -c "
-from cost_metrics import calculate_message_cost
+from analyzer.cost import calculate_message_cost
 # 第 1 章で見た 1 件目: opus-4-7, in=6 out=325 cr=0 cc=34998
 cost = calculate_message_cost('claude-opus-4-7', 6, 325, 0, 34998)
 print(f'cost (USD): {cost}')
@@ -166,7 +166,7 @@ breakdown:
   cache_create 34998 * $6.25 /1M = 0.218738
 ```
 
-数式の本体はこの 1 行に集約されます (`cost_metrics.calculate_message_cost`):
+数式の本体はこの 1 行に集約されます (`analyzer.cost.calculate_message_cost`):
 
 ```python
 cost = (
@@ -188,7 +188,7 @@ return round(cost, 4)
 
 ## 第 3 章: 価格表マッチングと未知モデルフォールバック 🎯
 
-価格表は `cost_metrics.MODEL_PRICING` に Python dict で持っていて、key は **公式モデルID** を元にしています。`_get_pricing(model)` は次の 3 段階で rate を返します:
+価格表は `analyzer.cost.MODEL_PRICING` に Python dict で持っていて、key は **公式モデルID** を元にしています。`_get_pricing(model)` は次の 3 段階で rate を返します:
 
 1. **完全一致**: `MODEL_PRICING[model]` がそのまま hit
 2. **token-boundary prefix match (longest wins) で判定**: `claude-haiku-4-5-20251001` のような date-suffix 付き ID は `claude-haiku-4-5-` プレフィックスで hit。`claude-opus-4` と `claude-opus-4-5` の両方が `startswith` で当たるケースは **長い方** が勝つ
@@ -198,7 +198,7 @@ return round(cost, 4)
 
 ```bash
 python3 -c "
-from cost_metrics import _get_pricing
+from analyzer.cost import _get_pricing
 for m in [
     'claude-opus-4-7',
     'claude-haiku-4-5-20251001',
@@ -225,13 +225,13 @@ claude-future-model-99            input=$ 3.00  output=$ 15.00  cache_read=$0.30
 - `claude-opus-4` ($15) と `claude-opus-4-5` ($5) は **3 倍違う**。longest-match を取り違えると致命的なので、`_get_pricing` は `model.startswith(p + "-")` (= 末尾 `-` 付き) で token-boundary 比較してから `max(matches, key=len)` で勝者を選ぶ
 - `claude-future-model-99` のような未知 model は Sonnet 4.6 の rate にフォールバックします。新 model 登場で UI が空になったり例外で落ちたりしないための **silent な安全側設計**
 
-> ⚠️ 価格は 2026-05-06 に Anthropic 公式 docs (`https://platform.claude.com/docs/en/about-claude/pricing`) から目視で pin した値です。改定時は `cost_metrics.py` の `MODEL_PRICING` dict と docstring の対応表の更新が必要です。
+> ⚠️ 価格は 2026-05-06 に Anthropic 公式 docs (`https://platform.claude.com/docs/en/about-claude/pricing`) から目視で pin した値です。改定時は `analyzer/cost.py` の `MODEL_PRICING` dict と docstring の対応表の更新が必要です。
 
 ---
 
 ## 第 4 章: session 単位の合算と `/model` 切替の節約効果 📐
 
-`cost_metrics.calculate_session_cost(events)` はイベントリストを `assistant_usage` だけに絞り込み、`calculate_message_cost` をイベントごとに適用して reduce 合算します。
+`analyzer.cost.calculate_session_cost(events)` はイベントリストを `assistant_usage` だけに絞り込み、`calculate_message_cost` をイベントごとに適用して reduce 合算します。
 
 ```python
 def calculate_session_cost(events_for_session):
@@ -256,7 +256,7 @@ fixture の 2 session でやってみます。
 ```bash
 python3 -c "
 import json
-from cost_metrics import calculate_session_cost, calculate_message_cost
+from analyzer.cost import calculate_session_cost, calculate_message_cost
 
 events = [json.loads(l) for l in open('docs/walkthrough/fixtures/cost-sample.jsonl')]
 real_evs = [e for e in events if e.get('session_id') == '865b6309-a5c4-455e-8147-cc701870f2df']
@@ -285,7 +285,7 @@ demo session  cost: $0.1721  (2 assistant messages)
 
 ## 第 5 章: `aggregate_session_breakdown` の row dict 🧮
 
-ダッシュボードの Sessions ページで利用されるのは session 単位の `rows` 配列です。`cost_metrics.aggregate_session_breakdown(events)` は次のステップで `rows` を組み立てます (`_build_session_row`):
+ダッシュボードの Sessions ページで利用されるのは session 単位の `rows` 配列です。`analyzer.cost.aggregate_session_breakdown(events)` は次のステップで `rows` を組み立てます (`_build_session_row`):
 
 1. session ごとに events をグループ化
 2. `session_start` 不在の session は drop
@@ -299,7 +299,7 @@ fixture 全体を流し込んで `rows` を見てみます。
 ```bash
 python3 -c "
 import json
-from cost_metrics import aggregate_session_breakdown
+from analyzer.cost import aggregate_session_breakdown
 
 events = [json.loads(l) for l in open('docs/walkthrough/fixtures/cost-sample.jsonl')]
 rows = aggregate_session_breakdown(events)
@@ -370,11 +370,11 @@ print(json.dumps(rows, ensure_ascii=False, indent=2))"
 
 ## 第 6 章: 既知の制限 ⚠️
 
-コストは **実測 token × 価格表掛け算による参考値** で、3 つの既知の under/over-estimate ポイントがあります (`cost_metrics.py` module docstring に列挙)。
+コストは **実測 token × 価格表掛け算による参考値** で、3 つの既知の under/over-estimate ポイントがあります (`analyzer/cost.py` module docstring に列挙)。
 
 - **5-minute cache write のみ採用**: Anthropic は 5m / 1h で cache write 単価が違う (5m: 1.25x base、1h: 2x base)。transcript の `cache_creation_input_tokens` には TTL の区別が無いので default の 5m を採用。1h cache を多用するワークロードでは under-estimate になる
 - **`inference_geo` の 1.1x multiplier 未適用**: data-residency 機能 (US-only routing) 使用時は +10% 課金されるが、デフォルトは global routing なので大半は影響なし。`assistant_usage.inference_geo` には raw 値が記録されているので、将来 issue で乗算するときの土台はある
-- **価格改定で過去値も動く**: 価格表は `cost_metrics.MODEL_PRICING` でコード直書き。**DB / event log に snapshot しない方針** なので、Anthropic が値下げ・値上げすると過去レポートの数字も自動で動く (= 監査用途には不適、あくまで参考値)
+- **価格改定で過去値も動く**: 価格表は `analyzer.cost.MODEL_PRICING` でコード直書き。**DB / event log に snapshot しない方針** なので、Anthropic が値下げ・値上げすると過去レポートの数字も自動で動く (= 監査用途には不適、あくまで参考値)
 
 「過去レポートは時点固定であってほしい」という監査ログ用途には別設計 (cost snapshot 別テーブル等) が必要です。詳しいトレードオフは `docs/reference/cost-calculation-design.md` §4 を参照。
 
