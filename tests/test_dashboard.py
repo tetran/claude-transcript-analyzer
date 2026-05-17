@@ -1076,3 +1076,123 @@ class TestHelpPopupOverflow:
             "kpiRow render 後 / loadAndRender 末尾までに placeAllPops() の呼び出しがない"
         )
 
+
+# Issue #123 Phase 1: dashboard/server.py を責務単位のサブモジュールへ分割する
+# リファクタリングの characterization / regression ガード。
+
+# `build_dashboard_data` が返す /api/data JSON のトップレベルキーと値の型。
+# docs/spec/dashboard-api.md の "形" JSON ブロックと verbatim 突合した正典スナップショット。
+# 分割で 1 キーでも漏れ / 型変化が起きたら検出する。
+_DASHBOARD_DATA_SCHEMA = {
+    "last_updated": str,
+    "total_events": int,
+    "skill_ranking": list,
+    "subagent_ranking": list,
+    "skill_kinds_total": int,
+    "subagent_kinds_total": int,
+    "project_total": int,
+    "daily_trend": list,
+    "project_breakdown": list,
+    "hourly_heatmap": dict,
+    "skill_cooccurrence": list,
+    "project_skill_matrix": dict,
+    "subagent_failure_trend": list,
+    "permission_prompt_skill_breakdown": list,
+    "permission_prompt_subagent_breakdown": list,
+    "compact_density": dict,
+    "session_stats": dict,
+    "health_alerts": list,
+    "skill_invocation_breakdown": list,
+    "skill_lifecycle": list,
+    "skill_hibernating": dict,
+    "session_breakdown": list,
+    "model_distribution": dict,
+    "period_applied": str,
+}
+
+
+class TestBuildDashboardDataSchemaCharacterization:
+    """`build_dashboard_data` のトップレベルキー集合 + 型を 1 箇所に固める (Issue #123 Step 1.1)。"""
+
+    def _sample_events(self) -> list[dict]:
+        return [
+            {"event_type": "skill_tool", "skill": "commit", "project": "proj",
+             "session_id": "s1", "timestamp": "2026-01-01T00:00:00+00:00", "success": True},
+            {"event_type": "user_slash_command", "skill": "/codex-review", "project": "proj",
+             "session_id": "s1", "timestamp": "2026-01-01T00:01:00+00:00"},
+            {"event_type": "subagent_start", "subagent_type": "Explore", "project": "proj",
+             "session_id": "s1", "timestamp": "2026-01-01T00:02:00+00:00"},
+            {"event_type": "subagent_stop", "subagent_type": "Explore",
+             "session_id": "s1", "timestamp": "2026-01-01T00:03:00+00:00"},
+            {"event_type": "session_start", "session_id": "s1",
+             "timestamp": "2026-01-01T00:00:00+00:00"},
+            {"event_type": "compact_start", "session_id": "s1", "project": "proj",
+             "timestamp": "2026-01-01T00:04:00+00:00"},
+            {"event_type": "notification", "notification_type": "permission",
+             "session_id": "s1", "timestamp": "2026-01-01T00:05:00+00:00"},
+        ]
+
+    def test_empty_events_key_set_matches_spec(self, tmp_path):
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        data = mod.build_dashboard_data([])
+        assert set(data.keys()) == set(_DASHBOARD_DATA_SCHEMA), (
+            "build_dashboard_data のキー集合が docs/spec/dashboard-api.md と乖離"
+        )
+
+    def test_populated_events_key_set_and_types_match_spec(self, tmp_path):
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        data = mod.build_dashboard_data(self._sample_events())
+        assert set(data.keys()) == set(_DASHBOARD_DATA_SCHEMA)
+        for key, expected_type in _DASHBOARD_DATA_SCHEMA.items():
+            assert isinstance(data[key], expected_type), (
+                f"{key} の型が {expected_type.__name__} でない: {type(data[key]).__name__}"
+            )
+
+    def test_period_toggle_key_set_stable(self, tmp_path):
+        mod = load_dashboard_module(tmp_path / "nonexistent.jsonl")
+        events = self._sample_events()
+        for period in ("all", "7d", "30d", "90d", "bogus"):
+            data = mod.build_dashboard_data(events, period=period)
+            assert set(data.keys()) == set(_DASHBOARD_DATA_SCHEMA), (
+                f"period={period} でキー集合が変動した"
+            )
+
+
+class TestDashboardPackageLayout:
+    """server.py 分割後のサブモジュール import パスと公開シンボルを pin (Issue #123 Step 1.2)。"""
+
+    # サブモジュール名 → そのモジュールが公開すべき代表シンボル。
+    _EXPECTED_SYMBOLS = {
+        "dashboard.config": (
+            "DATA_FILE", "ALERTS_FILE", "SERVER_JSON_PATH",
+            "PORT", "IDLE_SECONDS", "POLL_INTERVAL", "TOP_N",
+            "_PERIOD_DELTAS", "_resolve_port",
+        ),
+        "dashboard.aggregate": (
+            "load_events", "load_health_alerts",
+            "aggregate_skills", "aggregate_subagents", "aggregate_daily",
+            "aggregate_projects", "aggregate_hourly_heatmap",
+            "aggregate_permission_breakdowns", "aggregate_session_stats",
+            "_filter_events_by_period", "_filter_usage_events",
+        ),
+        "dashboard.api": ("build_dashboard_data",),
+        "dashboard.render": (
+            "render_static_html", "_HTML_TEMPLATE",
+            "_concat_main_js", "_build_html_template",
+        ),
+        "dashboard.http_runtime": (
+            "DashboardHandler", "DashboardServer", "create_server",
+            "run", "main", "SSEClient",
+        ),
+    }
+
+    def test_submodules_import_and_expose_symbols(self):
+        import importlib
+
+        for module_name, symbols in self._EXPECTED_SYMBOLS.items():
+            mod = importlib.import_module(module_name)
+            for symbol in symbols:
+                assert hasattr(mod, symbol), (
+                    f"{module_name} が {symbol} を公開していない"
+                )
+
