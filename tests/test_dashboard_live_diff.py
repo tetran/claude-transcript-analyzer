@@ -300,12 +300,13 @@ class TestLoadRenderIntegration:
 # ============================================================
 class TestMainJsTupleOrder:
     def test_25_listed_in_main_js_files_tuple(self):
-        body = _read(_DASHBOARD_PY)
+        # Issue #123: _MAIN_JS_FILES は dashboard/render.py へ分割された。
+        body = _read(Path(__file__).parent.parent / "dashboard" / "render.py")
         # _MAIN_JS_FILES tuple を切り出して順序を見る。
         # `[^)]*` だと tuple 内コメント (例: "(KPI / ranking / ... / projects)") の閉じ
         # 括弧で early-stop するため、開き行から閉じ行 `\n)\n` までを multi-line で取る。
         match = re.search(r"_MAIN_JS_FILES\s*=\s*\(\n(.*?)\n\)\n", body, re.DOTALL)
-        assert match is not None, "dashboard/server.py に _MAIN_JS_FILES tuple が無い"
+        assert match is not None, "dashboard/render.py に _MAIN_JS_FILES tuple が無い"
         tuple_body = match.group(1)
         # 各エントリの " ... " の中身だけを順序保ったまま抜き出す
         names = re.findall(r'"([^"]+\.js)"', tuple_body)
