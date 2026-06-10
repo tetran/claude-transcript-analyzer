@@ -54,7 +54,7 @@ When a daemon has both **auto-start** (hook) and **manual** (CLI / slash command
 
 For the launcher's `Popen`:
 
-- **Detach the child process group** — POSIX: `start_new_session=True`. Windows: `start_new_session=True` is a **silent no-op** (the child stays bound to the parent's job/console)、代わりに `creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP` を渡す。本プロジェクトでは `hooks/_launcher_common.py` に OS 別ディスパッチを集約しており、`getattr(subprocess, "DETACHED_PROCESS", 0)` 等で POSIX import 互換も担保している。
+- **Detach the child process group** — POSIX: `start_new_session=True`. Windows: `start_new_session=True` is a **silent no-op** (the child stays bound to the parent's job/console)、代わりに `creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP` を渡す。本プロジェクトでは `analyzer/platform/process.py` に OS 別ディスパッチを集約しており、`getattr(subprocess, "DETACHED_PROCESS", 0)` 等で POSIX import 互換も担保している。
 - `stdin/stdout/stderr=DEVNULL` (don't inherit parent pipes — Claude Code's hook stdout/stderr would otherwise leak; needed on both OSes)
 - `close_fds=True` (POSIX default but worth being explicit; harmless on Windows)
 - Wrap in `try/except OSError` and silently swallow — launcher must not block the host process under any failure mode

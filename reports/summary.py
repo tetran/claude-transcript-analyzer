@@ -7,8 +7,8 @@ from collections import Counter
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from subagent_metrics import aggregate_subagent_metrics
-from reports._archive_loader import archive_read_lock, iter_archive_events_unlocked
+from analyzer.subagent import aggregate_subagent_metrics
+from analyzer.archive.loader import archive_read_lock, iter_archive_events_unlocked
 
 _DEFAULT_PATH = Path.home() / ".claude" / "transcript-analyzer" / "usage.jsonl"
 DATA_FILE = Path(os.environ.get("USAGE_JSONL", str(_DEFAULT_PATH)))
@@ -169,7 +169,7 @@ def print_report(events: list[dict], *, include_cost: bool = False) -> None:
         print("  (no data)")
 
     if include_cost:
-        from cost_metrics import aggregate_session_breakdown  # noqa: PLC0415
+        from analyzer.cost import aggregate_session_breakdown  # noqa: PLC0415
         breakdown = aggregate_session_breakdown(events, top_n=10**9)
         total = round(sum(b["estimated_cost_usd"] for b in breakdown), 4)
         top10 = sorted(breakdown, key=lambda b: -b["estimated_cost_usd"])[:10]

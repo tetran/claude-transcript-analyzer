@@ -28,6 +28,6 @@ PostToolUse(Skill) / PostToolUse(Task|Agent) / UserPromptExpansion
 
 - builtin command set に `/hooks` `/fast` が含まれていない（CLAUDE.md は更新済み）
 - 末尾の「2026-02-28 時点の調査結果メモ」は古い数字
-- 現行の dedup / 観測点の役割分担（`subagent_metrics.aggregate_subagent_metrics`）は反映していない
+- 現行の dedup / 観測点の役割分担（`analyzer.subagent.aggregate_subagent_metrics`）は反映していない
 
-新規ロジックは `dashboard/server.py` / `subagent_metrics.py` / `reports/summary.py` を参照すること。
+新規ロジックは `dashboard/server.py` / `analyzer/subagent.py` / `reports/summary.py` を参照すること。

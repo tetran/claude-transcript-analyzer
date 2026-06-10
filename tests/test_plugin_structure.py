@@ -132,13 +132,13 @@ class TestPhase30Files:
         assert (PROJECT_ROOT / "hooks" / "launch_archive.py").exists()
 
     def test_append_helper_exists(self):
-        assert (PROJECT_ROOT / "hooks" / "_append.py").exists()
+        assert (PROJECT_ROOT / "analyzer" / "hot_append.py").exists()
 
     def test_launcher_common_exists(self):
-        assert (PROJECT_ROOT / "hooks" / "_launcher_common.py").exists()
+        assert (PROJECT_ROOT / "analyzer" / "platform" / "process.py").exists()
 
     def test_archive_loader_exists(self):
-        assert (PROJECT_ROOT / "reports" / "_archive_loader.py").exists()
+        assert (PROJECT_ROOT / "analyzer" / "archive" / "loader.py").exists()
 
     def test_usage_archive_command_exists(self):
         assert (PROJECT_ROOT / "commands" / "usage-archive.md").exists()

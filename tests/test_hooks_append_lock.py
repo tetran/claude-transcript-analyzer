@@ -1,6 +1,6 @@
 """tests/test_hooks_append_lock.py
 
-hooks/_append.py の lock 付き append (Issue #30 Phase A1 + codex 5th review P1) のテスト。
+analyzer/hot_append.py の lock 付き append (Issue #30 Phase A1 + codex 5th review P1) のテスト。
 
 責務:
 - 通常 (非競合) 時の append 成功
@@ -24,7 +24,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 HOOKS_DIR = PROJECT_ROOT / "hooks"
 sys.path.insert(0, str(HOOKS_DIR))
 
-import _lock  # noqa: E402  — Issue #44 cross-platform lock helper
+import analyzer.platform.lock as _lock  # noqa: E402  — Issue #44 cross-platform lock helper
 
 
 @pytest.fixture(name="fresh_append_module")
@@ -32,8 +32,8 @@ def _fresh_append_module_fixture(monkeypatch, tmp_path):
     """_append モジュールをクリーンに reload。"""
     monkeypatch.setenv("USAGE_JSONL_LOCK", str(tmp_path / "custom.lock"))
     monkeypatch.setenv("HEALTH_ALERTS_JSONL", str(tmp_path / "health_alerts.jsonl"))
-    sys.modules.pop("_append", None)
-    import _append  # noqa: E402
+    sys.modules.pop("analyzer.hot_append", None)
+    import analyzer.hot_append as _append  # noqa: E402
     importlib.reload(_append)
     return _append
 
@@ -102,9 +102,9 @@ def _hook_appends_with_lock(data_file: str, lock_path: str, alerts_path: str, ev
     """hook 役: archive ready 後に append_event を呼ぶ。"""
     os.environ["USAGE_JSONL_LOCK"] = lock_path
     os.environ["HEALTH_ALERTS_JSONL"] = alerts_path
-    sys.path.insert(0, str(Path(__file__).parent.parent / "hooks"))
-    sys.modules.pop("_append", None)
-    import _append
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+    sys.modules.pop("analyzer.hot_append", None)
+    import analyzer.hot_append as _append
     importlib.reload(_append)
 
     ready_event.wait(timeout=5)
@@ -241,11 +241,11 @@ class TestNoLockingDegrade:
         monkeypatch.setitem(sys.modules, "msvcrt", None)
 
         # _lock を reload して _HAS_FCNTL=False, _HAS_MSVCRT=False を効かせる
-        sys.modules.pop("_lock", None)
-        sys.modules.pop("_append", None)
-        import _lock as fresh_lock  # noqa: E402
+        sys.modules.pop("analyzer.platform.lock", None)
+        sys.modules.pop("analyzer.hot_append", None)
+        import analyzer.platform.lock as fresh_lock  # noqa: E402
         importlib.reload(fresh_lock)
-        import _append as fresh_append  # noqa: E402
+        import analyzer.hot_append as fresh_append  # noqa: E402
         importlib.reload(fresh_append)
 
         try:
@@ -261,8 +261,8 @@ class TestNoLockingDegrade:
             assert events == [{"event_type": "x", "session_id": "s"}]
         finally:
             # 後続テストのため module を本来の状態に戻す
-            sys.modules.pop("_append", None)
-            sys.modules.pop("_lock", None)
+            sys.modules.pop("analyzer.hot_append", None)
+            sys.modules.pop("analyzer.platform.lock", None)
             monkeypatch.delitem(sys.modules, "fcntl", raising=False)
             monkeypatch.delitem(sys.modules, "msvcrt", raising=False)
 
@@ -277,8 +277,8 @@ class TestEnvOverride:
         custom_lock = tmp_path / "custom_subdir" / "my_lock_file"
         monkeypatch.setenv("USAGE_JSONL_LOCK", str(custom_lock))
 
-        sys.modules.pop("_append", None)
-        import _append
+        sys.modules.pop("analyzer.hot_append", None)
+        import analyzer.hot_append as _append
         importlib.reload(_append)
 
         data_file = tmp_path / "usage.jsonl"
@@ -288,8 +288,8 @@ class TestEnvOverride:
     def test_default_lock_path_is_data_file_dot_lock(self, tmp_path, monkeypatch):
         monkeypatch.delenv("USAGE_JSONL_LOCK", raising=False)
 
-        sys.modules.pop("_append", None)
-        import _append
+        sys.modules.pop("analyzer.hot_append", None)
+        import analyzer.hot_append as _append
         importlib.reload(_append)
 
         data_file = tmp_path / "usage.jsonl"
@@ -299,8 +299,8 @@ class TestEnvOverride:
     def test_explicit_lock_path_overrides_env(self, tmp_path, monkeypatch):
         monkeypatch.setenv("USAGE_JSONL_LOCK", str(tmp_path / "from_env.lock"))
 
-        sys.modules.pop("_append", None)
-        import _append
+        sys.modules.pop("analyzer.hot_append", None)
+        import analyzer.hot_append as _append
         importlib.reload(_append)
 
         explicit = tmp_path / "explicit.lock"

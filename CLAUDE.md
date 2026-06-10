@@ -40,7 +40,7 @@ Claude Code activity
   │  SessionStart                     →  hooks/launch_archive.py    (idempotent launcher)
   ↓
 ~/.claude/transcript-analyzer/usage.jsonl  ← append-only event log (hot tier / last 180 days)
-  │  ├ hooks/_append.py                     ← locked append (blocking SH / cross-platform)
+  │  ├ analyzer/hot_append.py               ← locked append (blocking SH / cross-platform)
   │  └ scripts/archive_usage.py             ← moves events older than 180 days into monthly .jsonl.gz (gzip)
   │       ↓
   │   ~/.claude/transcript-analyzer/archive/YYYY-MM.jsonl.gz   ← cold tier / immutable / read by opt-in readers
@@ -72,7 +72,7 @@ claude-transcript-analyzer/
 ├── commands/                 # slash-command definitions
 ├── dashboard/                # local HTTP dashboard server
 ├── reports/                  # report-generation scripts
-├── subagent_metrics.py       # shared subagent aggregation logic (invocation-level pairing)
+├── analyzer/                 # shared import-target logic (aggregation / archive / rescan / platform seams)
 ├── scripts/                  # utilities for manual / batch execution
 ├── data/                     # gitignored dev-time fallback (production uses `~/.claude/transcript-analyzer/`)
 ├── tests/

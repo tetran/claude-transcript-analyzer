@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from cost_metrics import (  # noqa: E402
+from analyzer.cost import (  # noqa: E402
     _get_pricing,
     aggregate_model_distribution,
     infer_model_family,

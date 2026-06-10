@@ -19,9 +19,9 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from _append import append_event  # noqa: E402
+from analyzer.hot_append import append_event  # noqa: E402
 
 _DEFAULT_PATH = Path.home() / ".claude" / "transcript-analyzer" / "usage.jsonl"
 DATA_FILE = Path(os.environ.get("USAGE_JSONL", str(_DEFAULT_PATH)))

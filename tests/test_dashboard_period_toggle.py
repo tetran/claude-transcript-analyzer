@@ -1426,9 +1426,10 @@ class TestPeriodSentinelDocstring:
     """
 
     def test_issue_85_daily_trend_sentinel(self):
-        source = (Path(__file__).parent.parent / "dashboard" / "server.py").read_text(encoding="utf-8")
+        # Issue #123: build_dashboard_data は dashboard/api.py へ分割された。
+        source = (Path(__file__).parent.parent / "dashboard" / "api.py").read_text(encoding="utf-8")
         assert "Issue #85: daily_trend stays in period-applied set" in source, \
-            "Issue #85 sentinel comment が dashboard/server.py から消えている"
+            "Issue #85 sentinel comment が dashboard/api.py から消えている"
 
 
 class TestSessionStatsPeriodApplied:

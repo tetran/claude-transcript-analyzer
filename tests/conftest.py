@@ -23,7 +23,7 @@ def _archive_module_fixture(monkeypatch, tmp_path):
     monkeypatch.setenv("ARCHIVE_STATE_FILE", str(tmp_path / ".archive_state.json"))
     monkeypatch.setenv("USAGE_JSONL_LOCK", str(tmp_path / "usage.jsonl.lock"))
     monkeypatch.setenv("HEALTH_ALERTS_JSONL", str(tmp_path / "health_alerts.jsonl"))
-    sys.modules.pop("archive_usage", None)
-    import archive_usage
+    sys.modules.pop("analyzer.archive.usage", None)
+    import analyzer.archive.usage as archive_usage
     importlib.reload(archive_usage)
     return archive_usage

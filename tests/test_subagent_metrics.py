@@ -3,7 +3,7 @@
 Issue #100 (= #93 調査結果対応): 同 (session_id, subagent_id) で複数発火した
 subagent_stop を min(timestamp) で 1 件化する dedup の pin。
 """
-import subagent_metrics
+import analyzer.subagent as subagent_metrics
 
 
 def _start(name, session, ts, success=True, duration_ms=None):

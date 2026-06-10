@@ -17,3 +17,6 @@ data/usage.jsonl
 # local 個人設定 (settings.local.json) と skills 等はローカル専用として除外
 .claude/*
 !.claude/settings.json
+
+# Claude Code: 作業ディレクトリを使用中の claude プロセスを記録するランタイム状態
+.in_use/
