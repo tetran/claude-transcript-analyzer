@@ -322,6 +322,15 @@ class TestSessionsRendererBehavior(unittest.TestCase):
         out = self._run_node("window.__sessions.inferModelFamily('claude-future-99')")
         self.assertEqual(out, "sonnet")
 
+    def test_infer_model_family_fable(self):
+        out = self._run_node("window.__sessions.inferModelFamily('claude-fable-5')")
+        self.assertEqual(out, "fable")
+
+    def test_infer_model_family_fable_1m_suffix(self):
+        # `[1m]` context-window 変種も substring match で fable に解決 (Issue #128)
+        out = self._run_node("window.__sessions.inferModelFamily('claude-fable-5[1m]')")
+        self.assertEqual(out, "fable")
+
     # ---------- buildModelChips ----------
     def test_build_model_chips_single(self):
         out = self._run_node(
@@ -331,6 +340,12 @@ class TestSessionsRendererBehavior(unittest.TestCase):
         self.assertIn('class="model-chip m-opus"', out)
         self.assertIn('opus', out)
         self.assertIn('class="ct">3<', out)
+
+    def test_build_model_chips_fable(self):
+        out = self._run_node(
+            "window.__sessions.buildModelChips({'claude-fable-5': 3})"
+        )
+        self.assertIn('class="model-chip m-fable"', out)
 
     def test_build_model_chips_mixed(self):
         out = self._run_node(

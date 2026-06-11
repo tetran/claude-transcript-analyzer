@@ -90,6 +90,7 @@ class TestModelDistPanelDOM(unittest.TestCase):
         self.assertIn("assistant_usage", body)  # filter 条件
         self.assertIn("model", body)  # 集計 source field
         self.assertIn("family", body)  # rollup 軸
+        self.assertIn("fable", body)
         self.assertIn("opus", body)
         self.assertIn("sonnet", body)
         self.assertIn("haiku", body)
@@ -205,10 +206,10 @@ class TestModelDistRendererSource(unittest.TestCase):
         )
 
     def test_canonical_order_hardcoded(self):
-        # plan §2 / §3: opus → sonnet → haiku を 3 軸同期
+        # Issue #128: fable → opus → sonnet → haiku (価格帯降順) を 3 軸同期
         self.assertRegex(
             self.src,
-            r"\[\s*['\"]opus['\"]\s*,\s*['\"]sonnet['\"]\s*,\s*['\"]haiku['\"]\s*\]",
+            r"\[\s*['\"]fable['\"]\s*,\s*['\"]opus['\"]\s*,\s*['\"]sonnet['\"]\s*,\s*['\"]haiku['\"]\s*\]",
         )
 
     def test_callout_threshold_5_percent(self):
@@ -232,13 +233,15 @@ class TestModelDistRendererNode(unittest.TestCase):
     def test_buildDonutSvg_emits_class_hooks(self):
         out = _node_eval("""
             const families = [
-                {family: 'opus', messages: 6, messages_pct: 0.6, cost_usd: 0, cost_pct: 0},
+                {family: 'fable', messages: 2, messages_pct: 0.2, cost_usd: 0, cost_pct: 0},
+                {family: 'opus', messages: 4, messages_pct: 0.4, cost_usd: 0, cost_pct: 0},
                 {family: 'sonnet', messages: 3, messages_pct: 0.3, cost_usd: 0, cost_pct: 0},
                 {family: 'haiku', messages: 1, messages_pct: 0.1, cost_usd: 0, cost_pct: 0},
             ];
             const svg = window.__modelDist.buildDonutSvg(families, 'messages');
             console.log(svg);
         """)
+        self.assertIn('class="donut-slice s-fable"', out)
         self.assertIn('class="donut-slice s-opus"', out)
         self.assertIn('class="donut-slice s-sonnet"', out)
         self.assertIn('class="donut-slice s-haiku"', out)
@@ -294,32 +297,58 @@ class TestModelDistRendererNode(unittest.TestCase):
             self.assertIn(cls, out)
 
     def test_buildLegendHtml_uses_canonical_order(self):
+        # Issue #128: 4-row fixture に upgrade して fable を canonical 順テストの
+        # カバレッジに positive に含める (3-row のままだと fable が silent pad で
+        # 素通りして第 4 family をカバーしない「静かなカバレッジ縮小」になる)
         out = _node_eval("""
             const families = [
-                {family: 'opus', messages: 6, messages_pct: 0.6, cost_usd: 0, cost_pct: 0},
+                {family: 'fable', messages: 2, messages_pct: 0.2, cost_usd: 0, cost_pct: 0},
+                {family: 'opus', messages: 4, messages_pct: 0.4, cost_usd: 0, cost_pct: 0},
                 {family: 'sonnet', messages: 3, messages_pct: 0.3, cost_usd: 0, cost_pct: 0},
                 {family: 'haiku', messages: 1, messages_pct: 0.1, cost_usd: 0, cost_pct: 0},
             ];
             console.log(window.__modelDist.buildLegendHtml(families));
         """)
+        i_fable = out.index("leg-fable")
         i_opus = out.index("leg-opus")
         i_sonnet = out.index("leg-sonnet")
         i_haiku = out.index("leg-haiku")
+        self.assertLess(i_fable, i_opus)
         self.assertLess(i_opus, i_sonnet)
         self.assertLess(i_sonnet, i_haiku)
 
     def test_buildLegendHtml_uses_leg_class(self):
         out = _node_eval("""
             const families = [
+                {family: 'fable', messages: 2, messages_pct: 0.2, cost_usd: 0, cost_pct: 0},
                 {family: 'opus', messages: 6, messages_pct: 0.6, cost_usd: 0, cost_pct: 0},
                 {family: 'sonnet', messages: 3, messages_pct: 0.3, cost_usd: 0, cost_pct: 0},
                 {family: 'haiku', messages: 1, messages_pct: 0.1, cost_usd: 0, cost_pct: 0},
             ];
             console.log(window.__modelDist.buildLegendHtml(families));
         """)
+        self.assertIn("leg-fable", out)
         self.assertIn("leg-opus", out)
         self.assertIn("leg-sonnet", out)
         self.assertIn("leg-haiku", out)
+
+    def test_legacy_3row_response_pads_fable_zero_row(self):
+        # 後方互換 regression (意図的に 3-row fixture を 1 本だけ残す):
+        # live 更新中に古い 3 行レスポンスを受けても crash せず、fable は
+        # find-or-default でゼロ行 pad されて legend に出る (Issue #128)
+        out = _node_eval("""
+            const families = [
+                {family: 'opus', messages: 6, messages_pct: 0.6, cost_usd: 0, cost_pct: 0},
+                {family: 'sonnet', messages: 3, messages_pct: 0.3, cost_usd: 0, cost_pct: 0},
+                {family: 'haiku', messages: 1, messages_pct: 0.1, cost_usd: 0, cost_pct: 0},
+            ];
+            console.log(window.__modelDist.buildLegendHtml(families));
+            console.log(window.__modelDist.buildDonutSvg(families, 'messages'));
+        """)
+        # legend には fable ゼロ行が pad される
+        self.assertIn("leg-fable", out)
+        # donut は 0% slice を描かないが crash しないこと (他 3 slice は出る)
+        self.assertIn('class="donut-slice s-opus"', out)
 
     def test_buildCalloutHtml_filters_below_5pct(self):
         # 4% slice → callout 出ない / 5% slice → callout 出る
@@ -511,11 +540,24 @@ class TestModelDistCss(unittest.TestCase):
         self.assertRegex(self.css, r"\.donut\s*\{")
 
     def test_donut_slice_color_tokens_match_phase4_hooks(self):
-        # Phase 4 で確定した s-opus / s-sonnet / s-haiku に対して Sessions ページと
-        # 整合する color token (--coral / --mint / --peach) を打つ
+        # Phase 4 で確定した s-fable / s-opus / s-sonnet / s-haiku に対して
+        # Sessions ページと整合する color token を打つ (fable=lavender, Issue #128)
+        self.assertRegex(self.css, r"\.donut-slice\.s-fable[^{]*\{[^}]*var\(--lavender\)")
         self.assertRegex(self.css, r"\.donut-slice\.s-opus[^{]*\{[^}]*var\(--coral\)")
         self.assertRegex(self.css, r"\.donut-slice\.s-sonnet[^{]*\{[^}]*var\(--mint\)")
         self.assertRegex(self.css, r"\.donut-slice\.s-haiku[^{]*\{[^}]*var\(--peach\)")
+
+    def test_lavender_token_defined_in_base_css(self):
+        base = _read_style("00_base.css")
+        self.assertIn("--lavender:", base)
+
+    def test_donut_callout_fable_defined(self):
+        self.assertRegex(self.css, r"\.donut-callout\.c-fable[^{]*\{[^}]*var\(--lavender\)")
+
+    def test_model_chip_fable_defined_in_sessions_css(self):
+        # Sessions の model chips にも fable=lavender フック (Issue #128)
+        sessions_css = _read_style("55_sessions.css")
+        self.assertRegex(sessions_css, r"\.model-chip\.m-fable[^{]*\{[^}]*var\(--lavender\)")
 
     def test_axis_pair_grid_defined(self):
         self.assertRegex(self.css, r"\.axis-pair\s*\{[^}]*display:\s*grid")
@@ -528,7 +570,8 @@ class TestModelDistCss(unittest.TestCase):
         self.assertRegex(self.css, r"\.donut-callout\s*\{")
 
     def test_model_legend_uses_canonical_color_tokens(self):
-        # leg-opus / leg-sonnet / leg-haiku に Sessions 整合 color token
+        # leg-fable / leg-opus / leg-sonnet / leg-haiku に Sessions 整合 color token
+        self.assertRegex(self.css, r"\.leg-fable[^{]*\{[^}]*var\(--lavender\)")
         self.assertRegex(self.css, r"\.leg-opus[^{]*\{[^}]*var\(--coral\)")
         self.assertRegex(self.css, r"\.leg-sonnet[^{]*\{[^}]*var\(--mint\)")
         self.assertRegex(self.css, r"\.leg-haiku[^{]*\{[^}]*var\(--peach\)")

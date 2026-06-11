@@ -134,7 +134,7 @@ __INCLUDE_STYLES__
       </div>
     </div>
 
-    <!-- Issue #106: モデル分布 (opus / sonnet / haiku の messages × cost donut grid) -->
+    <!-- Issue #106: モデル分布 (fable / opus / sonnet / haiku の messages × cost donut grid) -->
     <div class="panel" id="model-dist-panel" style="margin-top: 14px;">
       <div class="panel-head c-rose">
         <div class="ttl-wrap">
@@ -143,7 +143,7 @@ __INCLUDE_STYLES__
             <button class="help-btn" type="button" aria-label="説明を表示" aria-expanded="false" aria-describedby="hp-model-dist" data-help-id="hp-model-dist">?</button>
             <span class="help-pop" id="hp-model-dist" role="tooltip" data-place="left">
               <span class="pop-ttl">モデル分布の読み方</span>
-              <span class="pop-body"><code>assistant_usage</code> event ごとの <code>model</code> フィールドを family (opus / sonnet / haiku) にロールアップした、モデル別の負荷分担。メッセージ数では sonnet が workhorse、コストでは opus が支配的になりがち — 両軸を併置することで、message-count では見えないコスト偏りを発見できる。集計対象は <code>assistant_usage</code> event のみ (session_start / skill_tool / subagent invocation は除外)。未知 model は sonnet family に寄せて集計する。</span>
+              <span class="pop-body"><code>assistant_usage</code> event ごとの <code>model</code> フィールドを family (fable / opus / sonnet / haiku) にロールアップした、モデル別の負荷分担。単価の高い family は message 数が少なくてもコストを支配しやすい — 両軸を併置することで、message-count では見えないコスト偏りを発見できる。集計対象は <code>assistant_usage</code> event のみ (session_start / skill_tool / subagent invocation は除外)。未知 model は sonnet family に寄せて集計する。</span>
             </span>
           </span>
         </div>

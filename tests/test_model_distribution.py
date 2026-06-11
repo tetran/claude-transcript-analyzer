@@ -2,7 +2,7 @@
 
 server-side aggregation テスト:
 - TestInferModelFamily — raw model ID → family rollup helper
-- TestAggregateModelDistribution — events list → 3-row distribution dict
+- TestAggregateModelDistribution — events list → 4-row distribution dict
 - TestPricingHelperSemanticsContrast — `_get_pricing` (prefix) vs `infer_model_family`
   (substring) の semantics 違いを test レベルで明示 (R7)
 - TestBuildDashboardDataModelDistribution — /api/data 統合 (Phase 2)
@@ -23,7 +23,14 @@ from analyzer.cost import (  # noqa: E402
 
 
 class TestInferModelFamily(unittest.TestCase):
-    """raw model ID → 'opus' / 'sonnet' / 'haiku' 文字列 (substring match, 未知 → sonnet)."""
+    """raw model ID → 'fable' / 'opus' / 'sonnet' / 'haiku' 文字列 (substring match, 未知 → sonnet)."""
+
+    def test_fable_5_rolls_up_to_fable(self):
+        self.assertEqual(infer_model_family("claude-fable-5"), "fable")
+
+    def test_fable_5_1m_suffix_rolls_up_to_fable(self):
+        # `[1m]` 形も substring match でそのままカバーされることを pin (Issue #128)
+        self.assertEqual(infer_model_family("claude-fable-5[1m]"), "fable")
 
     def test_opus_4_7_rolls_up_to_opus(self):
         self.assertEqual(infer_model_family("claude-opus-4-7-20260101"), "opus")
@@ -48,7 +55,7 @@ class TestInferModelFamily(unittest.TestCase):
 
 
 class TestAggregateModelDistribution(unittest.TestCase):
-    """events list → 3-row dict (canonical order, NaN guard, total invariants)."""
+    """events list → 4-row dict (canonical order, NaN guard, total invariants)."""
 
     def _au(self, model, in_t=0, out_t=0, cr_t=0, cc_t=0):
         return {
@@ -60,10 +67,19 @@ class TestAggregateModelDistribution(unittest.TestCase):
             "cache_creation_tokens": cc_t,
         }
 
-    def test_returns_three_rows_with_canonical_order(self):
+    def test_returns_four_rows_with_canonical_order(self):
+        # canonical 順は価格帯降順 fable → opus → sonnet → haiku (Issue #128)
         result = aggregate_model_distribution([self._au("claude-opus-4-7")])
         families = [row["family"] for row in result["families"]]
-        self.assertEqual(families, ["opus", "sonnet", "haiku"])
+        self.assertEqual(families, ["fable", "opus", "sonnet", "haiku"])
+
+    def test_fable_messages_and_cost_attributed_to_fable_row(self):
+        # fable 1M output × $50 = $50 が fable 行に積まれる
+        events = [self._au("claude-fable-5", 0, 1_000_000)]
+        result = aggregate_model_distribution(events)
+        fable_row = next(r for r in result["families"] if r["family"] == "fable")
+        self.assertEqual(fable_row["messages"], 1)
+        self.assertEqual(fable_row["cost_usd"], 50.0)
 
     def test_messages_pct_sums_to_one_within_tolerance(self):
         # opus 3 / sonnet 5 / haiku 2 → Σ pct = 1.0 ± 0.005 (Issue AC)
@@ -109,9 +125,9 @@ class TestAggregateModelDistribution(unittest.TestCase):
             places=4,
         )
 
-    def test_empty_events_returns_three_zero_rows(self):
+    def test_empty_events_returns_four_zero_rows(self):
         result = aggregate_model_distribution([])
-        self.assertEqual(len(result["families"]), 3)
+        self.assertEqual(len(result["families"]), 4)
         for row in result["families"]:
             self.assertEqual(row["messages"], 0)
             self.assertEqual(row["cost_usd"], 0)
@@ -178,6 +194,11 @@ class TestPricingHelperSemanticsContrast(unittest.TestCase):
         # `"opus"` を返す。両 helper の semantics が違う = rate と family は別軸
         self.assertEqual(infer_model_family("opus-foo-bar-haiku"), "opus")
 
+    def test_infer_model_family_fable_takes_priority_over_opus(self):
+        # 優先順は fable → opus → haiku → sonnet (Issue #128)。既存の opus 優先
+        # テストとの対比で fable 最優先を pin する
+        self.assertEqual(infer_model_family("fable-opus-mix"), "fable")
+
 
 # =============================================================================
 # Phase 2 — build_dashboard_data 統合テスト
@@ -226,7 +247,7 @@ class TestBuildDashboardDataModelDistribution(unittest.TestCase):
         self.assertIn("families", md)
         self.assertIn("messages_total", md)
         self.assertIn("cost_total", md)
-        self.assertEqual(len(md["families"]), 3)
+        self.assertEqual(len(md["families"]), 4)
 
     def test_period_filter_applied(self):
         # 8 日前 (period=7d で除外) と今日 (含む) の 2 件
@@ -313,10 +334,10 @@ class TestBuildDashboardDataModelDistribution(unittest.TestCase):
         # cap (top_n=20) で 1 session 分 session_breakdown 側が小さい
         self.assertLess(sb_total, md_total)
 
-    def test_empty_events_yields_three_zero_rows(self):
+    def test_empty_events_yields_four_zero_rows(self):
         result = self.build_dashboard_data([])
         md = result["model_distribution"]
-        self.assertEqual(len(md["families"]), 3)
+        self.assertEqual(len(md["families"]), 4)
         for row in md["families"]:
             self.assertEqual(row["messages"], 0)
 

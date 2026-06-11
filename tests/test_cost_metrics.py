@@ -8,16 +8,20 @@
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 # repo root を sys.path に追加 (他テストと同じ慣習)
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+import analyzer.cost  # noqa: E402
 from analyzer.cost import (  # noqa: E402
     DEFAULT_PRICING,
     MODEL_PRICING,
     TOP_N_SESSIONS,
+    ModelPricing,
+    _get_pricing,
     aggregate_session_breakdown,
     calculate_message_cost,
     calculate_session_cost,
@@ -157,6 +161,75 @@ class TestCalculateMessageCost(unittest.TestCase):
         self.assertIsInstance(result, float)
 
 
+class TestFableAndContextWindowSuffix(unittest.TestCase):
+    """Issue #128: Fable 5 / Opus 4.8 価格 + `[1m]` context-window suffix 正規化。
+
+    `[1m]` は 1M context window 利用のマーカーであり別モデルではない。公式 pricing
+    (2026-06-11 pin) で 1M context は標準料金のため、base model と同価格に解決する。
+    `[1m]` 形は `-` boundary prefix match に乗らない (`"claude-fable-5[1m]"` は
+    `"claude-fable-5-"` で始まらない) ため、`_get_pricing` の suffix 正規化が急所。
+    """
+
+    def test_fable_5_input_only(self):
+        # claude-fable-5: input $10 / MTok
+        self.assertEqual(
+            calculate_message_cost("claude-fable-5", 1_000_000, 0, 0, 0),
+            10.0,
+        )
+
+    def test_fable_5_all_dimensions(self):
+        # 1M each × {input 10, output 50, cache_read 1, cache_creation 12.5} = 73.5
+        self.assertEqual(
+            calculate_message_cost("claude-fable-5", 1_000_000, 1_000_000, 1_000_000, 1_000_000),
+            73.5,
+        )
+
+    def test_fable_5_1m_suffix_priced_as_fable(self):
+        # base 登録だけでは sonnet fallback ($3) になる — suffix 正規化で $10 に解決
+        self.assertEqual(
+            calculate_message_cost("claude-fable-5[1m]", 1_000_000, 0, 0, 0),
+            10.0,
+        )
+
+    def test_opus_4_8_priced_as_opus_4_8_not_opus_4(self):
+        # 未登録だと `claude-opus-4` ($15) に prefix 誤マッチして 3 倍過大計上
+        self.assertEqual(
+            calculate_message_cost("claude-opus-4-8", 1_000_000, 0, 0, 0),
+            5.0,
+        )
+
+    def test_opus_4_7_1m_suffix_priced_as_opus_4_7(self):
+        self.assertEqual(
+            calculate_message_cost("claude-opus-4-7[1m]", 1_000_000, 0, 0, 0),
+            5.0,
+        )
+
+    def test_opus_4_8_1m_suffix_priced_as_opus_4_8(self):
+        # suffix 正規化 → prefix collision 解決 (opus-4 vs opus-4-8) を両方通る
+        # 唯一の合成パス。どちらかが壊れると 15.0 (誤マッチ) か 3.0 (fallback) になる
+        self.assertEqual(
+            calculate_message_cost("claude-opus-4-8[1m]", 1_000_000, 0, 0, 0),
+            5.0,
+        )
+
+    def test_sonnet_4_6_1m_suffix_priced_as_sonnet_4_6(self):
+        # fallback (DEFAULT_PRICING) とも prefix 誤マッチ先 (claude-sonnet-4) とも
+        # 同額のため、cost 比較では解決経路を区別できない。DEFAULT_PRICING を
+        # sentinel に差し替えた上で assertIs により「claude-sonnet-4-6 の entry
+        # オブジェクトそのもの」へ解決されることを直接 assert する
+        sentinel = ModelPricing(input=999.0, output=999.0, cache_read=999.0, cache_creation=999.0)
+        with mock.patch.object(analyzer.cost, "DEFAULT_PRICING", sentinel):
+            self.assertIs(
+                _get_pricing("claude-sonnet-4-6[1m]"),
+                MODEL_PRICING["claude-sonnet-4-6"],
+            )
+
+    def test_fable_5_does_not_fallback_to_sonnet(self):
+        fable_cost = calculate_message_cost("claude-fable-5", 1_000_000, 0, 0, 0)
+        sonnet_fallback = calculate_message_cost("claude-future-99-x", 1_000_000, 0, 0, 0)
+        self.assertNotEqual(fable_cost, sonnet_fallback)
+
+
 class TestUnknownModelFallback(unittest.TestCase):
     """plan §1 / cost-calculation-design.md §2: 未知 model は Sonnet 4.6 にフォールバック。"""
 
@@ -164,6 +237,14 @@ class TestUnknownModelFallback(unittest.TestCase):
         sonnet_cost = calculate_message_cost("claude-sonnet-4-6", 1_000_000, 0, 0, 0)
         unknown_cost = calculate_message_cost("claude-future-99-x", 1_000_000, 0, 0, 0)
         self.assertEqual(unknown_cost, sonnet_cost)
+
+    def test_unknown_model_with_1m_suffix_still_falls_back(self):
+        # `[1m]` 正規化が未知 model の fallback 方針を壊さないことを pin
+        sonnet_cost = calculate_message_cost("claude-sonnet-4-6", 1_000_000, 0, 0, 0)
+        self.assertEqual(
+            calculate_message_cost("claude-unknown[1m]", 1_000_000, 0, 0, 0),
+            sonnet_cost,
+        )
 
     def test_empty_model_uses_sonnet_46_rate(self):
         sonnet_cost = calculate_message_cost("claude-sonnet-4-6", 1_000_000, 0, 0, 0)
