@@ -12,9 +12,12 @@ Issue #99 / v0.8.0〜。`docs/reference/cost-calculation-design.md` §9-§10 で
 
 「Model pricing」table の値を **per-1M-token USD** で転記。本表記は cost を
 USD per 1M token で揃える AgenticSec / cost-calculation-design.md §2 の慣習に従う。
+Fable 5 / Opus 4.8 の 2 行は 2026-06-11 に同 URL から追加 pin (Issue #128)。
 
 | Model              | 公式 model ID prefix     | input | output | cache_read | 5m cache_creation |
 |--------------------|--------------------------|-------|--------|------------|-------------------|
+| Claude Fable 5     | `claude-fable-5`         | $10   | $50    | $1         | $12.50            |
+| Claude Opus 4.8    | `claude-opus-4-8`        | $5    | $25    | $0.50      | $6.25             |
 | Claude Opus 4.7    | `claude-opus-4-7`        | $5    | $25    | $0.50      | $6.25             |
 | Claude Opus 4.6    | `claude-opus-4-6`        | $5    | $25    | $0.50      | $6.25             |
 | Claude Opus 4.5    | `claude-opus-4-5`        | $5    | $25    | $0.50      | $6.25             |
@@ -41,7 +44,7 @@ USD per 1M token で揃える AgenticSec / cost-calculation-design.md §2 の慣
 - **5-minute cache write のみ採用**: Anthropic は 5m / 1h で cache write 単価が異なる
   (5m: 1.25x base、1h: 2x base)。transcript の `cache_creation_input_tokens` には
   TTL の区別が無い (= 観測不能)。default の 5m を採用。1h 利用が一般化したら
-  schema 拡張で別 field 化する将来 issue。
+  schema 拡張で別 field 化する将来 issue。Fable 5 も同様 (1h $20 は不採用、5m $12.50)。
 - **`inference_geo` の 1.1x multiplier 未適用**: data-residency 機能 (US-only routing)
   使用時 +10% だが、global routing が default のため大半は影響なし。本 module は
   applied として扱わない (= silent under-estimate になる data-residency ユーザーは
@@ -76,7 +79,9 @@ class ModelPricing(NamedTuple):
 # longest-prefix match が `claude-haiku-4-5-20251001` (4.x) も
 # `claude-3-5-haiku-20241022` (3.x) も正しい model に解決する。
 MODEL_PRICING: dict[str, ModelPricing] = {
-    # Claude 4.x: naming convention は `claude-{model}-{version}-{date?}`
+    # Claude 5.x / 4.x: naming convention は `claude-{model}-{version}-{date?}`
+    "claude-fable-5":    ModelPricing(input=10.00, output=50.00, cache_read=1.00, cache_creation=12.50),
+    "claude-opus-4-8":   ModelPricing(input=5.00,  output=25.00, cache_read=0.50, cache_creation=6.25),
     "claude-opus-4-7":   ModelPricing(input=5.00,  output=25.00, cache_read=0.50, cache_creation=6.25),
     "claude-opus-4-6":   ModelPricing(input=5.00,  output=25.00, cache_read=0.50, cache_creation=6.25),
     "claude-opus-4-5":   ModelPricing(input=5.00,  output=25.00, cache_read=0.50, cache_creation=6.25),
@@ -99,7 +104,7 @@ DEFAULT_PRICING: ModelPricing = MODEL_PRICING["claude-sonnet-4-6"]
 
 
 def _get_pricing(model: str) -> ModelPricing:
-    """model ID → ModelPricing (longest-prefix match + Sonnet fallback)。
+    """model ID → ModelPricing (suffix 正規化 + longest-prefix match + Sonnet fallback)。
 
     Anthropic は date-suffix 付き ID (`claude-haiku-4-5-20251001`) を返すことがあるため
     完全一致だけでなく **token-boundary prefix match** も許容する。
@@ -107,7 +112,16 @@ def _get_pricing(model: str) -> ModelPricing:
     Prefix collision の取り扱い: `claude-opus-4` と `claude-opus-4-5` のように
     片方が他方の prefix になる場合は **longest match wins** ($15 と $5 が
     別物なので取り違えると致命的)。
+
+    `[1m]` 等の context-window suffix は `-` boundary prefix match に乗らない
+    (`"claude-fable-5[1m]"` は `"claude-fable-5-"` で始まらない) ため、冒頭の
+    正規化で吸収する (Issue #128)。
     """
+    # `[` は context-window マーカー予約 (`[1m]` = 1M context 利用) であり別モデル
+    # ではないため、base model と同価格に解決する。公式 pricing (2026-06-11 確認)
+    # で 1M context は標準料金。`[...]` 変種が premium 価格を持つモデルが現れたら
+    # 本正規化を再設計する (cost-calculation-design.md にも同不変条件を明記)。
+    model = model.split("[", 1)[0]
     if model in MODEL_PRICING:
         return MODEL_PRICING[model]
     # 末尾に "-" を付けて prefix match することで、`claude-opus-4` が
@@ -142,23 +156,25 @@ def calculate_message_cost(
     return round(cost, 4)
 
 
-_FAMILY_CANONICAL_ORDER = ("opus", "sonnet", "haiku")
+_FAMILY_CANONICAL_ORDER = ("fable", "opus", "sonnet", "haiku")
 
 
 def infer_model_family(model: str | None) -> str:
-    """raw model ID → 'opus' / 'sonnet' / 'haiku' family 文字列.
+    """raw model ID → 'fable' / 'opus' / 'sonnet' / 'haiku' family 文字列.
 
     substring match (lowercase)。未知 model や空文字 / None は 'sonnet' fallback
     (= `DEFAULT_PRICING` (sonnet-4-6) と意味論を一致させ、cost 推計と family
     rollup の double standard を作らない、cost-calculation-design.md §10 整合)。
 
     JS 側の `inferModelFamily` (45_renderers_sessions.js) と semantics を 1:1 に
-    保つことを load-bearing 規約とする。priority 順は opus → haiku → sonnet で、
-    両方を含む model 名 (例: "opus-foo-bar-haiku") は opus を勝者とする
+    保つことを load-bearing 規約とする。priority 順は fable → opus → haiku →
+    sonnet で、複数を含む model 名 (例: "fable-opus-mix") は先勝ちとする
     (= prefix match の `_get_pricing` とは別の抽象階層、Issue #106 plan R7 /
     Phase 1 `TestPricingHelperSemanticsContrast` で test レベルの drift guard 済)。
     """
     m = (model or "").lower()
+    if "fable" in m:
+        return "fable"
     if "opus" in m:
         return "opus"
     if "haiku" in m:
@@ -174,17 +190,17 @@ def aggregate_model_distribution(events: list[dict]) -> dict:
     出力形:
         {
             "families": [
-                {"family": "opus",   "messages": int, "messages_pct": float,
+                {"family": "fable",  "messages": int, "messages_pct": float,
                  "cost_usd": float, "cost_pct": float},
-                ... (sonnet, haiku 同形)
+                ... (opus, sonnet, haiku 同形)
             ],
             "messages_total": int,
             "cost_total": float,
         }
 
     contract 不変条件:
-    - `families` は **常に 3 行** (opus → sonnet → haiku, canonical 固定順)。
-      family 数が 0 / 1 / 2 でも未出現 family は messages=0 行で埋める
+    - `families` は **常に 4 行** (fable → opus → sonnet → haiku, canonical 固定順)。
+      family 数が 0〜3 でも未出現 family は messages=0 行で埋める
     - 空 events / `messages_total == 0` のとき `messages_pct = 0.0` (NaN guard)
     - `cost_total == 0` のとき `cost_pct = 0.0` (NaN guard)
     - 未知 model は `infer_model_family` の sonnet fallback で sonnet 行に集計、

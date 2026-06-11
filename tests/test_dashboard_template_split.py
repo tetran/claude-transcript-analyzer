@@ -31,7 +31,9 @@ _DASHBOARD_PATH = Path(__file__).parent.parent / "dashboard" / "server.py"
 # - 50bf29f2a544: Issue #114 footer sessVal 削除 (kpi-sess が period 連動の唯一表示)
 # - 42d220a99be6: v0.8.1 release / footer bump
 # - af95bbf905b5: v0.8.2 release / footer bump
-EXPECTED_TEMPLATE_SHA256 = "af95bbf905b58930fac9d68253bcd079204c18ddcbf6433529399cdd7e6c3ee1"
+# - 2d044f2a6832: Issue #128 fable family (help-pop / CSS token / JS canonical 順)
+# - 030e6a69e77e: v0.8.3 release / footer bump
+EXPECTED_TEMPLATE_SHA256 = "030e6a69e77e75a4983b32336ef87d9e5bf9316314236631f924f46c2e77f833"
 
 
 def _load_dashboard_module(tmp_path: Path):

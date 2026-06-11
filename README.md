@@ -113,7 +113,7 @@ cat ~/.claude/transcript-analyzer/server.json
 #### Overview — 全体俯瞰
 
 8 個の KPI カード (events / skills / subagents / projects / sessions / resume rate / compact / permission) +
-スキル / Subagent 利用ランキング + 日別利用件数の推移 + プロジェクト分布 + モデル分布（opus / sonnet / haiku のメッセージ数・コスト内訳）。
+スキル / Subagent 利用ランキング + 日別利用件数の推移 + プロジェクト分布 + モデル分布（fable / opus / sonnet / haiku のメッセージ数・コスト内訳）。
 右上の期間トグル (7d / 30d / 90d / 全期間) で集計レンジを切り替えられる。
 
 ![Overview tab](docs/assets/screenshots/01-overview.png)
@@ -145,7 +145,7 @@ description が弱くて LLM が「思いつけない」skill や、書いたま
 #### Sessions — セッション別コスト
 
 選択期間内の有効セッション（assistant_usage を 1 件以上持つもの）から最新 20 件のトークン消費・推計コスト・モデル構成を一覧。
-実測トークン × モデル別公開価格表の掛け算による参考値で、opus / sonnet / haiku の混在比率も可視化する。
+実測トークン × モデル別公開価格表の掛け算による参考値で、fable / opus / sonnet / haiku の混在比率も可視化する。
 右上の期間トグル (7d / 30d / 90d / 全期間) で Overview / Patterns と同じレンジに揃えて切り替えられる。
 `/usage-summary --include-cost` との組み合わせで全期間ランキングと最新セッション詳細を横断確認できる。
 

@@ -466,6 +466,7 @@
     height: auto;
     display: block;
   }
+  .donut-slice.s-fable  { stroke: var(--lavender); }
   .donut-slice.s-opus   { stroke: var(--coral); }
   .donut-slice.s-sonnet { stroke: var(--mint); }
   .donut-slice.s-haiku  { stroke: var(--peach); }
@@ -517,6 +518,7 @@
     border: 1px solid var(--line);
     white-space: nowrap;
   }
+  .donut-callout.c-fable  { border-color: var(--lavender); }
   .donut-callout.c-opus   { border-color: var(--coral); }
   .donut-callout.c-sonnet { border-color: var(--mint); }
   .donut-callout.c-haiku  { border-color: var(--peach); }
@@ -575,6 +577,7 @@
     text-align: right;
     font-weight: 500;
   }
+  .model-legend .leg-fable  .leg-dot { background: var(--lavender); }
   .model-legend .leg-opus   .leg-dot { background: var(--coral); }
   .model-legend .leg-sonnet .leg-dot { background: var(--mint); }
   .model-legend .leg-haiku  .leg-dot { background: var(--peach); }
