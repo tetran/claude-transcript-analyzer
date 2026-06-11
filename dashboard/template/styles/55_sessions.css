@@ -129,7 +129,8 @@
     color: var(--ink);
     font-size: 10px;
   }
-  /* color per family — sonnet=mint(workhorse) / opus=coral(premium) / haiku=peach(cheap) */
+  /* color per family — fable=lavender(top-tier) / sonnet=mint(workhorse) / opus=coral(premium) / haiku=peach(cheap) */
+  .model-chip.m-fable  { background: rgba(185, 168, 255, 0.10); color: var(--lavender); }
   .model-chip.m-sonnet { background: rgba(111, 227, 200, 0.10); color: var(--mint); }
   .model-chip.m-opus   { background: rgba(255, 138, 118, 0.10); color: var(--coral); }
   .model-chip.m-haiku  { background: rgba(255, 201, 122, 0.10); color: var(--peach); }

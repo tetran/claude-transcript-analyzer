@@ -90,6 +90,7 @@ class TestModelDistPanelDOM(unittest.TestCase):
         self.assertIn("assistant_usage", body)  # filter 条件
         self.assertIn("model", body)  # 集計 source field
         self.assertIn("family", body)  # rollup 軸
+        self.assertIn("fable", body)
         self.assertIn("opus", body)
         self.assertIn("sonnet", body)
         self.assertIn("haiku", body)
@@ -539,11 +540,24 @@ class TestModelDistCss(unittest.TestCase):
         self.assertRegex(self.css, r"\.donut\s*\{")
 
     def test_donut_slice_color_tokens_match_phase4_hooks(self):
-        # Phase 4 で確定した s-opus / s-sonnet / s-haiku に対して Sessions ページと
-        # 整合する color token (--coral / --mint / --peach) を打つ
+        # Phase 4 で確定した s-fable / s-opus / s-sonnet / s-haiku に対して
+        # Sessions ページと整合する color token を打つ (fable=lavender, Issue #128)
+        self.assertRegex(self.css, r"\.donut-slice\.s-fable[^{]*\{[^}]*var\(--lavender\)")
         self.assertRegex(self.css, r"\.donut-slice\.s-opus[^{]*\{[^}]*var\(--coral\)")
         self.assertRegex(self.css, r"\.donut-slice\.s-sonnet[^{]*\{[^}]*var\(--mint\)")
         self.assertRegex(self.css, r"\.donut-slice\.s-haiku[^{]*\{[^}]*var\(--peach\)")
+
+    def test_lavender_token_defined_in_base_css(self):
+        base = _read_style("00_base.css")
+        self.assertIn("--lavender:", base)
+
+    def test_donut_callout_fable_defined(self):
+        self.assertRegex(self.css, r"\.donut-callout\.c-fable[^{]*\{[^}]*var\(--lavender\)")
+
+    def test_model_chip_fable_defined_in_sessions_css(self):
+        # Sessions の model chips にも fable=lavender フック (Issue #128)
+        sessions_css = _read_style("55_sessions.css")
+        self.assertRegex(sessions_css, r"\.model-chip\.m-fable[^{]*\{[^}]*var\(--lavender\)")
 
     def test_axis_pair_grid_defined(self):
         self.assertRegex(self.css, r"\.axis-pair\s*\{[^}]*display:\s*grid")
@@ -556,7 +570,8 @@ class TestModelDistCss(unittest.TestCase):
         self.assertRegex(self.css, r"\.donut-callout\s*\{")
 
     def test_model_legend_uses_canonical_color_tokens(self):
-        # leg-opus / leg-sonnet / leg-haiku に Sessions 整合 color token
+        # leg-fable / leg-opus / leg-sonnet / leg-haiku に Sessions 整合 color token
+        self.assertRegex(self.css, r"\.leg-fable[^{]*\{[^}]*var\(--lavender\)")
         self.assertRegex(self.css, r"\.leg-opus[^{]*\{[^}]*var\(--coral\)")
         self.assertRegex(self.css, r"\.leg-sonnet[^{]*\{[^}]*var\(--mint\)")
         self.assertRegex(self.css, r"\.leg-haiku[^{]*\{[^}]*var\(--peach\)")
