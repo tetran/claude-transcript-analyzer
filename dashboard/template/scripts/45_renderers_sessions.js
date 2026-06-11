@@ -28,8 +28,10 @@
     }
 
     // 未知 model 名 → sonnet fallback (cost_metrics.calculate_message_cost と整合)
+    // 優先順 fable → opus → haiku → sonnet は Python 側 infer_model_family と 1:1 契約
     function inferModelFamily(model) {
       const m = String(model || '').toLowerCase();
+      if (m.indexOf('fable') !== -1) return 'fable';
       if (m.indexOf('opus') !== -1) return 'opus';
       if (m.indexOf('haiku') !== -1) return 'haiku';
       if (m.indexOf('sonnet') !== -1) return 'sonnet';

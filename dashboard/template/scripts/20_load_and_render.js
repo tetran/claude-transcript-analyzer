@@ -319,11 +319,11 @@
   //  ============================================================
   //  pure helpers: buildDonutSvg / buildLegendHtml / buildCalloutHtml /
   //  buildCenterLabel — Node round-trip テストから個別 callable。
-  //  canonical 順 ['opus', 'sonnet', 'haiku'] は server (cost_metrics.py) と
+  //  canonical 順 ['fable', 'opus', 'sonnet', 'haiku'] は server (cost.py) と
   //  3 軸同期 (slice 並び / legend 行順 / API 配列順) で hard-code pin。
   //  ============================================================
   (function(){
-    const FAMILIES = ['opus', 'sonnet', 'haiku'];
+    const FAMILIES = ['fable', 'opus', 'sonnet', 'haiku'];
     const CALLOUT_THRESHOLD = 0.05;
     // donut geometry: viewBox 0 0 120 120, center (60,60), r=42, stroke-width=16
     // → 外径 50 / 内径 34、外接バウンディング (10,10)-(110,110) で 5px の余白
