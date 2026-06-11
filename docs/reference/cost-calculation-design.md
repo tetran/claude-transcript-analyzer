@@ -297,6 +297,29 @@ per-subagent transcript の収集は **Issue #93 で確定した `subagent_type 
 - **pin 対象 model**: Opus 4 / 4.1 / 4.5 / 4.6 / 4.7、Sonnet 3.7 / 4 / 4.5 / 4.6、
   Haiku 3 / 3.5 / 4.5。CLAUDE.md "Technical identifiers" ルール準拠で `analyzer/cost.py`
   module docstring に table 全体を verbatim 転記
+- **2026-06-11 追加 pin (Issue #128)**: Fable 5 (`claude-fable-5`、input $10 / output $50 /
+  cache read $1 / 5m cache write $12.50) と Opus 4.8 (`claude-opus-4-8`、4.7 / 4.6 と同額
+  $5 / $25 / $0.50 / $6.25) を同 URL から追加 pin。Opus 4.8 は従来未登録のため
+  `claude-opus-4` ($15) に prefix 誤マッチして 3 倍過大計上されていた — 登録により
+  **既存データの過去 cost 表示も $15 → $5 レートで下がる** (raw token 保存 + 計算時
+  価格適用の設計どおりの正しい挙動、§4 trade-off 参照)
+
+### `[1m]` context-window suffix の正規化 (Issue #128)
+
+`claude-fable-5[1m]` / `claude-opus-4-7[1m]` のような `[1m]` 付き model ID は
+1M context window 利用のマーカーであり**別モデルではない**。`[1m]` 形は
+`_get_pricing` の `-` boundary prefix match に乗らない (`"claude-fable-5[1m]"` は
+`"claude-fable-5-"` で始まらない) ため、lookup 冒頭で `model.split("[", 1)[0]` により
+suffix を落として base model に解決する。
+
+- **不変条件**: `[` は context-window マーカー予約であり、`[...]` 変種は base と
+  **同価格** に解決する。公式 pricing (2026-06-11 確認) で Fable 5 / Opus 4.8 / 4.7 /
+  4.6 / Sonnet 4.6 の 1M context は標準料金 (long-context プレミアムなし)。
+  `[...]` 変種が premium 価格を持つモデルが現れたらこの正規化を再設計する
+- 変種ごとの exact key 重複登録は採らない (新モデル追加のたびに 2 entry 必要になり
+  登録漏れ事故を再生産するため)
+- 未知 model の Sonnet fallback 設計 (§2) は**変更なし**: `claude-unknown[1m]` は
+  正規化後も未知のまま DEFAULT_PRICING に落ちる
 - **5-minute cache write のみ採用**: Anthropic は 5m / 1h で cache write 単価が異なる
   (5m: 1.25x base、1h: 2x base)。transcript の `cache_creation_input_tokens` には
   TTL の区別が無い (= 観測不能) ため default の 5m を採用。1h 利用が一般化したら
