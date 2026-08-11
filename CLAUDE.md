@@ -66,8 +66,6 @@ The README in each directory contains the detailed sorting policy.
 ```
 claude-transcript-analyzer/
 ├── .claude-plugin/
-│   ├── plugin.json           # plugin metadata
-│   └── marketplace.json      # marketplace metadata
 ├── hooks/                    # plugin hook definitions
 ├── commands/                 # slash-command definitions
 ├── dashboard/                # local HTTP dashboard server
@@ -77,13 +75,6 @@ claude-transcript-analyzer/
 ├── data/                     # gitignored dev-time fallback (production uses `~/.claude/transcript-analyzer/`)
 ├── tests/
 └── docs/
-    ├── transcript-format.md  # raw transcript format + Hook input schema + Archive evolution rules
-    ├── spec/                 # current spec (contract) — see README.md for sorting criteria
-    │   └── legacy/           # v0.1-era direct parse procedures (historical archive)
-    ├── reference/            # design decisions, gotchas, patterns — see README.md for sorting criteria
-    ├── plans/
-    │   └── archive/          # completed plans (historical archive)
-    └── review/resolved/      # resolved review notes
 ```
 
 > When the plugin is active, the archive output path is `~/.claude/transcript-analyzer/archive/YYYY-MM.jsonl.gz`,
@@ -91,7 +82,7 @@ claude-transcript-analyzer/
 
 ## Development conventions
 
-- Implement using **TDD** (write tests first)
+- Implement using **Red/green TDD**
 - **No external libraries** (stdlib only)
 - Test isolation: `USAGE_JSONL` overrides `DATA_FILE`; `HEALTH_ALERTS_JSONL` overrides `ALERTS_FILE` in `verify_session.py`; `ARCHIVE_DIR` / `ARCHIVE_STATE_FILE` / `USAGE_JSONL_LOCK` cover archive concerns; `USAGE_RETENTION_DAYS` overrides retention
 - Built-in commands are not recorded: `/exit /clear /help /compact /mcp /config /model /resume /context /skills /hooks /fast`
