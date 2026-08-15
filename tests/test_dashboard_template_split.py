@@ -33,7 +33,8 @@ _DASHBOARD_PATH = Path(__file__).parent.parent / "dashboard" / "server.py"
 # - af95bbf905b5: v0.8.2 release / footer bump
 # - 2d044f2a6832: Issue #128 fable family (help-pop / CSS token / JS canonical 順)
 # - 030e6a69e77e: v0.8.3 release / footer bump
-EXPECTED_TEMPLATE_SHA256 = "030e6a69e77e75a4983b32336ef87d9e5bf9316314236631f924f46c2e77f833"
+# - 14384aabadb1: v0.8.4 release / footer bump
+EXPECTED_TEMPLATE_SHA256 = "14384aabadb1e582d7f3caff2d598499b96adadfbca034e69ffb722744a891ab"
 
 
 def _load_dashboard_module(tmp_path: Path):
