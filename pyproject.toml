@@ -6,6 +6,12 @@ target-version = "py310"
 # ruff デフォルト (E + F) のみ。isort (I) や pep8 warning (W) は導入時の差分が大きく
 # 旧 pylint の検出範囲とも乖離するため見送り。必要になった時点で個別に opt-in する。
 #
+# `select` を明示するのは、暗黙のデフォルトに依存すると ruff 側がデフォルト集合を
+# 広げた時点で CI が無関係に落ちるため (実際 0.16 で UP / I / SIM / PLW 等が
+# デフォルト入りし、57 file / 約 190 件が一斉検出された)。CI の ruff-action は
+# バージョン未指定 = 常に最新を取得するので、ルール集合はこちらで固定する。
+select = ["E4", "E7", "E9", "F"]
+#
 # E402 (module-import-not-at-top-of-file) の全域 ignore は撤廃済み (Issue #121)。
 # `analyzer/` パッケージ内部は sys.path ハックを持たないため E402 は出ない。
 # entry-point leaf の「repo root を sys.path に載せてから analyzer.* を import」
