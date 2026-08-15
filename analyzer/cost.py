@@ -13,16 +13,20 @@ Issue #99 / v0.8.0〜。`docs/reference/cost-calculation-design.md` §9-§10 で
 「Model pricing」table の値を **per-1M-token USD** で転記。本表記は cost を
 USD per 1M token で揃える AgenticSec / cost-calculation-design.md §2 の慣習に従う。
 Fable 5 / Opus 4.8 の 2 行は 2026-06-11 に同 URL から追加 pin (Issue #128)。
+Opus 5 / Sonnet 5 の 2 行は 2026-08-15 に同 URL から追加 pin。同日時点で
+既存 15 行の単価に改定は無く、追加のみ。
 
 | Model              | 公式 model ID prefix     | input | output | cache_read | 5m cache_creation |
 |--------------------|--------------------------|-------|--------|------------|-------------------|
 | Claude Fable 5     | `claude-fable-5`         | $10   | $50    | $1         | $12.50            |
+| Claude Opus 5      | `claude-opus-5`          | $5    | $25    | $0.50      | $6.25             |
 | Claude Opus 4.8    | `claude-opus-4-8`        | $5    | $25    | $0.50      | $6.25             |
 | Claude Opus 4.7    | `claude-opus-4-7`        | $5    | $25    | $0.50      | $6.25             |
 | Claude Opus 4.6    | `claude-opus-4-6`        | $5    | $25    | $0.50      | $6.25             |
 | Claude Opus 4.5    | `claude-opus-4-5`        | $5    | $25    | $0.50      | $6.25             |
 | Claude Opus 4.1    | `claude-opus-4-1`        | $15   | $75    | $1.50      | $18.75            |
 | Claude Opus 4      | `claude-opus-4`          | $15   | $75    | $1.50      | $18.75            |
+| Claude Sonnet 5    | `claude-sonnet-5`        | $2    | $10    | $0.20      | $2.50             |
 | Claude Sonnet 4.6  | `claude-sonnet-4-6`      | $3    | $15    | $0.30      | $3.75             |
 | Claude Sonnet 4.5  | `claude-sonnet-4-5`      | $3    | $15    | $0.30      | $3.75             |
 | Claude Sonnet 4    | `claude-sonnet-4`        | $3    | $15    | $0.30      | $3.75             |
@@ -81,12 +85,17 @@ class ModelPricing(NamedTuple):
 MODEL_PRICING: dict[str, ModelPricing] = {
     # Claude 5.x / 4.x: naming convention は `claude-{model}-{version}-{date?}`
     "claude-fable-5":    ModelPricing(input=10.00, output=50.00, cache_read=1.00, cache_creation=12.50),
+    "claude-opus-5":     ModelPricing(input=5.00,  output=25.00, cache_read=0.50, cache_creation=6.25),
     "claude-opus-4-8":   ModelPricing(input=5.00,  output=25.00, cache_read=0.50, cache_creation=6.25),
     "claude-opus-4-7":   ModelPricing(input=5.00,  output=25.00, cache_read=0.50, cache_creation=6.25),
     "claude-opus-4-6":   ModelPricing(input=5.00,  output=25.00, cache_read=0.50, cache_creation=6.25),
     "claude-opus-4-5":   ModelPricing(input=5.00,  output=25.00, cache_read=0.50, cache_creation=6.25),
     "claude-opus-4-1":   ModelPricing(input=15.00, output=75.00, cache_read=1.50, cache_creation=18.75),
     "claude-opus-4":     ModelPricing(input=15.00, output=75.00, cache_read=1.50, cache_creation=18.75),
+    # Sonnet 5 は launch 時 $2/$10 を「2026-08-31 までの導入価格」として告知していたが、
+    # 2026-08-10 に標準価格化され 9/1 の $3/$15 への値上げは撤回された。よって
+    # 期間で切り替わる rate table は持たない (単一 rate で足りる)。
+    "claude-sonnet-5":   ModelPricing(input=2.00,  output=10.00, cache_read=0.20, cache_creation=2.50),
     "claude-sonnet-4-6": ModelPricing(input=3.00,  output=15.00, cache_read=0.30, cache_creation=3.75),
     "claude-sonnet-4-5": ModelPricing(input=3.00,  output=15.00, cache_read=0.30, cache_creation=3.75),
     "claude-sonnet-4":   ModelPricing(input=3.00,  output=15.00, cache_read=0.30, cache_creation=3.75),
