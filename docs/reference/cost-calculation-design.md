@@ -303,6 +303,18 @@ per-subagent transcript の収集は **Issue #93 で確定した `subagent_type 
   `claude-opus-4` ($15) に prefix 誤マッチして 3 倍過大計上されていた — 登録により
   **既存データの過去 cost 表示も $15 → $5 レートで下がる** (raw token 保存 + 計算時
   価格適用の設計どおりの正しい挙動、§4 trade-off 参照)
+- **2026-08-15 追加 pin**: Opus 5 (`claude-opus-5`、4.8 と同額 $5 / $25 / $0.50 / $6.25) と
+  Sonnet 5 (`claude-sonnet-5`、$2 / $10 / $0.20 / $2.50) を同 URL から追加 pin。同日時点で
+  既存 15 行の単価に改定は無く追加のみ。どちらも `claude-opus-4*` / `claude-sonnet-4*` の
+  prefix には乗らないため未登録の間は DEFAULT_PRICING (Sonnet 4.6) に落ちており、
+  Opus 5 は $5 のところ $3 で計算される **約 40% の過小計上**だった。登録により
+  **既存データの過去 cost 表示も上がる** (Opus 4.8 のときと同じく §4 trade-off どおり)
+  - Sonnet 5 の $2 / $10 は launch 時「2026-08-31 までの導入価格」として告知されたが、
+    2026-08-10 に標準価格化され 9/1 の $3 / $15 への値上げは撤回された。よって
+    **期間で切り替わる rate table は導入しない** (単一 rate で足りる)
+  - 価格改定履歴は公式 release notes (`https://platform.claude.com/docs/en/release-notes/api`)
+    に日付付きで記録される。Models API には価格フィールドが無く、現行価格を
+    プログラムから引く公式 API は存在しないため、本 module の手動 pin が唯一の経路
 
 ### `[1m]` context-window suffix の正規化 (Issue #128)
 

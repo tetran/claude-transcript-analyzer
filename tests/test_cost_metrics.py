@@ -230,6 +230,82 @@ class TestFableAndContextWindowSuffix(unittest.TestCase):
         self.assertNotEqual(fable_cost, sonnet_fallback)
 
 
+class TestOpus5AndSonnet5Pricing(unittest.TestCase):
+    """Opus 5 / Sonnet 5 の価格 pin (2026-08-15 公式確認)。
+
+    どちらも `claude-opus-4*` / `claude-sonnet-4*` の prefix には乗らないため、
+    未登録の間は DEFAULT_PRICING (Sonnet 4.6) に落ちていた。Opus 5 は
+    $5 vs $3 で **約 40% の過小計上**になるのが実害。
+
+    Sonnet 5 は launch 時の導入価格 $2/$10 が 2026-08-10 に標準価格化され、
+    予定されていた 9/1 の $3/$15 への値上げは撤回された。よって期間で
+    切り替わらない単一レートとして pin する。
+    """
+
+    def test_opus_5_input_only(self):
+        # claude-opus-5: input $5 / MTok (Opus 4.8 と同額)
+        self.assertEqual(
+            calculate_message_cost("claude-opus-5", 1_000_000, 0, 0, 0),
+            5.0,
+        )
+
+    def test_opus_5_all_dimensions(self):
+        # 1M each × {input 5, output 25, cache_read 0.50, cache_creation 6.25} = 36.75
+        self.assertEqual(
+            calculate_message_cost("claude-opus-5", 1_000_000, 1_000_000, 1_000_000, 1_000_000),
+            36.75,
+        )
+
+    def test_opus_5_does_not_fallback_to_sonnet(self):
+        """未登録時の実害 (Sonnet 4.6 rate での過小計上) が再発しないこと。"""
+        opus5_cost = calculate_message_cost("claude-opus-5", 1_000_000, 0, 0, 0)
+        sonnet_fallback = calculate_message_cost("claude-future-99-x", 1_000_000, 0, 0, 0)
+        self.assertEqual(opus5_cost, 5.0)
+        self.assertEqual(sonnet_fallback, 3.0)
+        self.assertNotEqual(opus5_cost, sonnet_fallback)
+
+    def test_opus_5_1m_suffix_priced_as_opus_5(self):
+        self.assertEqual(
+            calculate_message_cost("claude-opus-5[1m]", 1_000_000, 0, 0, 0),
+            5.0,
+        )
+
+    def test_opus_5_with_date_suffix_prefix_match(self):
+        # 将来 date-suffix 付き ID が返っても base price に解決すること
+        self.assertEqual(
+            calculate_message_cost("claude-opus-5-20260601", 1_000_000, 0, 0, 0),
+            5.0,
+        )
+
+    def test_sonnet_5_input_only(self):
+        # claude-sonnet-5: input $2 / MTok (導入価格が標準価格化された値)
+        self.assertEqual(
+            calculate_message_cost("claude-sonnet-5", 1_000_000, 0, 0, 0),
+            2.0,
+        )
+
+    def test_sonnet_5_all_dimensions(self):
+        # 1M each × {input 2, output 10, cache_read 0.20, cache_creation 2.50} = 14.70
+        self.assertEqual(
+            calculate_message_cost("claude-sonnet-5", 1_000_000, 1_000_000, 1_000_000, 1_000_000),
+            14.70,
+        )
+
+    def test_sonnet_5_cheaper_than_sonnet_4_6_fallback(self):
+        """Sonnet 5 は Sonnet 4.6 ($3) より安く、fallback と同一視されないこと。"""
+        sonnet5_cost = calculate_message_cost("claude-sonnet-5", 1_000_000, 0, 0, 0)
+        sonnet46_cost = calculate_message_cost("claude-sonnet-4-6", 1_000_000, 0, 0, 0)
+        self.assertEqual(sonnet5_cost, 2.0)
+        self.assertEqual(sonnet46_cost, 3.0)
+        self.assertNotEqual(sonnet5_cost, sonnet46_cost)
+
+    def test_sonnet_5_1m_suffix_priced_as_sonnet_5(self):
+        self.assertEqual(
+            calculate_message_cost("claude-sonnet-5[1m]", 1_000_000, 0, 0, 0),
+            2.0,
+        )
+
+
 class TestUnknownModelFallback(unittest.TestCase):
     """plan §1 / cost-calculation-design.md §2: 未知 model は Sonnet 4.6 にフォールバック。"""
 
